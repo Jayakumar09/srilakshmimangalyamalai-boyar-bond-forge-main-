@@ -1,15 +1,52 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/integrations/supabase/types";
 import { z } from "zod";
 
 const UploadInput = z.object({
   fileName: z.string().min(1).max(200),
   contentType: z.string().min(1).max(120),
   folder: z.enum(["photo", "govt_id", "divorce_doc", "payment_proof", "jathagam"]),
+  ownerId: z.string().uuid().optional(),
 });
+
+/**
+ * Files belong to whoever owns them so the member can always open their own
+ * documents later. When an admin uploads on behalf of a client they pass
+ * `ownerId` (the client's profile id); we require admin rights and that the
+ * target profile actually exists so no one can stash files under an arbitrary id.
+ */
+async function resolveOwnerPrefix(
+  context: { userId: string; supabase: SupabaseClient<Database> },
+  ownerId?: string,
+): Promise<string> {
+  if (!ownerId) return context.userId;
+  const { data: isAdmin } = await context.supabase.rpc("has_role", {
+    _user_id: context.userId,
+    _role: "admin",
+  });
+  if (!isAdmin) throw new Error("Not allowed");
+  const { data: profile } = await context.supabase
+    .from("profiles")
+    .select("id")
+    .eq("id", ownerId)
+    .maybeSingle();
+  if (!profile) throw new Error("Target profile does not exist.");
+  return ownerId;
+}
 
 function sanitize(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80);
+}
+
+/** Only photos/scans and PDFs are permitted; rejects scripts/executables. */
+const ACCEPTED_TYPE_PREFIXES = ["image/", "application/pdf"] as const;
+
+function assertAllowedType(contentType: string) {
+  if (!ACCEPTED_TYPE_PREFIXES.some((prefix) => contentType.startsWith(prefix))) {
+    throw new Error("Unsupported file type.");
+  }
 }
 
 async function signR2(key: string, method: "PUT" | "GET", contentType?: string) {
@@ -37,7 +74,8 @@ export const createUploadUrl = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => UploadInput.parse(input))
   .handler(async ({ data, context }) => {
-    const key = `${context.userId}/${data.folder}/${Date.now()}-${sanitize(data.fileName)}`;
+    assertAllowedType(data.contentType);
+    const key = `${await resolveOwnerPrefix(context, data.ownerId)}/${data.folder}/${Date.now()}-${sanitize(data.fileName)}`;
     const uploadUrl = await signR2(key, "PUT", data.contentType);
     return { key, uploadUrl };
   });
@@ -57,12 +95,17 @@ export const uploadFile = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const file = data.get("file");
     const folder = String(data.get("folder") ?? "");
+    const ownerId = String(data.get("ownerId") ?? "") || undefined;
     if (!(file instanceof File)) throw new Error("No file received.");
     if (!(FOLDERS as readonly string[]).includes(folder)) throw new Error("Invalid folder.");
     if (file.size > 15 * 1024 * 1024) throw new Error("File is too large (max 15 MB).");
+    if (ownerId !== undefined && !/^[0-9a-fA-F-]{36}$/.test(ownerId)) {
+      throw new Error("Invalid owner.");
+    }
 
     const contentType = file.type || "application/octet-stream";
-    const key = `${context.userId}/${folder}/${Date.now()}-${sanitize(file.name || "file")}`;
+    assertAllowedType(contentType);
+    const key = `${await resolveOwnerPrefix(context, ownerId)}/${folder}/${Date.now()}-${sanitize(file.name || "file")}`;
     const uploadUrl = await signR2(key, "PUT", contentType);
     const res = await fetch(uploadUrl, {
       method: "PUT",

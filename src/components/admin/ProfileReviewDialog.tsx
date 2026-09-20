@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useI18n } from "@/lib/i18n";
+import { createViewUrl } from "@/lib/storage.functions";
 import type { AdminData, AdminProfile, ProfileAudit } from "@/lib/admin-data";
 import { ageFrom } from "@/lib/admin-data";
 import { actorLabel, createdByLabel, planLabel, statusLabel } from "@/lib/admin-labels";
@@ -12,7 +13,9 @@ function Row({ label, value }: { label: string; value: string | number | null | 
   return (
     <div className="flex gap-2 text-sm">
       <span className="min-w-[9rem] text-muted-foreground">{label}</span>
-      <span className="min-w-0 break-words">{value === null || value === undefined || value === "" ? "—" : value}</span>
+      <span className="min-w-0 break-words">
+        {value === null || value === undefined || value === "" ? "—" : value}
+      </span>
     </div>
   );
 }
@@ -44,10 +47,24 @@ export function ProfileReviewDialog({
   const [audit, setAudit] = useState<ProfileAudit[]>([]);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<Record<string, string>>({});
+  const [photoSrc, setPhotoSrc] = useState<string | null>(null);
 
   useEffect(() => {
     void d.loadAudit(profile.id).then(setAudit);
   }, [d, profile.id]);
+
+  useEffect(() => {
+    let alive = true;
+    setPhotoSrc(null);
+    if (profile.photo_url) {
+      createViewUrl({ data: { key: profile.photo_url } })
+        .then(({ url }) => alive && setPhotoSrc(url))
+        .catch(() => {});
+    }
+    return () => {
+      alive = false;
+    };
+  }, [profile.photo_url]);
 
   useEffect(() => {
     const next: Record<string, string> = {};
@@ -91,9 +108,9 @@ export function ProfileReviewDialog({
 
         <div className="max-h-[75vh] space-y-5 overflow-y-auto p-4">
           <div className="flex flex-wrap items-start gap-4">
-            {profile.photo_url ? (
+            {photoSrc ? (
               <img
-                src={profile.photo_url}
+                src={photoSrc}
                 alt=""
                 className="size-24 rounded-lg border border-border object-cover"
               />
@@ -116,14 +133,45 @@ export function ProfileReviewDialog({
             <Row label={t("adm_f_email")} value={profile.email} />
             <Row label={t("adm_f_phone")} value={profile.phone} />
             <Row label={t("adm_f_whatsapp")} value={profile.whatsapp} />
-            <Row label={t("adm_location")} value={[profile.city, profile.native_district, profile.state].filter(Boolean).join(", ")} />
-            <Row label={t("adm_f_education")} value={[profile.education_level, profile.education_detail].filter(Boolean).join(" · ")} />
-            <Row label={t("adm_f_profession")} value={[profile.profession, profile.job_detail].filter(Boolean).join(" · ")} />
-            <Row label={t("adm_family")} value={[profile.father_name, profile.mother_name, profile.family_details].filter(Boolean).join(" · ")} />
+            <Row
+              label={t("adm_location")}
+              value={[profile.city, profile.native_district, profile.state]
+                .filter(Boolean)
+                .join(", ")}
+            />
+            <Row
+              label={t("adm_f_education")}
+              value={[profile.education_level, profile.education_detail]
+                .filter(Boolean)
+                .join(" · ")}
+            />
+            <Row
+              label={t("adm_f_profession")}
+              value={[profile.profession, profile.job_detail].filter(Boolean).join(" · ")}
+            />
+            <Row
+              label={t("adm_family")}
+              value={[profile.father_name, profile.mother_name, profile.family_details]
+                .filter(Boolean)
+                .join(" · ")}
+            />
             <Row label={t("adm_prefs")} value={profile.pref_notes} />
-            <Row label={t("adm_reg_date")} value={profile.created_at ? new Date(profile.created_at).toLocaleDateString() : null} />
-            <Row label={t("adm_payment")} value={payment ? `${planLabel(t, payment.item)} · ${statusLabel(t, payment.status)}` : t("adm_none")} />
-            <Row label={t("adm_created_by")} value={createdByLabel(t, profile.profile_created_by)} />
+            <Row
+              label={t("adm_reg_date")}
+              value={profile.created_at ? new Date(profile.created_at).toLocaleDateString() : null}
+            />
+            <Row
+              label={t("adm_payment")}
+              value={
+                payment
+                  ? `${planLabel(t, payment.item)} · ${statusLabel(t, payment.status)}`
+                  : t("adm_none")
+              }
+            />
+            <Row
+              label={t("adm_created_by")}
+              value={createdByLabel(t, profile.profile_created_by)}
+            />
             <Row
               label={t("adm_last_updated")}
               value={
@@ -137,9 +185,16 @@ export function ProfileReviewDialog({
           <section>
             <h3 className="mb-2 font-medium">{t("adm_documents")}</h3>
             <div className="flex flex-wrap gap-2">
-              {docs.length === 0 && <p className="text-sm text-muted-foreground">{t("adm_missing")}</p>}
+              {docs.length === 0 && (
+                <p className="text-sm text-muted-foreground">{t("adm_missing")}</p>
+              )}
               {docs.map((doc) => (
-                <Button key={doc.id} size="sm" variant="secondary" onClick={() => d.openDoc(doc.storage_key)}>
+                <Button
+                  key={doc.id}
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => d.openDoc(doc.storage_key)}
+                >
                   {doc.doc_type}
                   {doc.id_kind ? ` (${doc.id_kind})` : ""}
                   {doc.ai_check_status ? ` · ${doc.ai_check_status}` : ""}
@@ -157,7 +212,9 @@ export function ProfileReviewDialog({
                 {audit.map((a) => (
                   <li key={a.id} className="text-muted-foreground">
                     {new Date(a.created_at).toLocaleString()} —{" "}
-                    {a.action === "admin_created" ? t("audit_admin_created") : t("audit_admin_updated")}
+                    {a.action === "admin_created"
+                      ? t("audit_admin_created")
+                      : t("audit_admin_updated")}
                     {a.details ? ` (${a.details})` : ""}
                   </li>
                 ))}

@@ -11,13 +11,22 @@ export type UploadResult = {
   originalSize: number;
 };
 
-/** Compress (images -> WebP) then upload through our server to Cloudflare R2. */
-export async function uploadToR2(file: File, folder: UploadFolder): Promise<UploadResult> {
+/**
+ * Compress (images -> WebP) then upload through our server to Cloudflare R2.
+ * `ownerId` lets an admin upload on behalf of a client so the file is keyed
+ * under the client's id and the client can open it later.
+ */
+export async function uploadToR2(
+  file: File,
+  folder: UploadFolder,
+  ownerId?: string,
+): Promise<UploadResult> {
   const { file: out, originalSize } = await compressImage(file);
 
   const form = new FormData();
   form.append("file", out, out.name);
   form.append("folder", folder);
+  if (ownerId) form.append("ownerId", ownerId);
 
   const result = await uploadFile({ data: form });
 

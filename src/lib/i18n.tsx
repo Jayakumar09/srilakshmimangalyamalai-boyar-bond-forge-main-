@@ -568,6 +568,10 @@ export const dict: Dict = {
   adm_f_family: { en: "Family details", ta: "குடும்ப விவரம்" },
   adm_f_about: { en: "About", ta: "பற்றி" },
   adm_f_prefs: { en: "Partner preference notes", ta: "துணை விருப்பக் குறிப்புகள்" },
+  pref_age_min_label: { en: "Preferred age (min)", ta: "விருப்ப வயது (குறைந்தபட்சம்)" },
+  pref_age_max_label: { en: "Preferred age (max)", ta: "விருப்ப வயது (அதிகபட்சம்)" },
+  adm_upload_docs: { en: "Photo & identity documents", ta: "புகைப்படம் & அடையாள ஆவணங்கள்" },
+  adm_upload_failed: { en: "Upload failed", ta: "பதிவேற்றம் தோல்வியடைந்தது" },
   // Admin ↔ client support messages
   adm_nav_messages: { en: "Client messages", ta: "வாடிக்கையாளர் செய்திகள்" },
   adm_msg_sub: {
