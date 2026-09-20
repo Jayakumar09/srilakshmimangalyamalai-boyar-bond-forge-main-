@@ -98,6 +98,13 @@ export function CreateClientProfileDialog({
       const res = await createClientProfile({ data: payload as never });
       profileId = res.id;
 
+      const { data: idRow } = await supabase
+        .from("profiles")
+        .select("client_profile_id")
+        .eq("id", profileId)
+        .maybeSingle();
+      const cpid = (idRow?.client_profile_id as string | null) ?? null;
+
       try {
         const photoUp = photo ? await uploadToR2(photo, "photo", profileId) : null;
         const idUp = idFile ? await uploadToR2(idFile, "govt_id", profileId) : null;
@@ -168,6 +175,7 @@ export function CreateClientProfileDialog({
       }
 
       toast.success(res.existed ? t("adm_exists_updated") : t("adm_created_ok"));
+      if (cpid) toast.info(`Profile ID: ${cpid}`);
       if (res.invitation === "sent") toast.info(t("adm_invite_sent"));
       else if (res.invitation === "failed") toast.warning(t("adm_invite_failed"));
       onCreated();

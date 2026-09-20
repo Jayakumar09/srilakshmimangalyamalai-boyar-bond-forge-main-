@@ -4,6 +4,20 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
 export const ADMIN_EMAIL = "vijayalakshmi@srilakshmimangalyamalai.com";
 
+async function clientProfileIdFor(profileId: string): Promise<string | null> {
+  try {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data } = await supabaseAdmin
+      .from("profiles")
+      .select("client_profile_id")
+      .eq("id", profileId)
+      .maybeSingle();
+    return data?.client_profile_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 type Alert = {
   kind: string;
   subject: string;
@@ -63,11 +77,12 @@ export const notifyProfileSubmitted = createServerFn({ method: "POST" })
     z.object({ fullName: z.string().max(200), memberEmail: z.string().email() }).parse(input),
   )
   .handler(async ({ data, context }) => {
+    const cpid = await clientProfileIdFor(context.userId);
     await deliver([
       {
         kind: "profile_submitted",
         subject: `New profile submitted — ${data.fullName}`,
-        body: `${data.fullName} (${data.memberEmail}) submitted a profile for approval. Open the admin approval queue to review the ID, photo and AI pre-check.`,
+        body: `${data.fullName} (${data.memberEmail}) submitted a profile for approval. Open the admin approval queue to review the ID, photo and AI pre-check.${cpid ? `\nClient Profile ID: ${cpid}` : ""}`,
         email_to: ADMIN_EMAIL,
         related_user_id: context.userId,
       },
@@ -102,11 +117,13 @@ export const notifyApprovalChanged = createServerFn({ method: "POST" })
     });
     if (!isAdmin) throw new Error("Forbidden");
 
+    const cpid = await clientProfileIdFor(data.memberId);
+
     const alerts: Alert[] = [
       {
         kind: "approval_changed",
         subject: `Profile ${data.status} — ${data.fullName}`,
-        body: `${data.fullName} was marked ${data.status}.${data.note ? ` Note: ${data.note}` : ""}`,
+        body: `${data.fullName} was marked ${data.status}.${data.note ? ` Note: ${data.note}` : ""}${cpid ? `\nClient Profile ID: ${cpid}` : ""}`,
         email_to: ADMIN_EMAIL,
         related_user_id: data.memberId,
       },
@@ -144,6 +161,7 @@ export async function notifyAdminProfileAction(input: {
   awaitingReview: boolean;
   at: string;
 }): Promise<void> {
+  const cpid = await clientProfileIdFor(input.profileId);
   const alerts: Alert[] = [];
   const clientBody =
     input.action === "created"
@@ -173,7 +191,7 @@ export async function notifyAdminProfileAction(input: {
     alerts.push({
       kind: "admin_profile_awaiting_review",
       subject: `Admin-created profile awaiting review — ${input.fullName}`,
-      body: `${input.fullName} submitted an admin-created profile for approval. Review it in the Approval queue.`,
+      body: `${input.fullName} submitted an admin-created profile for approval. Review it in the Approval queue.${cpid ? `\nClient Profile ID: ${cpid}` : ""}`,
       email_to: ADMIN_EMAIL,
       related_user_id: input.profileId,
       dedupeKey: `admin-profile-awaiting-${input.profileId}`,

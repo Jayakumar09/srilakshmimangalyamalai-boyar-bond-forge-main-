@@ -348,6 +348,7 @@ export type Database = {
           birth_place: string | null
           birth_time: string | null
           city: string | null
+          client_profile_id: string | null
           consent_accepted_at: string | null
           created_at: string
           created_by_admin_id: string | null
@@ -407,6 +408,7 @@ export type Database = {
           birth_place?: string | null
           birth_time?: string | null
           city?: string | null
+          client_profile_id?: string | null
           consent_accepted_at?: string | null
           created_at?: string
           created_by_admin_id?: string | null
@@ -466,6 +468,7 @@ export type Database = {
           birth_place?: string | null
           birth_time?: string | null
           city?: string | null
+          client_profile_id?: string | null
           consent_accepted_at?: string | null
           created_at?: string
           created_by_admin_id?: string | null

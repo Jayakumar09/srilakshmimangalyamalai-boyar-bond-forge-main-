@@ -41,6 +41,7 @@ export type AdminProfile = {
   birth_time?: string | null;
   birth_place?: string | null;
   admin_notes?: string | null;
+  client_profile_id?: string | null;
   photo_url: string | null;
   membership_plan: "free" | "standard" | "premium";
   status: "pending" | "approved" | "rejected";

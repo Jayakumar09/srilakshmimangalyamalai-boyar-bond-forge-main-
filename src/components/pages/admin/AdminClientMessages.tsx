@@ -185,7 +185,7 @@ export function AdminClientMessages() {
             ) : (
               <div className="flex h-[55vh] flex-col">
                 <p className="text-xs text-muted-foreground">
-                  {t("adm_profile_id")}: {active.user_id.slice(0, 8)}
+                  {t("adm_profile_id")}: {activeProfile?.client_profile_id ?? "-"}
                   {activeProfile?.email ? ` · ${activeProfile.email}` : ""}
                 </p>
                 <div className="mt-3 flex-1 space-y-2 overflow-y-auto pr-1">

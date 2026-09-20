@@ -56,7 +56,7 @@ export function AdminApprovals() {
                   </p>
                   <p className="text-muted-foreground">{[p.email, p.phone].filter(Boolean).join(" · ")}</p>
                   <p className="text-xs text-muted-foreground">
-                    {t("adm_profile_id")}: {p.id.slice(0, 8)} · {t("adm_reg_date")}:{" "}
+                    {t("adm_profile_id")}: {p.client_profile_id ?? "—"} · {t("adm_reg_date")}:{" "}
                     {p.submitted_at ? new Date(p.submitted_at).toLocaleDateString() : "—"}
                   </p>
                 </div>

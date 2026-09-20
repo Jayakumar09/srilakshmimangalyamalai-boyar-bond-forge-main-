@@ -121,7 +121,7 @@ export function ProfileReviewDialog({
             )}
             <div className="min-w-0 flex-1 space-y-1">
               <Row label={t("adm_name")} value={profile.full_name} />
-              <Row label={t("adm_profile_id")} value={profile.id.slice(0, 8)} />
+              <Row label={t("adm_profile_id")} value={profile.client_profile_id ?? "—"} />
               <Row label={t("adm_age")} value={ageFrom(profile.date_of_birth)} />
               <Row label={t("adm_f_gender")} value={profile.gender} />
               <Row label={t("adm_f_marital")} value={profile.marital_status} />

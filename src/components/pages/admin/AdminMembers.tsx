@@ -95,7 +95,7 @@ export function AdminMembers() {
               {rows.map((p) => (
                 <tr key={p.id} className="border-b border-border/60 last:border-0">
                   <td className="py-2 pr-4 font-medium">{p.full_name ?? "—"}</td>
-                  <td className="py-2 pr-4 text-muted-foreground">{p.id.slice(0, 8)}</td>
+                  <td className="py-2 pr-4 text-muted-foreground">{p.client_profile_id ?? "—"}</td>
                   <td className="py-2 pr-4">{ageFrom(p.date_of_birth) ?? "—"}</td>
                   <td className="py-2 pr-4">{p.city ?? p.native_district ?? "—"}</td>
                   <td className="py-2 pr-4 text-muted-foreground">

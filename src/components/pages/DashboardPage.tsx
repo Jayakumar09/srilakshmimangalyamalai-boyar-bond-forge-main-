@@ -9,6 +9,7 @@ import { SiteFooter } from "@/components/SiteFooter";
 import { Button } from "@/components/ui/button";
 
 type Profile = Record<string, string | number | null> & {
+  client_profile_id: string | null;
   full_name: string | null;
   status: "pending" | "approved" | "rejected";
   membership_plan: "free" | "standard" | "premium";
@@ -56,6 +57,7 @@ export function DashboardPage() {
 
   const rows: { label: string; value: unknown }[] = profile
     ? [
+        { label: t("adm_profile_id"), value: v("client_profile_id") },
         { label: t("full_name"), value: v("full_name") },
         { label: t("gender"), value: v("gender") },
         { label: t("dob"), value: v("date_of_birth") },
