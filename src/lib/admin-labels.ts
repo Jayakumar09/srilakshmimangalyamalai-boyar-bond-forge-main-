@@ -45,6 +45,14 @@ export function statusLabel(t: T, status: string | null | undefined) {
   return key ? t(key) : status;
 }
 
+/** status 'pending' with no submission counts as a draft, not a pending approval. */
+export function isProfileDraft(p: {
+  status?: string | null;
+  submitted_at?: string | null;
+}): boolean {
+  return p.status === "pending" && !p.submitted_at;
+}
+
 export function methodLabel(t: T, method: string | null | undefined) {
   if (!method) return "—";
   const key = METHOD_KEYS[method.toLowerCase()];

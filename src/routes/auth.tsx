@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { z } from "zod";
+import { Eye, EyeOff } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useI18n } from "@/lib/i18n";
 import { SiteHeader } from "@/components/SiteHeader";
@@ -32,8 +33,21 @@ const schema = z.object({
   fullName: z.string().trim().max(100).optional(),
 });
 
+/**
+ * Base URL baked into Supabase confirmation/recovery email links.
+ * Defaults to the origin the signup page was loaded from, so desktop
+ * localhost and Android-on-LAN both get a link the device can open.
+ * Override with VITE_AUTH_REDIRECT_URL to force a specific origin
+ * (e.g. the PC's LAN URL while testing on a phone).
+ */
+function authRedirectOrigin(): string {
+  const configured = import.meta.env["VITE_AUTH_REDIRECT_URL"];
+  if (configured && configured.trim()) return configured.trim().replace(/\/+$/, "");
+  return window.location.origin;
+}
+
 function AuthPage() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const search = Route.useSearch();
   const navigate = useNavigate();
   const [mode, setMode] = useState<"signin" | "signup">(search.mode ?? "signin");
@@ -41,12 +55,29 @@ function AuthPage() {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  const redirectAfterAuth = useCallback(
+    async (userId: string) => {
+      const { data: adminRow } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", userId)
+        .eq("role", "admin")
+        .maybeSingle();
+      navigate({
+        to: adminRow ? (lang === "ta" ? "/tn/admin" : "/en/admin") : "/dashboard",
+        replace: true,
+      });
+    },
+    [navigate, lang],
+  );
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
-      if (data.session) navigate({ to: "/dashboard", replace: true });
+      if (data.session) redirectAfterAuth(data.session.user.id);
     });
-  }, [navigate]);
+  }, [redirectAfterAuth]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -62,7 +93,7 @@ function AuthPage() {
           email: parsed.data.email,
           password: parsed.data.password,
           options: {
-            emailRedirectTo: window.location.origin,
+            emailRedirectTo: authRedirectOrigin(),
             data: { full_name: parsed.data.fullName ?? "" },
           },
         });
@@ -73,12 +104,12 @@ function AuthPage() {
         }
         navigate({ to: "/register" });
       } else {
-        const { error } = await supabase.auth.signInWithPassword({
+        const { data: signInData, error } = await supabase.auth.signInWithPassword({
           email: parsed.data.email,
           password: parsed.data.password,
         });
         if (error) throw error;
-        navigate({ to: "/dashboard" });
+        await redirectAfterAuth(signInData.user.id);
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Something went wrong");
@@ -95,7 +126,7 @@ function AuthPage() {
     setBusy(true);
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-        redirectTo: `${window.location.origin}/reset-password`,
+        redirectTo: `${authRedirectOrigin()}/reset-password`,
       });
       if (error) throw error;
       toast.success(t("auth_forgot_sent"));
@@ -140,15 +171,26 @@ function AuthPage() {
           </div>
           <div>
             <Label htmlFor="password">{t("password")}</Label>
-            <Input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="mt-1.5"
-              minLength={8}
-              required
-            />
+            <div className="relative mt-1.5">
+              <Input
+                id="password"
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="pr-10"
+                minLength={8}
+                required
+                autoComplete={mode === "signin" ? "current-password" : "new-password"}
+              />
+              <button
+                type="button"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute inset-y-0 right-0 flex items-center justify-center pr-3 text-muted-foreground hover:text-foreground"
+              >
+                {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              </button>
+            </div>
           </div>
           <Button type="submit" className="w-full" disabled={busy}>
             {mode === "signin" ? t("nav_login") : t("nav_register")}

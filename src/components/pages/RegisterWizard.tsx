@@ -16,6 +16,22 @@ import { uploadToR2 } from "@/lib/upload";
 import { fileToDataUrl, compressImage, formatBytes } from "@/lib/compress";
 import { preScreenDocuments, type PreScreenResult } from "@/lib/verify.functions";
 import { notifyProfileSubmitted } from "@/lib/notify.functions";
+import { CountryCodePhoneField } from "@/components/CountryCodePhoneField";
+import { normalizeInternationalPhone, splitInternationalPhone } from "@/lib/phone";
+import { DEFAULT_COUNTRY_ISO } from "@/lib/country-codes";
+import { isValidBirthTimeStrict, canonicalBirthTime } from "@/lib/format";
+import {
+  EDUCATION_LEVELS,
+  FAMILY_STATUSES,
+  FAMILY_TYPES,
+  GENDERS,
+  ID_KINDS,
+  MARITAL_STATUSES,
+  type ProfileOption,
+} from "@/lib/profile-options";
+
+const choice = (options: ProfileOption[]) => (t: (k: string) => string) =>
+  options.map((o) => ({ v: o.v, l: t(o.labelKey) }));
 
 type Form = Record<string, string>;
 
@@ -36,6 +52,9 @@ export function RegisterWizard() {
   const [ai, setAi] = useState<PreScreenResult | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [existingPhotoKey, setExistingPhotoKey] = useState<string | null>(null);
+  const [phoneIso, setPhoneIso] = useState<Record<string, string>>({});
+  const [birthError, setBirthError] = useState("");
+  const [phoneErrors, setPhoneErrors] = useState<Record<string, string>>({});
 
   const legalPrefix = lang === "ta" ? "/ta" : "";
 
@@ -56,10 +75,20 @@ export function RegisterWizard() {
       .maybeSingle();
     if (profile) {
       const next: Form = {};
+      const isoNext: Record<string, string> = {};
       Object.entries(profile).forEach(([k, v]) => {
         if (v !== null && v !== undefined) next[k] = String(v);
       });
+      for (const key of ["phone", "whatsapp"] as const) {
+        const stored = profile[key];
+        if (stored != null && stored !== "") {
+          const split = splitInternationalPhone(stored);
+          next[key] = split.local;
+          isoNext[key] = split.iso;
+        }
+      }
       setForm(next);
+      setPhoneIso(isoNext);
       setExistingPhotoKey(profile.photo_url ?? null);
       if (profile.consent_accepted_at) setConsent(true);
     }
@@ -72,6 +101,13 @@ export function RegisterWizard() {
   /** Persist the typed fields without touching documents, consent or approval status. */
   function profileFields(userId: string, email: string | null) {
     const num = (k: string) => (form[k] ? Number(form[k]) : null);
+    const phone = (k: "phone" | "whatsapp") => {
+      const raw = form[k];
+      if (!raw) return null;
+      return (
+        normalizeInternationalPhone(phoneIso[k] ?? DEFAULT_COUNTRY_ISO, raw) ?? raw
+      );
+    };
     return {
       id: userId,
       email,
@@ -84,8 +120,8 @@ export function RegisterWizard() {
       mother_tongue: form["mother_tongue"] ?? null,
       height_cm: num("height_cm"),
       weight_kg: num("weight_kg"),
-      phone: form["phone"] ?? null,
-      whatsapp: form["whatsapp"] ?? null,
+      phone: phone("phone"),
+      whatsapp: phone("whatsapp"),
       address_line: form["address_line"] ?? null,
       city: form["city"] ?? null,
       native_district: form["native_district"] ?? null,
@@ -117,6 +153,46 @@ export function RegisterWizard() {
       birth_place: form["birth_place"] ?? null,
       about: form["about"] ?? null,
     };
+  }
+
+  function phoneInputBlur(key: "phone" | "whatsapp") {
+    const raw = form[key];
+    if (!raw || !raw.trim()) {
+      setPhoneErrors((s) => ({ ...s, [key]: "" }));
+      return;
+    }
+    if (normalizeInternationalPhone(phoneIso[key] ?? DEFAULT_COUNTRY_ISO, raw)) {
+      setPhoneErrors((s) => ({ ...s, [key]: "" }));
+    } else {
+      setPhoneErrors((s) => ({ ...s, [key]: t("phone_invalid") }));
+    }
+  }
+
+  function phoneIsoSelect(key: "phone" | "whatsapp") {
+    return (iso: string) => {
+      setPhoneIso((s) => ({ ...s, [key]: iso }));
+      setPhoneErrors((s) => ({ ...s, [key]: "" }));
+    };
+  }
+
+  function birthInputChange(v: string) {
+    if (birthError) setBirthError("");
+    set("birth_time")(v);
+  }
+
+  function birthInputBlur() {
+    const raw = form["birth_time"];
+    if (!raw || !raw.trim()) {
+      setBirthError("");
+      return;
+    }
+    const canon = canonicalBirthTime(raw);
+    if (!canon) {
+      setBirthError(t("time_invalid"));
+      return;
+    }
+    setForm((f) => ({ ...f, birth_time: canon }));
+    setBirthError("");
   }
 
   async function saveProgress() {
@@ -177,6 +253,25 @@ export function RegisterWizard() {
     if (!consent) {
       toast.error(t("msg_consent_required"));
       return;
+    }
+
+    const birth = form["birth_time"];
+    if (birth && birth.trim() && !isValidBirthTimeStrict(birth)) {
+      setBirthError(t("time_invalid"));
+      toast.error(t("time_invalid"));
+      return;
+    }
+    for (const key of ["phone", "whatsapp"] as const) {
+      const raw = form[key];
+      if (
+        raw &&
+        raw.trim() &&
+        !normalizeInternationalPhone(phoneIso[key] ?? DEFAULT_COUNTRY_ISO, raw)
+      ) {
+        setPhoneErrors((s) => ({ ...s, [key]: t("phone_invalid") }));
+        toast.error(t("phone_invalid"));
+        return;
+      }
     }
     const firstSubmission = !existingPhotoKey;
     if (firstSubmission && (!photo || !idFile)) {
@@ -322,10 +417,7 @@ export function RegisterWizard() {
                 <Choice
                   value={form["gender"] ?? ""}
                   onChange={set("gender")}
-                  options={[
-                    { v: "Male", l: t("male") },
-                    { v: "Female", l: t("female") },
-                  ]}
+                  options={choice(GENDERS)(t)}
                 />
               </Labeled>
               <Labeled label={t("dob")} required>
@@ -335,11 +427,7 @@ export function RegisterWizard() {
                 <Choice
                   value={form["marital_status"] ?? ""}
                   onChange={set("marital_status")}
-                  options={[
-                    { v: "Unmarried", l: t("unmarried") },
-                    { v: "Divorced", l: t("divorced") },
-                    { v: "Widowed", l: t("widowed") },
-                  ]}
+                  options={choice(MARITAL_STATUSES)(t)}
                 />
               </Labeled>
               <LookupSelect
@@ -362,7 +450,18 @@ export function RegisterWizard() {
                 <Input type="number" {...field("weight_kg")} />
               </Labeled>
               <Labeled label={t("birth_time")}>
-                <Input {...field("birth_time")} placeholder="06:45 AM" maxLength={30} />
+                <Input
+                  {...field("birth_time")}
+                  onChange={(e) => birthInputChange(e.target.value)}
+                  onBlur={birthInputBlur}
+                  placeholder="06:30 AM"
+                  className={birthError ? "border-destructive" : ""}
+                  aria-invalid={Boolean(birthError)}
+                  maxLength={8}
+                />
+                {birthError && (
+                  <p className="mt-1 text-xs text-destructive">{birthError}</p>
+                )}
               </Labeled>
               <Labeled label={t("birth_place")}>
                 <Input {...field("birth_place")} maxLength={100} />
@@ -373,10 +472,28 @@ export function RegisterWizard() {
           {step === 1 && (
             <div className="grid gap-4 sm:grid-cols-2">
               <Labeled label={t("phone")} required>
-                <Input {...field("phone")} maxLength={15} />
+                <CountryCodePhoneField
+                  label={t("phone")}
+                  iso={phoneIso["phone"] ?? DEFAULT_COUNTRY_ISO}
+                  onIsoChange={phoneIsoSelect("phone")}
+                  local={form["phone"] ?? ""}
+                  onLocalChange={set("phone")}
+                  onLocalBlur={() => phoneInputBlur("phone")}
+                  error={phoneErrors["phone"] ?? ""}
+                  placeholder="98765 43210"
+                />
               </Labeled>
               <Labeled label={t("whatsapp")}>
-                <Input {...field("whatsapp")} maxLength={15} />
+                <CountryCodePhoneField
+                  label={t("whatsapp")}
+                  iso={phoneIso["whatsapp"] ?? DEFAULT_COUNTRY_ISO}
+                  onIsoChange={phoneIsoSelect("whatsapp")}
+                  local={form["whatsapp"] ?? ""}
+                  onLocalChange={set("whatsapp")}
+                  onLocalBlur={() => phoneInputBlur("whatsapp")}
+                  error={phoneErrors["whatsapp"] ?? ""}
+                  placeholder="98765 43210"
+                />
               </Labeled>
               <Labeled label={t("address")} full>
                 <Textarea {...field("address_line")} maxLength={300} />
@@ -405,13 +522,7 @@ export function RegisterWizard() {
                 <Choice
                   value={form["education_level"] ?? ""}
                   onChange={set("education_level")}
-                  options={[
-                    { v: "No formal schooling", l: t("edu_none") },
-                    { v: "10th", l: t("edu_10") },
-                    { v: "+2", l: t("edu_12") },
-                    { v: "UG Degree", l: t("edu_ug") },
-                    { v: "Professional / PG", l: t("edu_pg") },
-                  ]}
+                  options={choice(EDUCATION_LEVELS)(t)}
                 />
               </Labeled>
               <Labeled label={t("education_detail")}>
@@ -456,21 +567,14 @@ export function RegisterWizard() {
                 <Choice
                   value={form["family_type"] ?? ""}
                   onChange={set("family_type")}
-                  options={[
-                    { v: "Nuclear", l: t("fam_nuclear") },
-                    { v: "Joint", l: t("fam_joint") },
-                  ]}
+                  options={choice(FAMILY_TYPES)(t)}
                 />
               </Labeled>
               <Labeled label={t("family_status")}>
                 <Choice
                   value={form["family_status"] ?? ""}
                   onChange={set("family_status")}
-                  options={[
-                    { v: "Middle class", l: t("fam_middle") },
-                    { v: "Upper middle class", l: t("fam_upper") },
-                    { v: "Affluent", l: t("fam_affluent") },
-                  ]}
+                  options={choice(FAMILY_STATUSES)(t)}
                 />
               </Labeled>
               <Labeled label={t("family_details")} full>
@@ -526,12 +630,7 @@ export function RegisterWizard() {
                 <Choice
                   value={idKind}
                   onChange={setIdKind}
-                  options={[
-                    { v: "Aadhaar", l: t("id_aadhaar") },
-                    { v: "PAN", l: t("id_pan") },
-                    { v: "Voter ID", l: t("id_voter") },
-                    { v: "Driving Licence", l: t("id_dl") },
-                  ]}
+                  options={choice(ID_KINDS)(t)}
                 />
               </div>
               <FileField

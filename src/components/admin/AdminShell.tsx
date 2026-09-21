@@ -115,6 +115,9 @@ export function AdminShell({
               <span className="block font-display text-base font-semibold sm:text-lg">
                 {t("brand")}
               </span>
+              <span className="block font-display text-base font-semibold sm:text-lg">
+                Boyar Matrimony
+              </span>
               <span className="block text-xs text-muted-foreground">{t("adm_title")}</span>
             </span>
           </a>

@@ -4,63 +4,120 @@ import { useI18n } from "@/lib/i18n";
 import { createClientProfile } from "@/lib/admin-profiles.functions";
 import { uploadToR2 } from "@/lib/upload";
 import { formatBytes } from "@/lib/compress";
+import { normalizeInternationalPhone } from "@/lib/phone";
+import { DEFAULT_COUNTRY_ISO } from "@/lib/country-codes";
+import { normalizeBirthTime } from "@/lib/format";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  CASTE_OPTIONS,
+  EDUCATION_LEVELS,
+  FAMILY_STATUSES,
+  FAMILY_TYPES,
+  GENDERS,
+  ID_KINDS,
+  MARITAL_STATUSES,
+  type ProfileOption,
+} from "@/lib/profile-options";
+import { LookupSelect } from "@/components/LookupSelect";
+import { TimeInput } from "@/components/TimeInput";
+import { CountryCodePhoneField } from "@/components/CountryCodePhoneField";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Upload } from "lucide-react";
 
-const FIELDS: { key: string; labelKey: string; type?: string; full?: boolean }[] = [
-  { key: "full_name", labelKey: "adm_f_full_name" },
-  { key: "email", labelKey: "adm_f_email" },
-  { key: "phone", labelKey: "adm_f_phone" },
-  { key: "whatsapp", labelKey: "adm_f_whatsapp" },
-  { key: "gender", labelKey: "adm_f_gender" },
-  { key: "date_of_birth", labelKey: "adm_f_dob", type: "date" },
-  { key: "marital_status", labelKey: "adm_f_marital" },
-  { key: "sub_caste", labelKey: "adm_f_subcaste" },
-  { key: "gothram", labelKey: "gothram" },
-  { key: "mother_tongue", labelKey: "mother_tongue" },
-  { key: "height_cm", labelKey: "height", type: "number" },
-  { key: "weight_kg", labelKey: "weight", type: "number" },
-  { key: "birth_time", labelKey: "birth_time" },
-  { key: "birth_place", labelKey: "birth_place" },
-  { key: "city", labelKey: "adm_f_city" },
-  { key: "native_district", labelKey: "adm_f_district" },
-  { key: "address_line", labelKey: "address" },
-  { key: "state", labelKey: "state" },
-  { key: "pincode", labelKey: "pincode" },
-  { key: "education_level", labelKey: "adm_f_education" },
-  { key: "education_detail", labelKey: "education_detail" },
-  { key: "profession", labelKey: "adm_f_profession" },
-  { key: "job_detail", labelKey: "job_detail" },
-  { key: "annual_income", labelKey: "income" },
-  { key: "family_type", labelKey: "family_type" },
-  { key: "family_status", labelKey: "family_status" },
-  { key: "father_name", labelKey: "father_name" },
-  { key: "father_occupation", labelKey: "father_occ" },
-  { key: "mother_name", labelKey: "mother_name" },
-  { key: "mother_occupation", labelKey: "mother_occ" },
-  { key: "siblings", labelKey: "siblings" },
-  { key: "family_details", labelKey: "adm_f_family" },
-  { key: "pref_age_min", labelKey: "pref_age_min_label", type: "number" },
-  { key: "pref_age_max", labelKey: "pref_age_max_label", type: "number" },
-  { key: "pref_height_min_cm", labelKey: "pref_height", type: "number" },
-  { key: "pref_marital_status", labelKey: "marital_status" },
-  { key: "pref_sub_caste", labelKey: "sub_caste" },
-  { key: "pref_education", labelKey: "education_level" },
-  { key: "pref_profession", labelKey: "profession" },
-  { key: "pref_district", labelKey: "district" },
-  { key: "pref_notes", labelKey: "adm_f_prefs" },
-  { key: "about", labelKey: "adm_f_about" },
+type LookupCategory = "sub_caste" | "profession" | "native_district";
+
+type FieldDef =
+  | { kind: "input"; key: string; labelKey: string; type?: string; min?: number; full?: boolean }
+  | { kind: "phone"; key: string; labelKey: string; full?: boolean }
+  | { kind: "time"; key: string; labelKey: string; full?: boolean }
+  | { kind: "textarea"; key: string; labelKey: string; full?: boolean }
+  | { kind: "choice"; key: string; labelKey: string; options: ProfileOption[]; full?: boolean }
+  | {
+      kind: "lookup";
+      key: string;
+      labelKey: string;
+      category: LookupCategory;
+      anyLabel?: string;
+      full?: boolean;
+    };
+
+const SECTIONS: { titleKey: string; fields: FieldDef[] }[] = [
+  {
+    titleKey: "adm_basic",
+    fields: [
+      { kind: "input", key: "full_name", labelKey: "adm_f_full_name" },
+      { kind: "input", key: "email", labelKey: "adm_f_email" },
+      { kind: "choice", key: "gender", labelKey: "adm_f_gender", options: GENDERS },
+      { kind: "input", key: "date_of_birth", labelKey: "adm_f_dob", type: "date" },
+      { kind: "choice", key: "marital_status", labelKey: "adm_f_marital", options: MARITAL_STATUSES },
+      { kind: "choice", key: "caste", labelKey: "caste", options: CASTE_OPTIONS },
+      { kind: "lookup", key: "sub_caste", labelKey: "adm_f_subcaste", category: "sub_caste" },
+      { kind: "input", key: "gothram", labelKey: "gothram" },
+      { kind: "input", key: "mother_tongue", labelKey: "mother_tongue" },
+      { kind: "input", key: "height_cm", labelKey: "height", type: "number" },
+      { kind: "input", key: "weight_kg", labelKey: "weight", type: "number" },
+      { kind: "time", key: "birth_time", labelKey: "birth_time" },
+      { kind: "input", key: "birth_place", labelKey: "birth_place" },
+    ],
+  },
+  {
+    titleKey: "adm_contact_info",
+    fields: [
+      { kind: "phone", key: "phone", labelKey: "adm_f_phone" },
+      { kind: "phone", key: "whatsapp", labelKey: "adm_f_whatsapp" },
+      { kind: "input", key: "city", labelKey: "adm_f_city" },
+      { kind: "lookup", key: "native_district", labelKey: "adm_f_district", category: "native_district" },
+      { kind: "textarea", key: "address_line", labelKey: "address", full: true },
+      { kind: "input", key: "state", labelKey: "state" },
+      { kind: "input", key: "pincode", labelKey: "pincode" },
+    ],
+  },
+  {
+    titleKey: "adm_education",
+    fields: [
+      { kind: "choice", key: "education_level", labelKey: "adm_f_education", options: EDUCATION_LEVELS },
+      { kind: "input", key: "education_detail", labelKey: "education_detail" },
+      { kind: "lookup", key: "profession", labelKey: "adm_f_profession", category: "profession" },
+      { kind: "input", key: "job_detail", labelKey: "job_detail" },
+      { kind: "input", key: "annual_income", labelKey: "income" },
+      { kind: "textarea", key: "about", labelKey: "adm_f_about", full: true },
+    ],
+  },
+  {
+    titleKey: "adm_family",
+    fields: [
+      { kind: "choice", key: "family_type", labelKey: "family_type", options: FAMILY_TYPES },
+      { kind: "choice", key: "family_status", labelKey: "family_status", options: FAMILY_STATUSES },
+      { kind: "input", key: "father_name", labelKey: "father_name" },
+      { kind: "input", key: "father_occupation", labelKey: "father_occ" },
+      { kind: "input", key: "mother_name", labelKey: "mother_name" },
+      { kind: "input", key: "mother_occupation", labelKey: "mother_occ" },
+      { kind: "input", key: "brothers", labelKey: "brothers", type: "number", min: 0 },
+      { kind: "input", key: "sisters", labelKey: "sisters", type: "number", min: 0 },
+      { kind: "textarea", key: "family_details", labelKey: "adm_f_family", full: true },
+    ],
+  },
+  {
+    titleKey: "adm_prefs",
+    fields: [
+      { kind: "input", key: "pref_age_min", labelKey: "pref_age_min_label", type: "number" },
+      { kind: "input", key: "pref_age_max", labelKey: "pref_age_max_label", type: "number" },
+      { kind: "input", key: "pref_height_min_cm", labelKey: "pref_height", type: "number" },
+      { kind: "choice", key: "pref_education", labelKey: "education_level", options: EDUCATION_LEVELS },
+      { kind: "choice", key: "pref_marital_status", labelKey: "marital_status", options: MARITAL_STATUSES },
+      { kind: "lookup", key: "pref_sub_caste", labelKey: "sub_caste", category: "sub_caste" },
+      { kind: "lookup", key: "pref_profession", labelKey: "profession", category: "profession", anyLabel: "any_profession" },
+      { kind: "lookup", key: "pref_district", labelKey: "district", category: "native_district" },
+      { kind: "textarea", key: "pref_notes", labelKey: "adm_f_prefs", full: true },
+    ],
+  },
 ];
 
-const ID_KINDS: { v: string; labelKey: string }[] = [
-  { v: "Aadhaar", labelKey: "id_aadhaar" },
-  { v: "PAN", labelKey: "id_pan" },
-  { v: "Voter ID", labelKey: "id_voter" },
-  { v: "Driving Licence", labelKey: "id_dl" },
-];
+const choice = (options: ProfileOption[]) => (t: (k: string) => string) =>
+  options.map((o) => ({ v: o.v, l: t(o.labelKey) }));
 
 /** Admin creates a profile on behalf of a client. The client stays the owner. */
 export function CreateClientProfileDialog({
@@ -77,9 +134,40 @@ export function CreateClientProfileDialog({
   const [idFile, setIdFile] = useState<File | null>(null);
   const [divorceFile, setDivorceFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
+  const [phoneErrors, setPhoneErrors] = useState<Record<string, string>>({});
+  const [timeError, setTimeError] = useState("");
+  const [phoneCountries, setPhoneCountries] = useState<Record<string, string>>({});
 
   const needsDivorceDoc =
     form["marital_status"] === "Divorced" || form["marital_status"] === "Widowed";
+
+  const set = (k: string) => (v: string) => setForm((s) => ({ ...s, [k]: v }));
+
+  function handlePhoneBlur(key: string) {
+    const raw = form[key] ?? "";
+    if (!raw.trim()) {
+      setPhoneErrors((s) => ({ ...s, [key]: "" }));
+      return;
+    }
+    if (!normalizeInternationalPhone(phoneCountries[key] ?? DEFAULT_COUNTRY_ISO, raw)) {
+      setPhoneErrors((s) => ({ ...s, [key]: t("phone_invalid") }));
+    } else {
+      setPhoneErrors((s) => ({ ...s, [key]: "" }));
+    }
+  }
+
+  function handleTimeBlur() {
+    const raw = form["birth_time"] ?? "";
+    if (!raw.trim()) {
+      setTimeError("");
+      return;
+    }
+    if (!normalizeBirthTime(raw)) {
+      setTimeError(t("time_invalid"));
+    } else {
+      setTimeError("");
+    }
+  }
 
   async function submit() {
     if (!form["email"]?.trim() || !form["full_name"]?.trim()) {
@@ -90,11 +178,38 @@ export function CreateClientProfileDialog({
     let profileId: string | null = null;
     try {
       const payload: Record<string, string> = {};
-      for (const f of FIELDS) {
-        const v = form[f.key]?.trim();
-        if (v) payload[f.key] = v;
+      for (const section of SECTIONS) {
+        for (const f of section.fields) {
+          const v = form[f.key]?.trim();
+          if (v) payload[f.key] = v;
+        }
       }
       payload["redirectUrl"] = window.location.origin;
+
+      for (const key of ["phone", "whatsapp"] as const) {
+        const raw = payload[key];
+        if (!raw) continue;
+        const norm = normalizeInternationalPhone(
+          phoneCountries[key] ?? DEFAULT_COUNTRY_ISO,
+          raw,
+        );
+        if (!norm) {
+          toast.error(t("phone_invalid"));
+          return;
+        }
+        payload[key] = norm;
+      }
+
+      const birthTimeRaw = payload["birth_time"];
+      if (birthTimeRaw) {
+        const normTime = normalizeBirthTime(birthTimeRaw);
+        if (!normTime) {
+          toast.error(t("time_invalid"));
+          return;
+        }
+        payload["birth_time"] = normTime;
+      }
+
       const res = await createClientProfile({ data: payload as never });
       profileId = res.id;
 
@@ -195,19 +310,32 @@ export function CreateClientProfileDialog({
           <p className="mt-1 text-sm text-muted-foreground">{t("adm_create_profile_d")}</p>
         </div>
         <div className="grid max-h-[70vh] gap-3 overflow-y-auto p-4 sm:grid-cols-2">
-          {FIELDS.map((f) => (
-            <label key={f.key} className="text-sm">
-              <span className="mb-1 block text-muted-foreground">{t(f.labelKey)}</span>
-              <Input
-                type={f.type ?? "text"}
-                value={form[f.key] ?? ""}
-                onChange={(e) => setForm((s) => ({ ...s, [f.key]: e.target.value }))}
-              />
-            </label>
+          {SECTIONS.map((section) => (
+            <div key={section.titleKey} className="contents">
+              <h3 className="col-span-2 mt-2 border-b border-border pb-1 text-sm font-medium text-primary">
+                {t(section.titleKey)}
+              </h3>
+              {section.fields.map((f) => (
+                <div key={f.key} className={f.full ? "sm:col-span-2" : ""}>
+                  <FormField
+                    field={f}
+                    value={form[f.key] ?? ""}
+                    onChange={set(f.key)}
+                    onPhoneBlur={handlePhoneBlur}
+                    phoneError={phoneErrors[f.key] ?? ""}
+                    phoneIso={phoneCountries[f.key] ?? DEFAULT_COUNTRY_ISO}
+                    onPhoneIso={(c) => setPhoneCountries((s) => ({ ...s, [f.key]: c }))}
+                    onTimeBlur={handleTimeBlur}
+                    timeError={timeError}
+                    t={t}
+                  />
+                </div>
+              ))}
+            </div>
           ))}
 
           <div className="sm:col-span-2 space-y-4 border-t border-border pt-3">
-            <p className="text-sm font-medium text-muted-foreground">{t("adm_upload_docs")}</p>
+            <h3 className="text-sm font-medium text-primary">{t("adm_documents")}</h3>
 
             <FileField label={t("photo")} accept="image/*" file={photo} onFile={setPhoto} />
             <div>
@@ -245,6 +373,124 @@ export function CreateClientProfileDialog({
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function FormField({
+  field,
+  value,
+  onChange,
+  onPhoneBlur,
+  phoneError,
+  phoneIso,
+  onPhoneIso,
+  onTimeBlur,
+  timeError,
+  t,
+}: {
+  field: FieldDef;
+  value: string;
+  onChange: (v: string) => void;
+  onPhoneBlur?: (key: string) => void;
+  phoneError?: string;
+  phoneIso?: string;
+  onPhoneIso?: (iso: string) => void;
+  onTimeBlur?: () => void;
+  timeError?: string;
+  t: (k: string) => string;
+}) {
+  if (field.kind === "choice") {
+    return (
+      <div>
+        <span className="mb-1 block text-sm text-muted-foreground">{t(field.labelKey)}</span>
+        <Choice value={value} onChange={onChange} options={choice(field.options)(t)} />
+      </div>
+    );
+  }
+  if (field.kind === "time") {
+    return (
+      <TimeInput
+        label={t(field.labelKey)}
+        value={value}
+        onChange={onChange}
+        onBlur={onTimeBlur}
+        error={timeError}
+      />
+    );
+  }
+  if (field.kind === "phone") {
+    return (
+      <CountryCodePhoneField
+        label={t(field.labelKey)}
+        iso={phoneIso ?? DEFAULT_COUNTRY_ISO}
+        local={value}
+        onIsoChange={(c) => onPhoneIso?.(c)}
+        onLocalChange={onChange}
+        onLocalBlur={() => {
+          onPhoneBlur?.(field.key);
+        }}
+        error={phoneError}
+      />
+    );
+  }
+  if (field.kind === "lookup") {
+    return (
+      <LookupSelect
+        category={field.category}
+        label={t(field.labelKey)}
+        value={value}
+        onChange={onChange}
+        anyLabel={field.anyLabel}
+      />
+    );
+  }
+  if (field.kind === "textarea") {
+    return (
+      <div>
+        <span className="mb-1 block text-sm text-muted-foreground">{t(field.labelKey)}</span>
+        <Textarea value={value} onChange={(e) => onChange(e.target.value)} />
+      </div>
+    );
+  }
+  return (
+    <div>
+      <span className="mb-1 block text-sm text-muted-foreground">{t(field.labelKey)}</span>
+      <Input
+        type={field.type ?? "text"}
+        min={field.min}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </div>
+  );
+}
+
+function Choice({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: { v: string; l: string }[];
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((o) => (
+        <button
+          key={o.v}
+          type="button"
+          onClick={() => onChange(o.v)}
+          className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
+            value === o.v
+              ? "border-primary bg-primary text-primary-foreground"
+              : "border-border hover:bg-accent/20"
+          }`}
+        >
+          {o.l}
+        </button>
+      ))}
     </div>
   );
 }

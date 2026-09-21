@@ -21,22 +21,35 @@ export type AdminProfile = {
   native_district: string | null;
   state?: string | null;
   address_line?: string | null;
+  pincode?: string | null;
   education_level: string | null;
   education_detail?: string | null;
   profession: string | null;
   job_detail?: string | null;
   annual_income?: string | null;
+  gothram?: string | null;
+  mother_tongue?: string | null;
+  height_cm?: number | null;
+  weight_kg?: number | null;
   father_name?: string | null;
+  father_occupation?: string | null;
   mother_name?: string | null;
+  mother_occupation?: string | null;
   siblings?: string | null;
+  brothers?: number | null;
+  sisters?: number | null;
   family_type?: string | null;
   family_status?: string | null;
   family_details?: string | null;
   pref_notes?: string | null;
   pref_age_min?: number | null;
   pref_age_max?: number | null;
+  pref_height_min_cm?: number | null;
+  pref_marital_status?: string | null;
+  pref_sub_caste?: string | null;
   pref_education?: string | null;
   pref_profession?: string | null;
+  pref_district?: string | null;
   about?: string | null;
   birth_time?: string | null;
   birth_place?: string | null;
@@ -61,6 +74,21 @@ export type ProfileAudit = {
   action: string;
   details: string | null;
   created_at: string;
+};
+
+/**
+ * The client's confirmation/request on record for a profile, drawn from the
+ * existing support-thread messaging. `hasClientConfirmation` is true only when
+ * the client (sender_type "member") has sent a message — email is never proof.
+ */
+export type ClientRequest = {
+  threadId: string | null;
+  subject: string | null;
+  status: string | null;
+  hasClientConfirmation: boolean;
+  latestClientBody: string | null;
+  latestClientAt: string | null;
+  lastMessageAt: string | null;
 };
 
 export type AdminDoc = {
@@ -298,9 +326,18 @@ export function useAdminData() {
   }, []);
 
 
-  /** Admin edits a client's profile on their behalf. Ownership never changes. */
+  /** Admin edits a client's profile. `mode` records whether this was a direct
+   *  admin edit (Admin Created profiles) or done on behalf of the client after
+   *  a client confirmation/request (Client Created profiles). Ownership never
+   *  changes — `profile_created_by` is preserved. */
   const adminUpdateProfile = useCallback(
-    async (profileId: string, patch: Record<string, unknown>, note: string) => {
+    async (
+      profileId: string,
+      patch: Record<string, unknown>,
+      note: string,
+      mode: "direct" | "on_behalf" = "direct",
+      threadId: string | null = null,
+    ) => {
       setBusy(true);
       try {
         const { data: me } = await supabase.auth.getUser();
@@ -315,12 +352,18 @@ export function useAdminData() {
           })
           .eq("id", profileId);
         if (error) throw new Error(error.message);
+        const action =
+          mode === "on_behalf" ? "admin_updated_on_behalf" : "admin_updated";
+        const details =
+          mode === "on_behalf" && threadId
+            ? `${note} (Client confirmation/request in support thread ${threadId}.)`
+            : note;
         await supabase.from("profile_audit").insert({
           profile_id: profileId,
           actor_id: me.user?.id ?? null,
           actor_type: "admin",
-          action: "admin_updated",
-          details: note,
+          action,
+          details,
         });
         try {
           const member = profiles.find((p) => p.id === profileId);
@@ -397,6 +440,36 @@ export function useAdminData() {
     return (data ?? []) as ProfileAudit[];
   }, []);
 
+  /** Loads the record of client confirmation/request from the existing support
+   *  thread messaging. Only a message sent by the client counts as confirmation. */
+  const loadClientRequest = useCallback(async (profileId: string): Promise<ClientRequest | null> => {
+    const { data: thread } = await supabase
+      .from("support_threads")
+      .select("id, subject, status, last_message_at")
+      .eq("user_id", profileId)
+      .order("last_message_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const messages = thread
+      ? await supabase
+          .from("support_messages")
+          .select("id, sender_type, body, created_at")
+          .eq("thread_id", thread.id)
+          .order("created_at", { ascending: true })
+      : null;
+    const clientMessages = (messages?.data ?? []).filter((m) => m.sender_type === "member");
+    const latest = clientMessages.length > 0 ? clientMessages[clientMessages.length - 1] : null;
+    return {
+      threadId: thread?.id ?? null,
+      subject: thread?.subject ?? null,
+      status: thread?.status ?? null,
+      hasClientConfirmation: clientMessages.length > 0,
+      latestClientBody: latest?.body ?? null,
+      latestClientAt: latest?.created_at ?? null,
+      lastMessageAt: thread?.last_message_at ?? null,
+    };
+  }, []);
+
   const storageUsed = docs.reduce((sum, d) => sum + (d.size_bytes ?? 0), 0);
   const dbApprox = profiles.length * 6 * 1024 + docs.length * 1024;
 
@@ -424,6 +497,7 @@ export function useAdminData() {
     adminUpdateProfile,
     requestCorrection,
     loadAudit,
+    loadClientRequest,
   };
 }
 

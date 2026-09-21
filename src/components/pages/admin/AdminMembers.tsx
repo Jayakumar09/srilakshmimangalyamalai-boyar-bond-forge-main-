@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import { ageFrom, useAdminData } from "@/lib/admin-data";
 import type { AdminProfile } from "@/lib/admin-data";
-import { createdByLabel, planLabel, statusLabel } from "@/lib/admin-labels";
+import { createdByLabel, isProfileDraft, planLabel, statusLabel } from "@/lib/admin-labels";
 import { AdminShell } from "@/components/admin/AdminShell";
 import { DataTable, EmptyState, SectionCard, StatusBadge, toneForStatus } from "@/components/admin/AdminUI";
 import { ProfileReviewDialog } from "@/components/admin/ProfileReviewDialog";
@@ -24,7 +24,15 @@ export function AdminMembers() {
 
   const needle = q.trim().toLowerCase();
   const rows = d.profiles.filter((p) => {
-    if (status !== "all" && p.status !== status) return false;
+    if (status !== "all") {
+      const match =
+        status === "draft"
+          ? isProfileDraft(p)
+          : status === "pending"
+            ? p.status === "pending" && Boolean(p.submitted_at)
+            : p.status === status;
+      if (!match) return false;
+    }
     if (plan !== "all" && p.membership_plan !== plan) return false;
     if (origin !== "all" && (p.profile_created_by ?? "client") !== origin) return false;
     if (!needle) return true;
@@ -56,6 +64,7 @@ export function AdminMembers() {
           <select className={selectClass} value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="all">{t("adm_all")}</option>
             <option value="pending">{t("st_pending")}</option>
+            <option value="draft">{t("st_draft")}</option>
             <option value="approved">{t("st_approved")}</option>
             <option value="rejected">{t("st_rejected")}</option>
           </select>
@@ -108,8 +117,8 @@ export function AdminMembers() {
                     </StatusBadge>
                   </td>
                   <td className="py-2 pr-4">
-                    <StatusBadge tone={toneForStatus(p.status)}>
-                      {statusLabel(t, p.status)}
+                    <StatusBadge tone={isProfileDraft(p) ? "neutral" : toneForStatus(p.status)}>
+                      {isProfileDraft(p) ? t("st_draft") : statusLabel(t, p.status)}
                     </StatusBadge>
                   </td>
                   <td className="py-2 pr-4">

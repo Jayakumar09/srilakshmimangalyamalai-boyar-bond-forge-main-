@@ -395,6 +395,9 @@ export type Database = {
           state: string | null
           status: Database["public"]["Enums"]["approval_status"]
           sub_caste: string | null
+          caste: string | null
+          brothers: number | null
+          sisters: number | null
           submitted_at: string | null
           updated_at: string
           weight_kg: number | null
@@ -455,6 +458,9 @@ export type Database = {
           state?: string | null
           status?: Database["public"]["Enums"]["approval_status"]
           sub_caste?: string | null
+          caste?: string | null
+          brothers?: number | null
+          sisters?: number | null
           submitted_at?: string | null
           updated_at?: string
           weight_kg?: number | null
@@ -515,6 +521,9 @@ export type Database = {
           state?: string | null
           status?: Database["public"]["Enums"]["approval_status"]
           sub_caste?: string | null
+          caste?: string | null
+          brothers?: number | null
+          sisters?: number | null
           submitted_at?: string | null
           updated_at?: string
           weight_kg?: number | null

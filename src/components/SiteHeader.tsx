@@ -26,8 +26,13 @@ export function SiteHeader() {
           <span className="grid size-9 place-items-center rounded-full bg-primary font-display text-lg text-primary-foreground">
             ஸ்ரீ
           </span>
-          <span className="font-display text-lg leading-tight font-semibold sm:text-xl">
-            {t("brand")}
+          <span className="leading-tight">
+            <span className="block font-display text-lg font-semibold sm:text-xl">
+              {t("brand")}
+            </span>
+            <span className="block font-display text-lg font-semibold sm:text-xl">
+              Boyar Matrimony
+            </span>
           </span>
         </Link>
         <LanguageToggle className="hidden sm:inline-flex" />

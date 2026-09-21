@@ -7,6 +7,8 @@ import { useSession } from "@/lib/session";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
 import { Button } from "@/components/ui/button";
+import { formatPhoneForDisplay } from "@/lib/phone";
+import { formatBirthTime } from "@/lib/format";
 
 type Profile = Record<string, string | number | null> & {
   client_profile_id: string | null;
@@ -67,8 +69,8 @@ export function DashboardPage() {
         { label: t("mother_tongue"), value: v("mother_tongue") },
         { label: t("height"), value: v("height_cm") },
         { label: t("weight"), value: v("weight_kg") },
-        { label: t("phone"), value: v("phone") },
-        { label: t("whatsapp"), value: v("whatsapp") },
+        { label: t("phone"), value: formatPhoneForDisplay(v("phone")) },
+        { label: t("whatsapp"), value: formatPhoneForDisplay(v("whatsapp")) },
         { label: t("address"), value: v("address_line") },
         { label: t("city"), value: v("city") },
         { label: t("district"), value: v("native_district") },
@@ -83,11 +85,16 @@ export function DashboardPage() {
         { label: t("father_occ"), value: v("father_occupation") },
         { label: t("mother_name"), value: v("mother_name") },
         { label: t("mother_occ"), value: v("mother_occupation") },
-        { label: t("siblings"), value: v("siblings") },
+        ...(profile["brothers"] !== null || profile["sisters"] !== null
+          ? [
+              { label: t("brothers"), value: v("brothers") },
+              { label: t("sisters"), value: v("sisters") },
+            ]
+          : [{ label: t("siblings"), value: v("siblings") }]),
         { label: t("family_type"), value: v("family_type") },
         { label: t("family_status"), value: v("family_status") },
         { label: t("family_details"), value: v("family_details") },
-        { label: t("birth_time"), value: v("birth_time") },
+        { label: t("birth_time"), value: formatBirthTime(v("birth_time")) },
         { label: t("birth_place"), value: v("birth_place") },
         { label: t("about"), value: v("about") },
       ].filter((r) => r.value !== null && r.value !== undefined && String(r.value).trim() !== "")

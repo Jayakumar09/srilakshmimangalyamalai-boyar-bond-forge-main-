@@ -17,12 +17,14 @@ export function LookupSelect({
   value,
   onChange,
   required,
+  anyLabel,
 }: {
   category: "sub_caste" | "profession" | "native_district";
   label: string;
   value: string;
   onChange: (v: string) => void;
   required?: boolean;
+  anyLabel?: string | undefined;
 }) {
   const { lang, t } = useI18n();
   const [options, setOptions] = useState<Option[]>([]);
@@ -75,7 +77,7 @@ export function LookupSelect({
       </Label>
       <Input
         value={query}
-        placeholder={t("type_to_add")}
+        placeholder={anyLabel && value === "" ? t(anyLabel) : t("type_to_add")}
         onChange={(e) => {
           setQuery(e.target.value);
           onChange(e.target.value);
@@ -86,6 +88,22 @@ export function LookupSelect({
       />
       {open && (
         <div className="absolute z-30 mt-1 max-h-60 w-full overflow-auto rounded-md border border-border bg-popover p-1 shadow-lg">
+          {anyLabel && (
+            <>
+              <button
+                type="button"
+                className="block w-full rounded px-2 py-1.5 text-left text-sm font-medium text-muted-foreground hover:bg-accent/30"
+                onMouseDown={() => {
+                  onChange("");
+                  setQuery("");
+                  setOpen(false);
+                }}
+              >
+                {t(anyLabel)}
+              </button>
+              <div className="my-1 border-t border-border" />
+            </>
+          )}
           {filtered.map((o) => (
             <button
               key={o.id}

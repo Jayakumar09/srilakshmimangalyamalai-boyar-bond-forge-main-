@@ -6,10 +6,12 @@
 // You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import { loadEnv } from "vite";
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 
 // Load all env vars (including non VITE_ ones) into process.env for server routes only.
 const serverEnv = loadEnv(process.env["NODE_ENV"] ?? "development", process.cwd(), "");
@@ -29,5 +31,15 @@ export default defineConfig({
         entities: path.resolve(__dirname, "node_modules/entities"),
       },
     },
+    plugins: [
+      {
+        name: "dev-node-websocket",
+        configureServer(_server) {
+          if (globalThis.WebSocket || !process.versions?.node) return;
+          const ws = require("ws") as { WebSocket: typeof WebSocket };
+          globalThis.WebSocket = ws.WebSocket;
+        },
+      },
+    ],
   },
 });
