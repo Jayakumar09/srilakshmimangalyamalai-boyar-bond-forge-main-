@@ -30,7 +30,7 @@ export function SiteHeader() {
             <span className="block font-display text-lg font-semibold sm:text-xl">
               {t("brand")}
             </span>
-            <span className="block font-display text-lg font-semibold sm:text-xl">
+            <span className="block font-display text-xl font-semibold sm:text-2xl">
               Boyar Matrimony
             </span>
           </span>

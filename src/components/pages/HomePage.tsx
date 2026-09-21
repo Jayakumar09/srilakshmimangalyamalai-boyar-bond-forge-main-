@@ -64,13 +64,16 @@ export function HomePage() {
       <section className="hero-surface relative overflow-hidden">
         <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 py-16 md:grid-cols-2 md:py-24">
           <div>
-            <p className="text-sm tracking-[0.2em] uppercase opacity-80">
+            <p className="text-sm tracking-[0.25em] uppercase opacity-80">
               srilakshmimangalyamalai.com
             </p>
-            <h1 className="mt-4 font-display text-4xl leading-tight font-semibold sm:text-5xl md:text-6xl">
+            <h1 className="mt-5 font-display text-5xl leading-tight font-semibold sm:text-6xl md:text-7xl">
               {t("brand")}
             </h1>
-            <div className="gold-rule mt-5 w-32" />
+            <p className="mt-1 font-display text-2xl font-semibold sm:text-3xl md:text-4xl">
+              Boyar Matrimony
+            </p>
+            <div className="gold-rule mt-6 w-32" />
             <p className="mt-5 max-w-lg text-base opacity-90 sm:text-lg">{t("tagline")}</p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Button asChild size="lg" variant="secondary">
