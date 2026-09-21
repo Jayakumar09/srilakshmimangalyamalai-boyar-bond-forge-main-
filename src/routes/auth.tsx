@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 import { Eye, EyeOff } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { authRedirectOrigin } from "@/lib/auth-redirect";
 import { useI18n } from "@/lib/i18n";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
@@ -32,19 +33,6 @@ const schema = z.object({
   password: z.string().min(8).max(72),
   fullName: z.string().trim().max(100).optional(),
 });
-
-/**
- * Base URL baked into Supabase confirmation/recovery email links.
- * Defaults to the origin the signup page was loaded from, so desktop
- * localhost and Android-on-LAN both get a link the device can open.
- * Override with VITE_AUTH_REDIRECT_URL to force a specific origin
- * (e.g. the PC's LAN URL while testing on a phone).
- */
-function authRedirectOrigin(): string {
-  const configured = import.meta.env["VITE_AUTH_REDIRECT_URL"];
-  if (configured && configured.trim()) return configured.trim().replace(/\/+$/, "");
-  return window.location.origin;
-}
 
 function AuthPage() {
   const { t, lang } = useI18n();
