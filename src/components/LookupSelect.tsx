@@ -19,7 +19,7 @@ export function LookupSelect({
   required,
   anyLabel,
 }: {
-  category: "sub_caste" | "profession" | "native_district";
+  category: "sub_caste" | "profession" | "native_district" | "occupation";
   label: string;
   value: string;
   onChange: (v: string) => void;

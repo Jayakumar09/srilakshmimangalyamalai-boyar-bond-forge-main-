@@ -14,6 +14,7 @@ export type AdminProfile = {
   gender: string | null;
   date_of_birth: string | null;
   marital_status: string | null;
+  caste?: string | null;
   sub_caste: string | null;
   phone: string | null;
   whatsapp?: string | null;

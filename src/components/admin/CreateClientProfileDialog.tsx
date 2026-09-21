@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useI18n } from "@/lib/i18n";
 import { createClientProfile } from "@/lib/admin-profiles.functions";
@@ -10,6 +10,8 @@ import { normalizeBirthTime } from "@/lib/format";
 import { supabase } from "@/integrations/supabase/client";
 import {
   CASTE_OPTIONS,
+  COURSES_BY_LEVEL,
+  COURSE_OTHER,
   EDUCATION_LEVELS,
   FAMILY_STATUSES,
   FAMILY_TYPES,
@@ -27,7 +29,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Upload } from "lucide-react";
 
-type LookupCategory = "sub_caste" | "profession" | "native_district";
+type LookupCategory = "sub_caste" | "profession" | "native_district" | "occupation";
 
 type FieldDef =
   | { kind: "input"; key: string; labelKey: string; type?: string; min?: number; full?: boolean }
@@ -35,6 +37,7 @@ type FieldDef =
   | { kind: "time"; key: string; labelKey: string; full?: boolean }
   | { kind: "textarea"; key: string; labelKey: string; full?: boolean }
   | { kind: "choice"; key: string; labelKey: string; options: ProfileOption[]; full?: boolean }
+  | { kind: "course"; key: string; labelKey: string; full?: boolean }
   | {
       kind: "lookup";
       key: string;
@@ -79,7 +82,7 @@ const SECTIONS: { titleKey: string; fields: FieldDef[] }[] = [
     titleKey: "adm_education",
     fields: [
       { kind: "choice", key: "education_level", labelKey: "adm_f_education", options: EDUCATION_LEVELS },
-      { kind: "input", key: "education_detail", labelKey: "education_detail" },
+      { kind: "course", key: "education_detail", labelKey: "education_detail", full: true },
       { kind: "lookup", key: "profession", labelKey: "adm_f_profession", category: "profession" },
       { kind: "input", key: "job_detail", labelKey: "job_detail" },
       { kind: "input", key: "annual_income", labelKey: "income" },
@@ -92,9 +95,9 @@ const SECTIONS: { titleKey: string; fields: FieldDef[] }[] = [
       { kind: "choice", key: "family_type", labelKey: "family_type", options: FAMILY_TYPES },
       { kind: "choice", key: "family_status", labelKey: "family_status", options: FAMILY_STATUSES },
       { kind: "input", key: "father_name", labelKey: "father_name" },
-      { kind: "input", key: "father_occupation", labelKey: "father_occ" },
+      { kind: "lookup", key: "father_occupation", labelKey: "father_occ", category: "occupation" },
       { kind: "input", key: "mother_name", labelKey: "mother_name" },
-      { kind: "input", key: "mother_occupation", labelKey: "mother_occ" },
+      { kind: "lookup", key: "mother_occupation", labelKey: "mother_occ", category: "occupation" },
       { kind: "input", key: "brothers", labelKey: "brothers", type: "number", min: 0 },
       { kind: "input", key: "sisters", labelKey: "sisters", type: "number", min: 0 },
       { kind: "textarea", key: "family_details", labelKey: "adm_f_family", full: true },
@@ -327,6 +330,7 @@ export function CreateClientProfileDialog({
                     onPhoneIso={(c) => setPhoneCountries((s) => ({ ...s, [f.key]: c }))}
                     onTimeBlur={handleTimeBlur}
                     timeError={timeError}
+                    educationLevel={form["education_level"] ?? ""}
                     t={t}
                   />
                 </div>
@@ -387,6 +391,7 @@ function FormField({
   onPhoneIso,
   onTimeBlur,
   timeError,
+  educationLevel,
   t,
 }: {
   field: FieldDef;
@@ -398,6 +403,7 @@ function FormField({
   onPhoneIso?: (iso: string) => void;
   onTimeBlur?: () => void;
   timeError?: string;
+  educationLevel?: string;
   t: (k: string) => string;
 }) {
   if (field.kind === "choice") {
@@ -434,6 +440,16 @@ function FormField({
       />
     );
   }
+  if (field.kind === "course") {
+    return (
+      <CourseField
+        label={t(field.labelKey)}
+        level={educationLevel ?? ""}
+        value={value}
+        onChange={onChange}
+      />
+    );
+  }
   if (field.kind === "lookup") {
     return (
       <LookupSelect
@@ -462,6 +478,66 @@ function FormField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
+    </div>
+  );
+}
+
+function CourseField({
+  label,
+  level,
+  value,
+  onChange,
+}: {
+  label: string;
+  level: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const options = COURSES_BY_LEVEL[level] ?? [];
+  const [other, setOther] = useState(false);
+
+  useEffect(() => {
+    setOther(false);
+    if (value && !options.some((o) => o.v === value)) {
+      onChange("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [level]);
+
+  useEffect(() => {
+    if (value && options.length > 0 && !options.some((o) => o.v === value)) {
+      setOther(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, level]);
+
+  if (options.length === 0) return null;
+
+  return (
+    <div>
+      <span className="mb-1 block text-sm text-muted-foreground">{label}</span>
+      <Choice
+        value={other ? COURSE_OTHER : value}
+        onChange={(v) => {
+          if (v === COURSE_OTHER) {
+            setOther(true);
+            onChange("");
+          } else {
+            setOther(false);
+            onChange(v);
+          }
+        }}
+        options={options}
+      />
+      {other && (
+        <Input
+          className="mt-2"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Type course"
+          maxLength={120}
+        />
+      )}
     </div>
   );
 }

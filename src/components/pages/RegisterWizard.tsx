@@ -21,6 +21,9 @@ import { normalizeInternationalPhone, splitInternationalPhone } from "@/lib/phon
 import { DEFAULT_COUNTRY_ISO } from "@/lib/country-codes";
 import { isValidBirthTimeStrict, canonicalBirthTime } from "@/lib/format";
 import {
+  CASTE_OPTIONS,
+  COURSES_BY_LEVEL,
+  COURSE_OTHER,
   EDUCATION_LEVELS,
   FAMILY_STATUSES,
   FAMILY_TYPES,
@@ -55,6 +58,7 @@ export function RegisterWizard() {
   const [phoneIso, setPhoneIso] = useState<Record<string, string>>({});
   const [birthError, setBirthError] = useState("");
   const [phoneErrors, setPhoneErrors] = useState<Record<string, string>>({});
+  const [courseOther, setCourseOther] = useState(false);
 
   const legalPrefix = lang === "ta" ? "/ta" : "";
 
@@ -98,6 +102,14 @@ export function RegisterWizard() {
     void loadProfile();
   }, []);
 
+  useEffect(() => {
+    const detail = form["education_detail"] ?? "";
+    const opts = COURSES_BY_LEVEL[form["education_level"] ?? ""] ?? [];
+    if (detail && opts.length && !opts.some((o) => o.v === detail)) {
+      setCourseOther(true);
+    }
+  }, [form["education_level"], form["education_detail"]]);
+
   /** Persist the typed fields without touching documents, consent or approval status. */
   function profileFields(userId: string, email: string | null) {
     const num = (k: string) => (form[k] ? Number(form[k]) : null);
@@ -115,6 +127,7 @@ export function RegisterWizard() {
       gender: form["gender"] ?? null,
       date_of_birth: form["date_of_birth"] || null,
       marital_status: form["marital_status"] ?? null,
+      caste: form["caste"] ?? null,
       sub_caste: form["sub_caste"] ?? null,
       gothram: form["gothram"] ?? null,
       mother_tongue: form["mother_tongue"] ?? null,
@@ -136,7 +149,8 @@ export function RegisterWizard() {
       father_occupation: form["father_occupation"] ?? null,
       mother_name: form["mother_name"] ?? null,
       mother_occupation: form["mother_occupation"] ?? null,
-      siblings: form["siblings"] ?? null,
+      brothers: num("brothers"),
+      sisters: num("sisters"),
       family_type: form["family_type"] ?? null,
       family_status: form["family_status"] ?? null,
       family_details: form["family_details"] ?? null,
@@ -217,6 +231,8 @@ export function RegisterWizard() {
 
   const needsDivorceDoc =
     form["marital_status"] === "Divorced" || form["marital_status"] === "Widowed";
+
+  const courseOptions = COURSES_BY_LEVEL[form["education_level"] ?? ""] ?? [];
 
   async function runAiCheck() {
     if (!photo || !idFile) {
@@ -430,6 +446,13 @@ export function RegisterWizard() {
                   options={choice(MARITAL_STATUSES)(t)}
                 />
               </Labeled>
+              <Labeled label={t("caste")} required>
+                <Choice
+                  value={form["caste"] ?? ""}
+                  onChange={set("caste")}
+                  options={choice(CASTE_OPTIONS)(t)}
+                />
+              </Labeled>
               <LookupSelect
                 category="sub_caste"
                 label={t("sub_caste")}
@@ -521,13 +544,46 @@ export function RegisterWizard() {
               <Labeled label={t("education_level")} required>
                 <Choice
                   value={form["education_level"] ?? ""}
-                  onChange={set("education_level")}
+                  onChange={(v) => {
+                    set("education_level")(v);
+                    setCourseOther(false);
+                    const detail = form["education_detail"];
+                    const next = COURSES_BY_LEVEL[v] ?? [];
+                    if (detail && !next.some((o) => o.v === detail)) {
+                      setForm((f) => ({ ...f, education_detail: "" }));
+                    }
+                  }}
                   options={choice(EDUCATION_LEVELS)(t)}
                 />
               </Labeled>
-              <Labeled label={t("education_detail")}>
-                <Input {...field("education_detail")} maxLength={120} />
-              </Labeled>
+              {courseOptions.length > 0 && (
+                <Labeled label={t("education_detail")} full>
+                  <Choice
+                    value={courseOther ? COURSE_OTHER : form["education_detail"] ?? ""}
+                    onChange={(v) => {
+                      if (v === COURSE_OTHER) {
+                        setCourseOther(true);
+                        setForm((f) => ({ ...f, education_detail: "" }));
+                      } else {
+                        setCourseOther(false);
+                        setForm((f) => ({ ...f, education_detail: v }));
+                      }
+                    }}
+                    options={courseOptions}
+                  />
+                  {courseOther && (
+                    <Input
+                      className="mt-2"
+                      value={form["education_detail"] ?? ""}
+                      onChange={(e) =>
+                        setForm((f) => ({ ...f, education_detail: e.target.value }))
+                      }
+                      placeholder={t("type_to_add")}
+                      maxLength={120}
+                    />
+                  )}
+                </Labeled>
+              )}
               <LookupSelect
                 category="profession"
                 label={t("profession")}
@@ -551,17 +607,26 @@ export function RegisterWizard() {
               <Labeled label={t("father_name")}>
                 <Input {...field("father_name")} maxLength={100} />
               </Labeled>
-              <Labeled label={t("father_occ")}>
-                <Input {...field("father_occupation")} maxLength={100} />
-              </Labeled>
+              <LookupSelect
+                category="occupation"
+                label={t("father_occ")}
+                value={form["father_occupation"] ?? ""}
+                onChange={set("father_occupation")}
+              />
               <Labeled label={t("mother_name")}>
                 <Input {...field("mother_name")} maxLength={100} />
               </Labeled>
-              <Labeled label={t("mother_occ")}>
-                <Input {...field("mother_occupation")} maxLength={100} />
+              <LookupSelect
+                category="occupation"
+                label={t("mother_occ")}
+                value={form["mother_occupation"] ?? ""}
+                onChange={set("mother_occupation")}
+              />
+              <Labeled label={t("brothers")}>
+                <Input type="number" min={0} {...field("brothers")} />
               </Labeled>
-              <Labeled label={t("siblings")}>
-                <Input {...field("siblings")} maxLength={120} />
+              <Labeled label={t("sisters")}>
+                <Input type="number" min={0} {...field("sisters")} />
               </Labeled>
               <Labeled label={t("family_type")}>
                 <Choice

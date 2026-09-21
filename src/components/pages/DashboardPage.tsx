@@ -64,6 +64,7 @@ export function DashboardPage() {
         { label: t("gender"), value: v("gender") },
         { label: t("dob"), value: v("date_of_birth") },
         { label: t("marital_status"), value: v("marital_status") },
+        { label: t("caste"), value: v("caste") },
         { label: t("sub_caste"), value: v("sub_caste") },
         { label: t("gothram"), value: v("gothram") },
         { label: t("mother_tongue"), value: v("mother_tongue") },

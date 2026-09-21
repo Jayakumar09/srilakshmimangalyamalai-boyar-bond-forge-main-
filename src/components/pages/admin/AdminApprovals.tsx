@@ -49,7 +49,7 @@ export function AdminApprovals() {
               >
                 <div className="grid gap-2 text-sm sm:grid-cols-2">
                   <p className="text-muted-foreground">
-                    {[p.gender, p.date_of_birth, p.marital_status, p.sub_caste].filter(Boolean).join(" · ")}
+                    {[p.gender, p.date_of_birth, p.marital_status, p.caste, p.sub_caste].filter(Boolean).join(" · ")}
                   </p>
                   <p className="text-muted-foreground">
                     {[p.education_level, p.profession, p.native_district].filter(Boolean).join(" · ")}

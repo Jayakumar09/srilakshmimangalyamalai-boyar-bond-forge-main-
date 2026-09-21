@@ -36,7 +36,7 @@ export function AdminMembers() {
     if (plan !== "all" && p.membership_plan !== plan) return false;
     if (origin !== "all" && (p.profile_created_by ?? "client") !== origin) return false;
     if (!needle) return true;
-    return [p.full_name, p.email, p.phone, p.city, p.native_district]
+    return [p.full_name, p.email, p.phone, p.city, p.native_district, p.caste, p.sub_caste, p.gothram, p.profession]
       .filter(Boolean)
       .some((v) => String(v).toLowerCase().includes(needle));
   });
