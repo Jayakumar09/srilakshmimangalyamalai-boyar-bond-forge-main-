@@ -1,5 +1,13 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useSyncExternalStore,
+} from "react";
 import type { ReactNode } from "react";
+import { useRouterState } from "@tanstack/react-router";
 
 export type Lang = "en" | "ta";
 
@@ -7,6 +15,14 @@ type Dict = Record<string, { en: string; ta: string }>;
 
 export const dict: Dict = {
   brand: { en: "Sri Lakshmi Mangalya Malai", ta: "ஸ்ரீ லட்சுமி மங்கல்ய மாலை" },
+  brand_line2: { en: "Boyar Matrimony", ta: "பொயர் திருமண சேவை" },
+  brand_badge: { en: "Sri", ta: "ஸ்ரீ" },
+  lang_en: { en: "English", ta: "ஆங்கிலம்" },
+  lang_ta: { en: "Tamil", ta: "தமிழ்" },
+  hero_img_alt: {
+    en: "Tamil wedding couple with garlands",
+    ta: "மாலைகளுடன் தமிழ் திருமண தம்பதியர்",
+  },
   tagline: {
     en: "A verified, admin-approved matrimony service for the Boyar community",
     ta: "பொயர் சமுதாயத்திற்கான சரிபார்க்கப்பட்ட, நிர்வாக ஒப்புதல் பெற்ற திருமண சேவை",
@@ -114,6 +130,8 @@ export const dict: Dict = {
     ta: "இந்த மீட்டமைப்பு இணைப்பு தவறானது அல்லது காலாவதியாகிவிட்டது.",
   },
   reset_back: { en: "Back to sign in", ta: "உள்நுழைவுக்குத் திரும்பு" },
+  show_password: { en: "Show password", ta: "கடவுச்சொல்லைக் காட்டு" },
+  hide_password: { en: "Hide password", ta: "கடவுச்சொல்லை மறை" },
   // registration
   reg_title: { en: "Registration", ta: "பதிவு" },
   step_basic: { en: "Basic details", ta: "அடிப்படை விவரங்கள்" },
@@ -171,6 +189,27 @@ export const dict: Dict = {
   pref_notes: { en: "Other expectations", ta: "பிற எதிர்பார்ப்புகள்" },
   birth_time: { en: "Birth time", ta: "பிறந்த நேரம்" },
   time_invalid: { en: "Enter a valid time (e.g. 06:30 AM)", ta: "சரியான நேரத்தை உள்ளிடவும் (எ.கா. 06:30 AM)" },
+  hour: { en: "Hour", ta: "மணி" },
+  minute: { en: "Minute", ta: "நிமிடம்" },
+  time_period: { en: "AM/PM", ta: "AM/PM" },
+  other: { en: "Other", ta: "மற்றவை" },
+  other_pick_from_list: { en: "← Choose from the list", ta: "← பட்டியலிலிருந்து தேர்ந்தெடுக்கவும்" },
+  msg_img_decode_failed: {
+    en: "This image could not be read. Please upload a valid JPG or PNG image.",
+    ta: "இந்தப் படத்தைப் படிக்க முடியவில்லை. சரியான JPG அல்லது PNG படத்தைப் பதிவேற்றவும்.",
+  },
+  msg_pdf_invalid: {
+    en: "This PDF could not be read. Please upload a valid PDF file.",
+    ta: "இந்த PDF-ஐப் படிக்க முடியவில்லை. சரியான PDF கோப்பைப் பதிவேற்றவும்.",
+  },
+  msg_file_unsupported: {
+    en: "Unsupported file type. Please upload JPG, PNG, or PDF.",
+    ta: "ஆதரிக்கப்படாத கோப்பு வகை. JPG, PNG அல்லது PDF-ஐப் பதிவேற்றவும்.",
+  },
+  msg_pdf_ai_skip: {
+    en: "The AI pre-check runs on image scans only; your PDF will be reviewed manually by the admin.",
+    ta: "AI முன் சரிபார்ப்பு பட ஸ்கேன்களுக்கு மட்டும்; உங்கள் PDF நிர்வாகியால் கைமுறையாக ஆய்வு செய்யப்படும்.",
+  },
   birth_place: { en: "Birth place", ta: "பிறந்த இடம்" },
   about: { en: "About yourself", ta: "உங்களைப் பற்றி" },
   photo: { en: "Clear profile photo", ta: "தெளிவான புகைப்படம்" },
@@ -487,6 +526,47 @@ export const dict: Dict = {
   st_suspended: { en: "Suspended", ta: "இடைநிறுத்தப்பட்டது" },
   method_online: { en: "Online", ta: "ஆன்லைன்" },
   method_manual: { en: "UPI / manual", ta: "UPI / நேரடி" },
+  // auth + checkout validation / status messages
+  msg_something_wrong: { en: "Something went wrong", ta: "ஏதோ தவறு ஏற்பட்டது" },
+  auth_invalid: { en: "Please check your details", ta: "உங்கள் விவரங்களைச் சரிபார்க்கவும்" },
+  auth_confirm_email: {
+    en: "Please check your email to confirm your account.",
+    ta: "கணக்கை உறுதிப்படுத்த உங்கள் மின்னஞ்சலைச் சரிபார்க்கவும்.",
+  },
+  checkout_birth_required: {
+    en: "Enter the exact birth date, time and place first.",
+    ta: "சரியான பிறந்த தேதி, நேரம் மற்றும் இடத்தை முதலில் உள்ளிடவும்.",
+  },
+  utr_required: { en: "Enter the UTR / reference number.", ta: "UTR / குறிப்பு எண்ணை உள்ளிடவும்." },
+  payment_success: {
+    en: "Payment successful. Your plan is active.",
+    ta: "கட்டணம் வெற்றிகரமாக முடிந்தது. உங்கள் திட்டம் செயலில் உள்ளது.",
+  },
+  pay_window_load_fail: {
+    en: "Could not load the payment window",
+    ta: "கட்டண சாளரத்தை ஏற்ற முடியவில்லை",
+  },
+  confirm_payment_fail: {
+    en: "Could not confirm payment",
+    ta: "கட்டணத்தை உறுதிப்படுத்த முடியவில்லை",
+  },
+  pay_start_fail: { en: "Payment could not be started", ta: "கட்டணத்தைத் தொடங்க முடியவில்லை" },
+  pay_unavailable: {
+    en: "Online payment is not switched on yet. Please use the UPI / bank transfer option below.",
+    ta: "ஆன்லைன் கட்டணம் இன்னும் இயக்கப்படவில்லை. கீழே உள்ள UPI / வங்கி பரிமாற்ற விருப்பத்தைப் பயன்படுத்தவும்.",
+  },
+  msg_open_report_fail: { en: "Could not open the report", ta: "அறிக்கையைத் திறக்க முடியவில்லை" },
+  method_upi: { en: "UPI", ta: "UPI" },
+  method_card: { en: "Card", ta: "கார்டு" },
+  method_bank: { en: "Bank transfer", ta: "வங்கி பரிமாற்றம்" },
+  profile_blocked: { en: "Profile blocked", ta: "சுயவிவரம் தடுக்கப்பட்டது" },
+  report_prompt: {
+    en: "Why are you reporting this profile?",
+    ta: "இந்த சுயவிவரத்தை ஏன் புகார் செய்கிறீர்கள்?",
+  },
+  reported_ok: { en: "Reported to the admin", ta: "நிர்வாகத்திற்கு புகார் செய்யப்பட்டது" },
+  yrs_unit: { en: "yrs", ta: "வயது" },
+  last_updated: { en: "Last updated", ta: "கடைசியாக புதுப்பிக்கப்பட்டது" },
   // Profile origin
   adm_created_by: { en: "Created by", ta: "உருவாக்கியவர்" },
   adm_client_created: { en: "Client Created", ta: "வாடிக்கையாளர் உருவாக்கியது" },
@@ -662,25 +742,100 @@ type Ctx = { lang: Lang; setLang: (l: Lang) => void; t: (k: keyof typeof dict | 
 
 const I18nContext = createContext<Ctx>({ lang: "en", setLang: () => {}, t: (k) => String(k) });
 
+const LANG_STORAGE_KEY = "slmm-lang";
+
+/** English twin page bases — these routes have a Tamil twin under /ta/ or /tn/. */
+const ENGLISH_TWIN_BASES = [
+  "/",
+  "/terms",
+  "/privacy",
+  "/refund-policy",
+  "/register",
+  "/dashboard",
+  "/jathagam",
+  "/support",
+];
+
+/**
+ * Resolves the language a twin URL requires, or null when the URL path does not
+ * carry a language (keeps the persisted preference for those pages).
+ */
+export function langFromPathname(pathname: string): Lang | null {
+  if (pathname === "/ta" || pathname.startsWith("/ta/")) return "ta";
+  if (pathname === "/tn" || pathname.startsWith("/tn/")) return "ta";
+  if (pathname === "/en" || pathname.startsWith("/en/")) return "en";
+  if (ENGLISH_TWIN_BASES.includes(pathname)) return "en";
+  return null;
+}
+
+function readStoredLang(): Lang {
+  if (typeof window === "undefined") return "en";
+  try {
+    const stored = window.localStorage.getItem(LANG_STORAGE_KEY);
+    if (stored === "ta" || stored === "en") return stored;
+  } catch {
+    /* ignore */
+  }
+  return "en";
+}
+
+function updateDocumentLang(l: Lang) {
+  if (typeof document !== "undefined") document.documentElement.lang = l;
+}
+
+/**
+ * Single shared language store. This is THE source of truth for the language
+ * preference: every provider (root, TamilPage, EnglishPage) reads from it,
+ * every toggle writes to it, and it is the only place that touches localStorage.
+ * A forced twin page only overrides the *rendered* language for its own subtree
+ * (the URL is the language there) — it never writes the preference by itself.
+ *
+ * The initial value prefers the URL on first load so a stale "ta" in storage
+ * (written by old Tamil pages before this fix) can never make an English URL
+ * flash/stay in Tamil.
+ */
+let currentLang: Lang =
+  typeof window !== "undefined"
+    ? langFromPathname(window.location.pathname) ?? readStoredLang()
+    : "en";
+const localeListeners = new Set<() => void>();
+
+export function getLocale(): Lang {
+  return currentLang;
+}
+
+export function subscribeLocale(fn: () => void): () => void {
+  localeListeners.add(fn);
+  return () => {
+    localeListeners.delete(fn);
+  };
+}
+
+export function setLocale(l: Lang) {
+  if (currentLang === l) return;
+  currentLang = l;
+  try {
+    window.localStorage.setItem(LANG_STORAGE_KEY, l);
+  } catch {
+    /* ignore */
+  }
+  updateDocumentLang(l);
+  localeListeners.forEach((fn) => fn());
+}
+
 export function I18nProvider({ children, force }: { children: ReactNode; force?: Lang }) {
-  const [lang, setLangState] = useState<Lang>(force ?? "en");
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
 
+  const storeLang = useSyncExternalStore(subscribeLocale, getLocale, getLocale);
+
+  // Twin URLs carry their language; keep the shared preference in sync so a
+  // reload, back/forward navigation or a non-twin page never shows stale text.
   useEffect(() => {
-    if (force) {
-      setLangState(force);
-      window.localStorage.setItem("slmm-lang", force);
-      document.documentElement.lang = force;
-      return;
-    }
-    const stored = window.localStorage.getItem("slmm-lang");
-    if (stored === "ta" || stored === "en") setLangState(stored);
-  }, [force]);
+    const fromUrl = langFromPathname(pathname);
+    if (fromUrl) setLocale(fromUrl);
+  }, [pathname]);
 
-  const setLang = useCallback((l: Lang) => {
-    setLangState(l);
-    window.localStorage.setItem("slmm-lang", l);
-    document.documentElement.lang = l;
-  }, []);
+  const lang = force ?? storeLang;
 
   const t = useCallback(
     (k: string) => {
@@ -690,6 +845,8 @@ export function I18nProvider({ children, force }: { children: ReactNode; force?:
     },
     [lang],
   );
+
+  const setLang = useCallback((l: Lang) => setLocale(l), []);
 
   const value = useMemo(() => ({ lang, setLang, t }), [lang, setLang, t]);
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;

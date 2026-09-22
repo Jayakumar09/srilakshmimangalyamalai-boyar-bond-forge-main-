@@ -1,5 +1,6 @@
 import { useRouterState } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/lib/i18n";
 
 /** Pages that exist as a full Tamil twin under /ta. */
 const TWINS = [
@@ -10,6 +11,7 @@ const TWINS = [
   "/register",
   "/dashboard",
   "/jathagam",
+  "/support",
 ];
 
 export function toEnglishPath(pathname: string) {
@@ -25,8 +27,8 @@ export function toTamilPath(pathname: string) {
 }
 
 export function LanguageToggle({ className }: { className?: string }) {
+  const { lang, setLang, t } = useI18n();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const isTamil = pathname === "/ta" || pathname.startsWith("/ta/");
   const tamilHref = toTamilPath(pathname);
   const englishHref = toEnglishPath(pathname);
 
@@ -41,21 +43,23 @@ export function LanguageToggle({ className }: { className?: string }) {
     >
       <a
         href={englishHref}
+        onClick={() => setLang("en")}
         className={cn(
           "rounded-full px-3 py-1 transition-colors",
-          !isTamil ? "bg-primary text-primary-foreground" : "text-muted-foreground",
+          lang === "en" ? "bg-primary text-primary-foreground" : "text-muted-foreground",
         )}
       >
-        English
+        {t("lang_en")}
       </a>
       <a
         href={tamilHref}
+        onClick={() => setLang("ta")}
         className={cn(
           "rounded-full px-3 py-1 transition-colors",
-          isTamil ? "bg-primary text-primary-foreground" : "text-muted-foreground",
+          lang === "ta" ? "bg-primary text-primary-foreground" : "text-muted-foreground",
         )}
       >
-        தமிழ்
+        {t("lang_ta")}
       </a>
     </div>
   );

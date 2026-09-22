@@ -71,7 +71,7 @@ export function HomePage() {
               {t("brand")}
             </h1>
             <p className="mt-1 font-display text-2xl font-semibold sm:text-3xl md:text-4xl">
-              Boyar Matrimony
+              {t("brand_line2")}
             </p>
             <div className="gold-rule mt-6 w-32" />
             <p className="mt-5 max-w-lg text-base opacity-90 sm:text-lg">{t("tagline")}</p>
@@ -95,7 +95,7 @@ export function HomePage() {
           <div className="relative">
             <img
               src={heroImage}
-              alt="Tamil wedding couple with garlands"
+              alt={t("hero_img_alt")}
               width={1408}
               height={1008}
               className="rounded-2xl shadow-[var(--shadow-lift)] ring-1 ring-white/20"

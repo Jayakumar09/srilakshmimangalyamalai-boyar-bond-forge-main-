@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { uploadToR2 } from "@/lib/upload";
+import { friendlyUploadError } from "@/lib/compress";
 import { createViewUrl } from "@/lib/storage.functions";
 import { createPaymentOrder, confirmPaymentOrder, PRICES } from "@/lib/payments.functions";
 import { notifyPaymentSubmitted } from "@/lib/notify.functions";
@@ -112,14 +113,14 @@ function Checkout() {
 
   async function payOnline(item: Item) {
     if (item === "jathagam" && (!birth.date || !birth.time || !birth.place)) {
-      toast.error("Enter the exact birth date, time and place first.");
+      toast.error(t("checkout_birth_required"));
       return;
     }
     setBusy(true);
     try {
       const order = await createPaymentOrder({ data: { item } });
       const ok = await loadRazorpay();
-      if (!ok) throw new Error("Could not load the payment window");
+      if (!ok) throw new Error(t("pay_window_load_fail"));
 
       const rz = new window.Razorpay!({
         key: order.keyId,
@@ -151,20 +152,18 @@ function Checkout() {
                 birth_place: birth.place,
               });
             }
-            toast.success("Payment successful. Your plan is active.");
+            toast.success(t("payment_success"));
             if (userId) await load(userId);
           } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Could not confirm payment");
+            toast.error(err instanceof Error ? err.message : t("confirm_payment_fail"));
           }
         },
       });
       rz.open();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Payment could not be started";
+      const msg = err instanceof Error ? err.message : t("pay_start_fail");
       toast.error(
-        msg.includes("ONLINE_PAYMENTS_UNAVAILABLE")
-          ? "Online payment is not switched on yet. Please use the UPI / bank transfer option below."
-          : msg,
+        msg.includes("ONLINE_PAYMENTS_UNAVAILABLE") ? t("pay_unavailable") : msg,
       );
     } finally {
       setBusy(false);
@@ -174,11 +173,11 @@ function Checkout() {
   async function submitManual(item: Item) {
     if (!userId) return;
     if (!utr.trim()) {
-      toast.error("Enter the UTR / reference number.");
+      toast.error(t("utr_required"));
       return;
     }
     if (item === "jathagam" && (!birth.date || !birth.time || !birth.place)) {
-      toast.error("Enter the exact birth date, time and place first.");
+      toast.error(t("checkout_birth_required"));
       return;
     }
     setBusy(true);
@@ -223,7 +222,7 @@ function Checkout() {
       setProof(null);
       await load(userId);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not submit payment");
+      toast.error(friendlyUploadError(err, t));
     } finally {
       setBusy(false);
     }
@@ -234,7 +233,7 @@ function Checkout() {
       const { url } = await createViewUrl({ data: { key } });
       window.open(url, "_blank", "noopener");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not open the report");
+      toast.error(err instanceof Error ? err.message : t("msg_open_report_fail"));
     }
   }
 
@@ -328,9 +327,9 @@ function Checkout() {
                         value={method}
                         onChange={(e) => setMethod(e.target.value)}
                       >
-                        <option value="upi">UPI</option>
-                        <option value="card">Card</option>
-                        <option value="bank">Bank transfer</option>
+                        <option value="upi">{t("method_upi")}</option>
+                        <option value="card">{t("method_card")}</option>
+                        <option value="bank">{t("method_bank")}</option>
                       </select>
                     </div>
                   </div>
@@ -339,7 +338,7 @@ function Checkout() {
                     <Input
                       id="proof"
                       type="file"
-                      accept="image/*"
+                      accept="image/jpeg,image/png,application/pdf"
                       onChange={(e) => setProof(e.target.files?.[0] ?? null)}
                     />
                   </div>

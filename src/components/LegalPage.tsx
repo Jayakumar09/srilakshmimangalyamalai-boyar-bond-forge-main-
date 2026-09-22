@@ -14,14 +14,14 @@ export function LegalPage({
   updated: string;
   sections: LegalSection[];
 }) {
-  const { lang } = useI18n();
+  const { lang, t } = useI18n();
   return (
     <div className="min-h-screen">
       <SiteHeader />
       <main className="mx-auto max-w-3xl px-4 py-12">
         <h1 className="font-display text-3xl font-semibold sm:text-4xl">{title[lang]}</h1>
         <div className="gold-rule mt-4 w-28" />
-        <p className="mt-3 text-xs text-muted-foreground">Last updated: {updated}</p>
+        <p className="mt-3 text-xs text-muted-foreground">{t("last_updated")}: {updated}</p>
         <div className="mt-8 space-y-8">
           {sections.map((s) => (
             <section key={s.heading.en}>

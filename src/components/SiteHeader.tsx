@@ -24,14 +24,14 @@ export function SiteHeader() {
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2 px-4 py-3">
         <Link to="/" className="mr-auto flex items-center gap-3">
           <span className="grid size-9 place-items-center rounded-full bg-primary font-display text-lg text-primary-foreground">
-            ஸ்ரீ
+            {t("brand_badge")}
           </span>
           <span className="leading-tight">
             <span className="block font-display text-lg font-semibold sm:text-xl">
               {t("brand")}
             </span>
             <span className="block font-display text-xl font-semibold sm:text-2xl">
-              Boyar Matrimony
+              {t("brand_line2")}
             </span>
           </span>
         </Link>

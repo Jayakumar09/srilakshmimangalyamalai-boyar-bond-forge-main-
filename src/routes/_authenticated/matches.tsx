@@ -147,18 +147,18 @@ function Matches() {
     if (!me) return;
     await supabase.from("blocks").insert({ user_id: me.id, target_id: targetId });
     setBlocked((b) => new Set(b).add(targetId));
-    toast.success("Profile blocked");
+    toast.success(t("profile_blocked"));
   }
 
   async function reportUser(targetId: string) {
     if (!me) return;
-    const reason = window.prompt("Why are you reporting this profile?");
+    const reason = window.prompt(t("report_prompt"));
     if (!reason) return;
     const { error } = await supabase
       .from("reports")
       .insert({ reporter_id: me.id, target_id: targetId, reason });
     if (error) toast.error(error.message);
-    else toast.success("Reported to the admin");
+    else toast.success(t("reported_ok"));
   }
 
   async function startChat(targetId: string) {
@@ -291,7 +291,7 @@ function Matches() {
             <div key={r.id} className="card-elevated p-5">
               <h3 className="font-display text-lg font-semibold">{r.full_name ?? "—"}</h3>
               <p className="mt-1 text-sm text-muted-foreground">
-                {age(r.date_of_birth) ? `${age(r.date_of_birth)} yrs · ` : ""}
+                {age(r.date_of_birth) ? `${age(r.date_of_birth)} ${t("yrs_unit")} · ` : ""}
                 {r.height_cm ? `${r.height_cm} cm · ` : ""}
                 {r.marital_status ?? ""}
               </p>

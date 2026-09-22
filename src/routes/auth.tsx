@@ -71,7 +71,7 @@ function AuthPage() {
     e.preventDefault();
     const parsed = schema.safeParse({ email, password, fullName });
     if (!parsed.success) {
-      toast.error(parsed.error.issues[0]?.message ?? "Please check your details");
+      toast.error(parsed.error.issues[0]?.message ?? t("auth_invalid"));
       return;
     }
     setBusy(true);
@@ -87,7 +87,7 @@ function AuthPage() {
         });
         if (error) throw error;
         if (!data.session) {
-          toast.success("Please check your email to confirm your account.");
+          toast.success(t("auth_confirm_email"));
           return;
         }
         navigate({ to: "/register" });
@@ -100,7 +100,7 @@ function AuthPage() {
         await redirectAfterAuth(signInData.user.id);
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Something went wrong");
+      toast.error(err instanceof Error ? err.message : t("msg_something_wrong"));
     } finally {
       setBusy(false);
     }
@@ -119,7 +119,7 @@ function AuthPage() {
       if (error) throw error;
       toast.success(t("auth_forgot_sent"));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Something went wrong");
+      toast.error(err instanceof Error ? err.message : t("msg_something_wrong"));
     } finally {
       setBusy(false);
     }
@@ -172,7 +172,7 @@ function AuthPage() {
               />
               <button
                 type="button"
-                aria-label={showPassword ? "Hide password" : "Show password"}
+                aria-label={showPassword ? t("hide_password") : t("show_password")}
                 onClick={() => setShowPassword((v) => !v)}
                 className="absolute inset-y-0 right-0 flex items-center justify-center pr-3 text-muted-foreground hover:text-foreground"
               >

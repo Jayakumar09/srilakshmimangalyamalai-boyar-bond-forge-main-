@@ -109,17 +109,17 @@ export function AdminShell({
           </Button>
           <a href={base} className="mr-auto flex items-center gap-3">
             <span className="grid size-9 place-items-center rounded-full bg-primary font-display text-lg text-primary-foreground">
-              ஸ்ரீ
+            {t("brand_badge")}
+          </span>
+          <span className="leading-tight">
+            <span className="block font-display text-base font-semibold sm:text-lg">
+              {t("brand")}
             </span>
-            <span className="leading-tight">
-              <span className="block font-display text-base font-semibold sm:text-lg">
-                {t("brand")}
-              </span>
-              <span className="block font-display text-base font-semibold sm:text-lg">
-                Boyar Matrimony
-              </span>
-              <span className="block text-xs text-muted-foreground">{t("adm_title")}</span>
+            <span className="block font-display text-base font-semibold sm:text-lg">
+              {t("brand_line2")}
             </span>
+            <span className="block text-xs text-muted-foreground">{t("adm_title")}</span>
+          </span>
           </a>
           <div className="inline-flex items-center rounded-full border border-border bg-card p-0.5 text-xs font-semibold">
             <a
@@ -129,7 +129,7 @@ export function AdminShell({
                 !isTa ? "bg-primary text-primary-foreground" : "text-muted-foreground",
               )}
             >
-              English
+              {t("lang_en")}
             </a>
             <a
               href={isTa ? pathname : otherPath}
@@ -138,7 +138,7 @@ export function AdminShell({
                 isTa ? "bg-primary text-primary-foreground" : "text-muted-foreground",
               )}
             >
-              தமிழ்
+              {t("lang_ta")}
             </a>
           </div>
           <Button asChild variant="ghost" size="sm">
