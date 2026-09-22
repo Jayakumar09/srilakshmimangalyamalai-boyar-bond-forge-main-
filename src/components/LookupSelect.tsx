@@ -18,18 +18,21 @@ export function LookupSelect({
   onChange,
   required,
   anyLabel,
+  includeOther,
 }: {
-  category: "sub_caste" | "profession" | "native_district" | "occupation";
+  category: "sub_caste" | "profession" | "native_district" | "occupation" | "gothram" | "mother_tongue";
   label: string;
   value: string;
   onChange: (v: string) => void;
   required?: boolean;
   anyLabel?: string | undefined;
+  includeOther?: boolean | undefined;
 }) {
   const { lang, t } = useI18n();
   const [options, setOptions] = useState<Option[]>([]);
   const [query, setQuery] = useState(value);
   const [open, setOpen] = useState(false);
+  const [otherChosen, setOtherChosen] = useState(false);
 
   useEffect(() => setQuery(value), [value]);
 
@@ -58,7 +61,18 @@ export function LookupSelect({
       .slice(0, 40);
   }, [options, query]);
 
-  const exists = options.some((o) => o.value_en.toLowerCase() === query.trim().toLowerCase());
+  /** The currently committed value matches a predefined option? */
+  const committedExists = options.some(
+    (o) => o.value_en.toLowerCase() === value.trim().toLowerCase(),
+  );
+
+  /** Does the typed query match a predefined option? (drives the "Add new" button) */
+  const queryExists = options.some(
+    (o) => o.value_en.toLowerCase() === query.trim().toLowerCase(),
+  );
+
+  /** A saved value that does not match any predefined option is treated as a custom/Other value. */
+  const isCustomValue = includeOther && value !== "" && !committedExists;
 
   async function addNew() {
     const value_en = query.trim();
@@ -67,6 +81,36 @@ export function LookupSelect({
     await load();
     onChange(value_en);
     setOpen(false);
+  }
+
+  if (includeOther && (otherChosen || isCustomValue)) {
+    return (
+      <div className="relative">
+        <Label className="mb-1.5 block text-sm">
+          {label}
+          {required && <span className="text-destructive"> *</span>}
+        </Label>
+        <Input
+          value={query}
+          placeholder={t("type_to_add")}
+          autoFocus={otherChosen}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            onChange(e.target.value);
+          }}
+        />
+        <button
+          type="button"
+          className="mt-1 text-xs text-primary hover:underline"
+          onClick={() => {
+            setOtherChosen(false);
+            setOpen(true);
+          }}
+        >
+          {t("other_pick_from_list")}
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -79,8 +123,10 @@ export function LookupSelect({
         value={query}
         placeholder={anyLabel && value === "" ? t(anyLabel) : t("type_to_add")}
         onChange={(e) => {
+          // Strict select-to-commit: typing only filters the list. The value is
+          // saved exclusively when an option is picked (or a new one is added),
+          // so partial searches like "o" / "ot" never get stored as the answer.
           setQuery(e.target.value);
-          onChange(e.target.value);
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
@@ -104,6 +150,20 @@ export function LookupSelect({
               <div className="my-1 border-t border-border" />
             </>
           )}
+          {includeOther && (
+            <button
+              type="button"
+              className="block w-full rounded px-2 py-1.5 text-left text-sm font-medium text-muted-foreground hover:bg-accent/30"
+              onMouseDown={() => {
+                setOtherChosen(true);
+                setQuery("");
+                onChange("");
+                setOpen(false);
+              }}
+            >
+              {t("other")}
+            </button>
+          )}
           {filtered.map((o) => (
             <button
               key={o.id}
@@ -118,7 +178,7 @@ export function LookupSelect({
               {lang === "ta" && o.value_ta ? `${o.value_ta} (${o.value_en})` : o.value_en}
             </button>
           ))}
-          {!exists && query.trim() !== "" && (
+          {!queryExists && query.trim() !== "" && (
             <Button
               type="button"
               variant="secondary"

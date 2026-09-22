@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { createViewUrl } from "@/lib/storage.functions";
+import { createViewUrl, deleteUpload } from "@/lib/storage.functions";
 import { uploadToR2 } from "@/lib/upload";
 import { reviewPayment } from "@/lib/payments.functions";
 import { notifyApprovalChanged, notifyProfileUpdatedByAdmin } from "@/lib/notify.functions";
@@ -98,7 +98,11 @@ export type AdminDoc = {
   doc_type: string;
   id_kind: string | null;
   storage_key: string;
+  file_name: string | null;
+  mime_type: string | null;
   size_bytes: number | null;
+  verified: boolean | null;
+  created_at: string | null;
   ai_check_status: string | null;
   ai_check_notes: string | null;
   ai_face_match_score: number | null;
@@ -326,6 +330,22 @@ export function useAdminData() {
     }
   }, []);
 
+  const deleteDoc = useCallback(
+    async (key: string) => {
+      setBusy(true);
+      try {
+        await deleteUpload({ data: { key } });
+        toast.success("File deleted");
+        await reload();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not delete file");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [reload],
+  );
+
 
   /** Admin edits a client's profile. `mode` records whether this was a direct
    *  admin edit (Admin Created profiles) or done on behalf of the client after
@@ -495,6 +515,7 @@ export function useAdminData() {
     uploadHoroscope,
     closeReport,
     openDoc,
+    deleteDoc,
     adminUpdateProfile,
     requestCorrection,
     loadAudit,

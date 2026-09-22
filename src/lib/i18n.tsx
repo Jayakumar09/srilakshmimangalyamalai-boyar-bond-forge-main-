@@ -489,6 +489,69 @@ export const dict: Dict = {
   adm_missing: { en: "Missing", ta: "இல்லை" },
   adm_uploaded: { en: "Uploaded", ta: "பதிவேற்றப்பட்டது" },
   adm_none: { en: "None", ta: "இல்லை" },
+  // upload limits, gallery & documents
+  msg_limit_photos: {
+    en: "You can keep up to 6 photos. Delete one before adding another.",
+    ta: "நீங்கள் அதிகபட்சம் 6 புகைப்படங்களை வைத்திருக்கலாம். மற்றொன்றைச் சேர்க்க முன் ஒன்றை நீக்கவும்.",
+  },
+  msg_limit_docs: {
+    en: "You can keep up to 4 documents. Delete one before adding another.",
+    ta: "நீங்கள் அதிகபட்சம் 4 ஆவணங்களை வைத்திருக்கலாம். மற்றொன்றைச் சேர்க்க முன் ஒன்றை நீக்கவும்.",
+  },
+  msg_limit_total_files: {
+    en: "You can keep up to 10 files in total. Delete one before adding another.",
+    ta: "மொத்தம் அதிகபட்சம் 10 கோப்புகளை மட்டுமே வைத்திருக்கலாம். மற்றொன்றைச் சேர்க்க முன் ஒன்றை நீக்கவும்.",
+  },
+  msg_limit_storage: {
+    en: "You have used up the 20 MB storage allowance. Delete a file to free up space.",
+    ta: "20 MB சேமிப்பு அனுமதி முடிந்துவிட்டது. இடத்தை காலி செய்ய ஒரு கோப்பை நீக்கவும்.",
+  },
+  msg_photo_too_large: {
+    en: "This photo is larger than 3 MB. Please choose a smaller photo.",
+    ta: "இந்த புகைப்படம் 3 MB ஐ விட பெரியது. சிறிய புகைப்படத்தை தேர்வு செய்யவும்.",
+  },
+  msg_doc_too_large: {
+    en: "This document is larger than 5 MB. Please choose a smaller document.",
+    ta: "இந்த ஆவணம் 5 MB ஐ விட பெரியது. சிறிய ஆவணத்தை தேர்வு செய்யவும்.",
+  },
+  upl_photo_hint: {
+    en: "Upload a clear JPG or PNG photo. Large photos are automatically optimized while maintaining good visual quality.",
+    ta: "தெளிவான JPG அல்லது PNG புகைப்படத்தை பதிவேற்றவும். பெரிய புகைப்படங்கள் நல்ல தரத்தில் தானாகவே உகந்ததாக்கப்படும்.",
+  },
+  upl_docs_hint: {
+    en: "JPG, PNG or PDF. Documents stay exactly as uploaded and are visible to you and the admin only.",
+    ta: "JPG, PNG அல்லது PDF. ஆவணங்கள் பதிவேற்றியதுபோலவே இருக்கும்; உங்களுக்கும் நிர்வாகிக்கும் மட்டுமே தெரியும்.",
+  },
+  upl_storage_hint: {
+    en: "Profile storage: 20 MB. Photos are optimized; at most 6 photos, 4 documents and 10 files in total.",
+    ta: "சுயவிவர சேமிப்பு: 20 MB. புகைப்படங்கள் உகந்ததாக்கப்படும்; அதிகபட்சம் 6 புகைப்படங்கள், 4 ஆவணங்கள், மொத்தம் 10 கோப்புகள்.",
+  },
+  upl_gallery_title: { en: "Photo Gallery", ta: "புகைப்பட கேலரி" },
+  upl_gallery_sub: {
+    en: "Add photos to your profile. The first photo is your main display photo.",
+    ta: "உங்கள் சுயவிவரத்தில் புகைப்படங்களைச் சேர்க்கவும். முதல் புகைப்படம் உங்கள் முக்கிய புகைப்படம்.",
+  },
+  upl_primary: { en: "Main", ta: "முக்கியம்" },
+  upl_add_photo: { en: "Add photo", ta: "புகைப்படம் சேர்" },
+  uploading_label: { en: "Uploading…", ta: "பதிவேற்றுகிறது…" },
+  upl_docs_title: { en: "Documents & Verification", ta: "ஆவணங்கள் மற்றும் சரிபார்ப்பு" },
+  upl_no_docs: { en: "No documents uploaded yet.", ta: "இன்னும் ஆவணங்கள் பதிவேற்றப்படவில்லை." },
+  docLabel: { en: "Document", ta: "ஆவணம்" },
+  upl_uploaded_on: { en: "Uploaded", ta: "பதிவேற்றம்" },
+  upl_storage_used_pre: { en: "Storage used", ta: "பயன்படுத்திய சேமிப்பு" },
+  verified: { en: "Verified", ta: "சரிபார்க்கப்பட்டது" },
+  unverified: { en: "Pending verification", ta: "சரிபார்ப்பு நிலுவையில்" },
+  delete: { en: "Delete", ta: "நீக்கு" },
+  delete_ok: { en: "File deleted", ta: "கோப்பு நீக்கப்பட்டது" },
+  delete_doc_confirm: { en: "Delete this file?", ta: "இந்த கோப்பை நீக்கவா?" },
+  remove_confirm_photo: {
+    en: "Delete this photo? It will be removed from your profile.",
+    ta: "இந்த புகைப்படத்தை நீக்கவா? இது உங்கள் சுயவிவரத்திலிருந்து அகற்றப்படும்.",
+  },
+  remove_confirm_doc: {
+    en: "Delete this document? The stored file size will be freed.",
+    ta: "இந்த ஆவணத்தை நீக்கவா? சேமிக்கப்பட்ட கோப்பு அளவு காலியாகும்.",
+  },
   adm_confirm_approve: {
     en: "Approve this profile? The member will be notified by email.",
     ta: "இந்த சுயவிவரத்தை அங்கீகரிக்கவா? உறுப்பினருக்கு மின்னஞ்சல் அனுப்பப்படும்.",

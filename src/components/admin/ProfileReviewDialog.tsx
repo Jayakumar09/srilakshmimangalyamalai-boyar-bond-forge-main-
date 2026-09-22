@@ -6,7 +6,8 @@ import { createViewUrl } from "@/lib/storage.functions";
 import type { AdminData, AdminProfile, ClientRequest, ProfileAudit } from "@/lib/admin-data";
 import { ageFrom } from "@/lib/admin-data";
 import { uploadToR2 } from "@/lib/upload";
-import { formatBytes } from "@/lib/compress";
+import { formatBytes, friendlyUploadError } from "@/lib/compress";
+import { LookupSelect } from "@/components/LookupSelect";
 import { supabase } from "@/integrations/supabase/client";
 import { actorLabel, createdByLabel, isProfileDraft, planLabel, statusLabel } from "@/lib/admin-labels";
 import { StatusBadge, toneForStatus } from "@/components/admin/AdminUI";
@@ -25,7 +26,7 @@ import {
   type ProfileOption,
 } from "@/lib/profile-options";
 import { normalizeInternationalPhone, formatPhoneForDisplay, splitInternationalPhone } from "@/lib/phone";
-import { normalizeBirthTime, formatBirthTime, birthTimeToInputValue } from "@/lib/format";
+import { normalizeBirthTime, formatBirthTime } from "@/lib/format";
 import { TimeInput } from "@/components/TimeInput";
 import { CountryCodePhoneField } from "@/components/CountryCodePhoneField";
 import { DEFAULT_COUNTRY_ISO } from "@/lib/country-codes";
@@ -48,13 +49,17 @@ type EditKind =
   | "time"
   | "phone"
   | "textarea"
-  | "choice";
+  | "choice"
+  | "lookup";
 
 type EditField = {
   key: string;
   labelKey: string;
   kind: EditKind;
   options?: ProfileOption[];
+  category?: "sub_caste" | "profession" | "native_district" | "occupation" | "gothram" | "mother_tongue";
+  anyLabel?: string;
+  includeOther?: boolean;
   maxLength?: number;
   full?: boolean;
 };
@@ -70,9 +75,9 @@ const EDIT_FIELDS: Record<string, EditField> = {
     options: MARITAL_STATUSES,
   },
   caste: { key: "caste", labelKey: "caste", kind: "choice", options: CASTE_OPTIONS },
-  sub_caste: { key: "sub_caste", labelKey: "adm_f_subcaste", kind: "text", maxLength: 80 },
-  gothram: { key: "gothram", labelKey: "gothram", kind: "text", maxLength: 80 },
-  mother_tongue: { key: "mother_tongue", labelKey: "mother_tongue", kind: "text", maxLength: 60 },
+  sub_caste: { key: "sub_caste", labelKey: "adm_f_subcaste", kind: "lookup", category: "sub_caste" },
+  gothram: { key: "gothram", labelKey: "gothram", kind: "lookup", category: "gothram", includeOther: true },
+  mother_tongue: { key: "mother_tongue", labelKey: "mother_tongue", kind: "lookup", category: "mother_tongue", includeOther: true },
   height_cm: { key: "height_cm", labelKey: "height", kind: "number" },
   weight_kg: { key: "weight_kg", labelKey: "weight", kind: "number" },
   birth_time: { key: "birth_time", labelKey: "birth_time", kind: "time" },
@@ -80,7 +85,7 @@ const EDIT_FIELDS: Record<string, EditField> = {
   phone: { key: "phone", labelKey: "adm_f_phone", kind: "phone" },
   whatsapp: { key: "whatsapp", labelKey: "adm_f_whatsapp", kind: "phone" },
   city: { key: "city", labelKey: "adm_f_city", kind: "text", maxLength: 80 },
-  native_district: { key: "native_district", labelKey: "adm_f_district", kind: "text", maxLength: 80 },
+  native_district: { key: "native_district", labelKey: "adm_f_district", kind: "lookup", category: "native_district" },
   state: { key: "state", labelKey: "state", kind: "text", maxLength: 80 },
   pincode: { key: "pincode", labelKey: "pincode", kind: "text", maxLength: 10 },
   address_line: { key: "address_line", labelKey: "address", kind: "textarea", maxLength: 300, full: true },
@@ -91,27 +96,27 @@ const EDIT_FIELDS: Record<string, EditField> = {
     options: EDUCATION_LEVELS,
   },
   education_detail: { key: "education_detail", labelKey: "education_detail", kind: "text", maxLength: 120 },
-  profession: { key: "profession", labelKey: "adm_f_profession", kind: "text", maxLength: 80 },
+  profession: { key: "profession", labelKey: "adm_f_profession", kind: "lookup", category: "profession" },
   job_detail: { key: "job_detail", labelKey: "job_detail", kind: "text", maxLength: 150 },
   annual_income: { key: "annual_income", labelKey: "income", kind: "text", maxLength: 60 },
   about: { key: "about", labelKey: "adm_f_about", kind: "textarea", maxLength: 800, full: true },
   family_type: { key: "family_type", labelKey: "family_type", kind: "choice", options: FAMILY_TYPES },
   family_status: { key: "family_status", labelKey: "family_status", kind: "choice", options: FAMILY_STATUSES },
   father_name: { key: "father_name", labelKey: "father_name", kind: "text", maxLength: 100 },
-  father_occupation: { key: "father_occupation", labelKey: "father_occ", kind: "text", maxLength: 100 },
+  father_occupation: { key: "father_occupation", labelKey: "father_occ", kind: "lookup", category: "occupation", includeOther: true },
   mother_name: { key: "mother_name", labelKey: "mother_name", kind: "text", maxLength: 100 },
-  mother_occupation: { key: "mother_occupation", labelKey: "mother_occ", kind: "text", maxLength: 100 },
+  mother_occupation: { key: "mother_occupation", labelKey: "mother_occ", kind: "lookup", category: "occupation", includeOther: true },
   brothers: { key: "brothers", labelKey: "brothers", kind: "number" },
   sisters: { key: "sisters", labelKey: "sisters", kind: "number" },
   family_details: { key: "family_details", labelKey: "adm_f_family", kind: "textarea", maxLength: 500, full: true },
   pref_age_min: { key: "pref_age_min", labelKey: "pref_age_min_label", kind: "number" },
   pref_age_max: { key: "pref_age_max", labelKey: "pref_age_max_label", kind: "number" },
   pref_height_min_cm: { key: "pref_height_min_cm", labelKey: "pref_height", kind: "number" },
-  pref_education: { key: "pref_education", labelKey: "education_level", kind: "text", maxLength: 80 },
-  pref_marital_status: { key: "pref_marital_status", labelKey: "marital_status", kind: "text", maxLength: 60 },
-  pref_sub_caste: { key: "pref_sub_caste", labelKey: "sub_caste", kind: "text", maxLength: 80 },
-  pref_profession: { key: "pref_profession", labelKey: "profession", kind: "text", maxLength: 80 },
-  pref_district: { key: "pref_district", labelKey: "district", kind: "text", maxLength: 80 },
+  pref_education: { key: "pref_education", labelKey: "education_level", kind: "choice", options: EDUCATION_LEVELS },
+  pref_marital_status: { key: "pref_marital_status", labelKey: "marital_status", kind: "choice", options: MARITAL_STATUSES },
+  pref_sub_caste: { key: "pref_sub_caste", labelKey: "sub_caste", kind: "lookup", category: "sub_caste" },
+  pref_profession: { key: "pref_profession", labelKey: "profession", kind: "lookup", category: "profession", anyLabel: "any_profession" },
+  pref_district: { key: "pref_district", labelKey: "district", kind: "lookup", category: "native_district" },
   pref_notes: { key: "pref_notes", labelKey: "adm_f_prefs", kind: "textarea", maxLength: 500, full: true },
 };
 
@@ -259,6 +264,7 @@ export function ProfileReviewDialog({
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<Record<string, string>>({});
+  const [timeError, setTimeError] = useState("");
   const [photoSrc, setPhotoSrc] = useState<string | null>(null);
   const [photo, setPhoto] = useState<File | null>(null);
   const [idFile, setIdFile] = useState<File | null>(null);
@@ -311,7 +317,7 @@ export function ProfileReviewDialog({
         next[key] = split.local;
         countries[key] = split.iso;
       } else if (key === "birth_time") {
-        next[key] = birthTimeToInputValue(value as string | number | null | undefined);
+        next[key] = formatBirthTime(value as string | number | null | undefined) ?? "";
       } else if (kind === "date") {
         next[key] = String(value).slice(0, 10);
       } else {
@@ -327,12 +333,17 @@ export function ProfileReviewDialog({
       toast.error(t("adm_confirm_required"));
       return;
     }
+    setTimeError("");
     setEditing(true);
   }
 
   async function save() {
     if (!clientConfirmed) {
       toast.error(t("adm_confirm_required"));
+      return;
+    }
+    if (timeError) {
+      toast.error(t("time_invalid"));
       return;
     }
     setSaving(true);
@@ -431,9 +442,7 @@ export function ProfileReviewDialog({
           if (error) throw error;
         }
       } catch (err) {
-        toast.warning(
-          err instanceof Error ? `${t("adm_saved")} — ${err.message}` : t("adm_upload_failed"),
-        );
+        toast.warning(`${t("adm_saved")} — ${friendlyUploadError(err, t)}`);
       }
 
       toast.success(t("adm_saved"));
@@ -442,7 +451,7 @@ export function ProfileReviewDialog({
       setIdFile(null);
       setDivorceFile(null);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not save");
+      toast.error(friendlyUploadError(err, t));
     } finally {
       setSaving(false);
     }
@@ -477,6 +486,7 @@ export function ProfileReviewDialog({
               <img
                 src={photoSrc}
                 alt=""
+                onError={() => setPhotoSrc(null)}
                 className="size-24 rounded-lg border border-border object-cover"
               />
             ) : (
@@ -564,23 +574,46 @@ export function ProfileReviewDialog({
 
           <section>
             <h3 className="mb-2 font-medium">{t("adm_documents")}</h3>
-            <div className="flex flex-wrap gap-2">
-              {docs.length === 0 && (
-                <p className="text-sm text-muted-foreground">{t("adm_missing")}</p>
-              )}
+            {docs.length === 0 && (
+              <p className="text-sm text-muted-foreground">{t("adm_missing")}</p>
+            )}
+            <ul className="space-y-2">
               {docs.map((doc) => (
-                <Button
+                <li
                   key={doc.id}
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => d.openDoc(doc.storage_key)}
+                  className="flex items-center justify-between gap-2 rounded-md border border-border p-2 text-sm"
                 >
-                  {doc.doc_type}
-                  {doc.id_kind ? ` (${doc.id_kind})` : ""}
-                  {doc.ai_check_status ? ` · ${doc.ai_check_status}` : ""}
-                </Button>
+                  <div className="min-w-0">
+                    <button
+                      type="button"
+                      className="block max-w-full truncate text-left font-medium text-primary hover:underline"
+                      onClick={() => d.openDoc(doc.storage_key)}
+                    >
+                      {doc.file_name ||
+                        t("docLabel") + (doc.id_kind ? ` (${doc.id_kind})` : "")}{" "}
+                      <span className="font-normal text-muted-foreground">· {doc.doc_type}</span>
+                    </button>
+                    <p className="text-xs text-muted-foreground">
+                      {doc.mime_type ?? "—"} · {formatBytes(doc.size_bytes ?? 0)} ·{" "}
+                      {doc.verified ? t("verified") : t("unverified")}
+                      {doc.ai_check_status ? ` · ${doc.ai_check_status}` : ""}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={saving}
+                    onClick={async () => {
+                      if (!window.confirm(t("delete_doc_confirm"))) return;
+                      await d.deleteDoc(doc.storage_key);
+                    }}
+                  >
+                    {t("delete")}
+                  </Button>
+                </li>
               ))}
-            </div>
+            </ul>
           </section>
 
           <section>
@@ -616,6 +649,8 @@ export function ProfileReviewDialog({
                         onChange={(v) => setForm((s) => ({ ...s, [key]: v }))}
                         iso={phoneCountries[key] ?? DEFAULT_COUNTRY_ISO}
                         onIsoChange={(c) => setPhoneCountries((s) => ({ ...s, [key]: c }))}
+                        timeError={key === "birth_time" ? timeError : undefined}
+                        onTimeValidity={(valid) => setTimeError(valid ? "" : t("time_invalid"))}
                         t={t}
                       />
                     </div>
@@ -630,7 +665,7 @@ export function ProfileReviewDialog({
               <h3 className="border-b border-border pb-1 pt-2 text-sm font-medium text-primary">
                 {t("adm_upload_docs")}
               </h3>
-              <FileField label={t("photo")} accept="image/*" file={photo} onFile={setPhoto} />
+              <FileField label={t("photo")} accept="image/jpeg,image/png" file={photo} onFile={setPhoto} />
               <div>
                 <Label className="mb-1.5 block text-sm">{t("id_kind")}</Label>
                 <Choice
@@ -639,12 +674,12 @@ export function ProfileReviewDialog({
                   options={ID_KINDS.map((o) => ({ v: o.v, l: t(o.labelKey) }))}
                 />
               </div>
-              <FileField label={t("govt_id")} accept="image/*" file={idFile} onFile={setIdFile} />
+              <FileField label={t("govt_id")} accept="image/jpeg,image/png,application/pdf" file={idFile} onFile={setIdFile} />
               {needsDivorceDoc && (
                 <FileField
                   label={t("divorce_doc")}
                   note={t("divorce_doc_note")}
-                  accept="image/*,application/pdf"
+                  accept="image/jpeg,image/png,application/pdf"
                   file={divorceFile}
                   onFile={setDivorceFile}
                 />
@@ -738,6 +773,8 @@ function EditField({
   onChange,
   iso,
   onIsoChange,
+  timeError,
+  onTimeValidity,
   t,
 }: {
   field: EditField;
@@ -745,8 +782,22 @@ function EditField({
   onChange: (v: string) => void;
   iso?: string;
   onIsoChange?: (iso: string) => void;
+  timeError?: string | undefined;
+  onTimeValidity?: ((valid: boolean) => void) | undefined;
   t: (k: string) => string;
 }) {
+  if (field.kind === "lookup") {
+    return (
+      <LookupSelect
+        category={field.category ?? "sub_caste"}
+        label={t(field.labelKey)}
+        value={value}
+        onChange={onChange}
+        anyLabel={field.anyLabel}
+        includeOther={field.includeOther}
+      />
+    );
+  }
   if (field.kind === "choice") {
     return (
       <div>
@@ -768,7 +819,16 @@ function EditField({
     );
   }
   if (field.kind === "time") {
-    return <TimeInput label={t(field.labelKey)} value={value} onChange={onChange} onBlur={undefined} />;
+    return (
+      <TimeInput
+        label={t(field.labelKey)}
+        value={value}
+        onChange={onChange}
+        onBlur={undefined}
+        error={timeError}
+        onValidityChange={onTimeValidity}
+      />
+    );
   }
   if (field.kind === "phone") {
     return (

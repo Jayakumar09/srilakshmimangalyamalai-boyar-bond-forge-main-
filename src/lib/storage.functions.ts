@@ -3,6 +3,20 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import { z } from "zod";
+import {
+  MAX_DOC_INPUT_BYTES,
+  MAX_DOCS_PER_PROFILE,
+  MAX_PHOTO_INPUT_BYTES,
+  MAX_PHOTOS_PER_PROFILE,
+  MAX_PROFILE_STORAGE_BYTES,
+  MAX_TOTAL_FILES_PER_PROFILE,
+  FILE_TOO_LARGE_PHOTO,
+  FILE_TOO_LARGE_DOC,
+  UPLOAD_LIMIT_PHOTOS,
+  UPLOAD_LIMIT_DOCS,
+  UPLOAD_LIMIT_TOTAL,
+  UPLOAD_LIMIT_STORAGE,
+} from "@/lib/compress";
 
 const UploadInput = z.object({
   fileName: z.string().min(1).max(200),
@@ -49,7 +63,38 @@ function assertAllowedType(contentType: string) {
   }
 }
 
-async function signR2(key: string, method: "PUT" | "GET", contentType?: string) {
+/** Magic bytes for the raster formats the app actually stores (incl. WebP from compression). */
+const IMAGE_MAGICS = [
+  [0xff, 0xd8, 0xff], // jpeg
+  [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], // png
+  [0x52, 0x49, 0x46, 0x46], // RIFF (webp)
+  [0x47, 0x49, 0x46], // gif
+  [0x42, 0x4d], // bmp
+] as const;
+
+/** "%PDF-" */
+const PDF_MAGIC = [0x25, 0x50, 0x44, 0x46, 0x2d] as const;
+
+function startsWithBytes(buf: Uint8Array, magic: readonly number[]): boolean {
+  if (buf.length < magic.length) return false;
+  for (let i = 0; i < magic.length; i++) {
+    if (buf[i] !== magic[i]) return false;
+  }
+  return true;
+}
+
+/** Rejects uploads whose declared content type does not match the actual bytes. */
+function assertValidMagicBytes(contentType: string, buf: Uint8Array) {
+  if (contentType === "application/pdf") {
+    if (!startsWithBytes(buf, PDF_MAGIC)) throw new Error("Invalid file contents.");
+    return;
+  }
+  if (contentType.startsWith("image/") && !IMAGE_MAGICS.some((m) => startsWithBytes(buf, m))) {
+    throw new Error("Invalid file contents.");
+  }
+}
+
+async function signR2(key: string, method: "PUT" | "GET" | "DELETE", contentType?: string) {
   const accountId = process.env["R2_ACCOUNT_ID"];
   const accessKeyId = process.env["R2_ACCESS_KEY_ID"];
   const secretAccessKey = process.env["R2_SECRET_ACCESS_KEY"];
@@ -81,10 +126,16 @@ export const createUploadUrl = createServerFn({ method: "POST" })
   });
 
 const FOLDERS = ["photo", "govt_id", "divorce_doc", "payment_proof", "jathagam"] as const;
+const PROFILE_FOLDERS = new Set(["photo", "govt_id", "divorce_doc"]);
 
 /**
  * Uploads a file through the server to Cloudflare R2.
  * Used instead of a direct browser PUT so the bucket needs no CORS rules.
+ *
+ * Files tied to a member's profile (photos / identity / divorce documents)
+ * are enforced against the profile limits: at most 6 photos, 4 documents,
+ * 10 total files and 20MB of stored bytes. Payment proofs and horoscope
+ * reports keep the generic 15MB cap since they are not part of the profile.
  */
 export const uploadFile = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -98,22 +149,125 @@ export const uploadFile = createServerFn({ method: "POST" })
     const ownerId = String(data.get("ownerId") ?? "") || undefined;
     if (!(file instanceof File)) throw new Error("No file received.");
     if (!(FOLDERS as readonly string[]).includes(folder)) throw new Error("Invalid folder.");
-    if (file.size > 15 * 1024 * 1024) throw new Error("File is too large (max 15 MB).");
     if (ownerId !== undefined && !/^[0-9a-fA-F-]{36}$/.test(ownerId)) {
       throw new Error("Invalid owner.");
     }
 
     const contentType = file.type || "application/octet-stream";
     assertAllowedType(contentType);
-    const key = `${await resolveOwnerPrefix(context, ownerId)}/${folder}/${Date.now()}-${sanitize(file.name || "file")}`;
+
+    const owner = await resolveOwnerPrefix(context, ownerId);
+    const originalSize = Number(data.get("originalSize") ?? file.size);
+    const originalName = String(data.get("originalName") ?? file.name ?? "file").slice(0, 200);
+
+    if (PROFILE_FOLDERS.has(folder)) {
+      const inputLimit = folder === "photo" ? MAX_PHOTO_INPUT_BYTES : MAX_DOC_INPUT_BYTES;
+      if (originalSize > inputLimit) {
+        throw new Error(folder === "photo" ? FILE_TOO_LARGE_PHOTO : FILE_TOO_LARGE_DOC);
+      }
+
+      const { data: rows } = await context.supabase
+        .from("documents")
+        .select("doc_type, size_bytes")
+        .eq("user_id", owner);
+      let photoCount = 0;
+      let docCount = 0;
+      let totalBytes = 0;
+      for (const row of rows ?? []) {
+        if (row.doc_type === "photo") photoCount++;
+        else docCount++;
+        totalBytes += row.size_bytes ?? 0;
+      }
+
+      if (folder === "photo" && photoCount >= MAX_PHOTOS_PER_PROFILE) {
+        throw new Error(UPLOAD_LIMIT_PHOTOS);
+      }
+      if (folder !== "photo" && docCount >= MAX_DOCS_PER_PROFILE) {
+        throw new Error(UPLOAD_LIMIT_DOCS);
+      }
+      if (photoCount + docCount >= MAX_TOTAL_FILES_PER_PROFILE) {
+        throw new Error(UPLOAD_LIMIT_TOTAL);
+      }
+      if (totalBytes + file.size > MAX_PROFILE_STORAGE_BYTES) {
+        throw new Error(UPLOAD_LIMIT_STORAGE);
+      }
+    }
+    if (file.size > 15 * 1024 * 1024) throw new Error("File is too large (max 15 MB).");
+
+    const body = new Uint8Array(await file.arrayBuffer());
+    assertValidMagicBytes(contentType, body);
+    const key = `${owner}/${folder}/${Date.now()}-${sanitize(file.name || "file")}`;
     const uploadUrl = await signR2(key, "PUT", contentType);
     const res = await fetch(uploadUrl, {
       method: "PUT",
       headers: { "content-type": contentType },
-      body: await file.arrayBuffer(),
+      body,
     });
     if (!res.ok) throw new Error(`Upload failed (${res.status}).`);
-    return { key, fileName: file.name, mimeType: contentType, sizeBytes: file.size };
+    return {
+      key,
+      fileName: originalName,
+      originalName,
+      originalSize,
+      mimeType: contentType,
+      sizeBytes: file.size,
+    };
+  });
+
+/**
+ * Deletes a stored file: removes the R2 object, the `documents` row and the
+ * profile photo pointer if the deleted file was the primary photo. Owners can
+ * delete their own files; admins can delete any file. Counts and stored bytes
+ * therefore decrease so a member can free up quota.
+ */
+export const deleteUpload = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({ key: z.string().min(1).max(300) }).parse(input))
+  .handler(async ({ data, context }) => {
+    let allowed = data.key.startsWith(`${context.userId}/`);
+    if (!allowed) {
+      const { data: isAdmin } = await context.supabase.rpc("has_role", {
+        _user_id: context.userId,
+        _role: "admin",
+      });
+      allowed = !!isAdmin;
+    }
+    if (!allowed) throw new Error("Not allowed");
+
+    const { data: rows } = await context.supabase
+      .from("documents")
+      .select("user_id, doc_type")
+      .eq("storage_key", data.key);
+    const row = rows?.[0];
+
+    if (row) {
+      const { error: delError } = await context.supabase
+        .from("documents")
+        .delete()
+        .eq("storage_key", data.key);
+      if (delError) throw delError;
+
+      if (row.doc_type === "photo") {
+        const { data: profile } = await context.supabase
+          .from("profiles")
+          .select("photo_url")
+          .eq("id", row.user_id)
+          .maybeSingle();
+        if (profile?.photo_url === data.key) {
+          await context.supabase.from("profiles").update({ photo_url: null }).eq("id", row.user_id);
+        }
+      }
+    }
+
+    // Best-effort removal of the R2 object so storage is freed.
+    try {
+      const delUrl = await signR2(data.key, "DELETE");
+      await fetch(delUrl, { method: "DELETE" });
+    } catch {
+      // The metadata row is already gone; R2 cleanup is retried on next delete.
+    }
+
+    return { ok: true };
   });
 
 /** Returns a short-lived view URL. Owners and admins only. */

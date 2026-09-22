@@ -13,13 +13,14 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { uploadToR2 } from "@/lib/upload";
-import { fileToDataUrl, compressImage, formatBytes } from "@/lib/compress";
+import { fileToDataUrl, prepareFileUpload, formatBytes, friendlyUploadError } from "@/lib/compress";
 import { preScreenDocuments, type PreScreenResult } from "@/lib/verify.functions";
 import { notifyProfileSubmitted } from "@/lib/notify.functions";
 import { CountryCodePhoneField } from "@/components/CountryCodePhoneField";
+import { TimeInput } from "@/components/TimeInput";
 import { normalizeInternationalPhone, splitInternationalPhone } from "@/lib/phone";
 import { DEFAULT_COUNTRY_ISO } from "@/lib/country-codes";
-import { isValidBirthTimeStrict, canonicalBirthTime } from "@/lib/format";
+import { isValidBirthTimeStrict } from "@/lib/format";
 import {
   CASTE_OPTIONS,
   COURSES_BY_LEVEL,
@@ -194,19 +195,8 @@ export function RegisterWizard() {
     set("birth_time")(v);
   }
 
-  function birthInputBlur() {
-    const raw = form["birth_time"];
-    if (!raw || !raw.trim()) {
-      setBirthError("");
-      return;
-    }
-    const canon = canonicalBirthTime(raw);
-    if (!canon) {
-      setBirthError(t("time_invalid"));
-      return;
-    }
-    setForm((f) => ({ ...f, birth_time: canon }));
-    setBirthError("");
+  function birthValidChange(valid: boolean) {
+    setBirthError(valid ? "" : t("time_invalid"));
   }
 
   async function saveProgress() {
@@ -242,9 +232,13 @@ export function RegisterWizard() {
     setAiBusy(true);
     try {
       const [idC, photoC] = await Promise.all([
-        compressImage(idFile, 0.9),
-        compressImage(photo, 0.9),
+        prepareFileUpload(idFile, 0.9),
+        prepareFileUpload(photo, 0.9),
       ]);
+      if (idC.kind === "pdf" || photoC.kind === "pdf") {
+        toast.info(t("msg_pdf_ai_skip"));
+        return;
+      }
       const [idData, photoData] = await Promise.all([
         fileToDataUrl(idC.file),
         fileToDataUrl(photoC.file),
@@ -259,7 +253,7 @@ export function RegisterWizard() {
         toast.warning(t("msg_precheck_warn"));
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("msg_verify_failed"));
+      toast.error(friendlyUploadError(err, t));
     } finally {
       setAiBusy(false);
     }
@@ -271,6 +265,10 @@ export function RegisterWizard() {
       return;
     }
 
+    if (birthError) {
+      toast.error(t("time_invalid"));
+      return;
+    }
     const birth = form["birth_time"];
     if (birth && birth.trim() && !isValidBirthTimeStrict(birth)) {
       setBirthError(t("time_invalid"));
@@ -393,7 +391,7 @@ export function RegisterWizard() {
       toast.success(t("msg_submitted"));
       navigate({ to: "/dashboard" });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("msg_submit_failed"));
+      toast.error(friendlyUploadError(err, t));
     } finally {
       setBusy(false);
     }
@@ -460,32 +458,33 @@ export function RegisterWizard() {
                 onChange={set("sub_caste")}
                 required
               />
-              <Labeled label={t("gothram")}>
-                <Input {...field("gothram")} maxLength={80} />
-              </Labeled>
-              <Labeled label={t("mother_tongue")}>
-                <Input {...field("mother_tongue")} maxLength={60} />
-              </Labeled>
+              <LookupSelect
+                category="gothram"
+                label={t("gothram")}
+                value={form["gothram"] ?? ""}
+                onChange={set("gothram")}
+                includeOther
+              />
+              <LookupSelect
+                category="mother_tongue"
+                label={t("mother_tongue")}
+                value={form["mother_tongue"] ?? ""}
+                onChange={set("mother_tongue")}
+                includeOther
+              />
               <Labeled label={t("height")}>
                 <Input type="number" {...field("height_cm")} />
               </Labeled>
               <Labeled label={t("weight")}>
                 <Input type="number" {...field("weight_kg")} />
               </Labeled>
-              <Labeled label={t("birth_time")}>
-                <Input
-                  {...field("birth_time")}
-                  onChange={(e) => birthInputChange(e.target.value)}
-                  onBlur={birthInputBlur}
-                  placeholder="06:30 AM"
-                  className={birthError ? "border-destructive" : ""}
-                  aria-invalid={Boolean(birthError)}
-                  maxLength={8}
-                />
-                {birthError && (
-                  <p className="mt-1 text-xs text-destructive">{birthError}</p>
-                )}
-              </Labeled>
+              <TimeInput
+                label={t("birth_time")}
+                value={form["birth_time"] ?? ""}
+                onChange={birthInputChange}
+                error={birthError}
+                onValidityChange={birthValidChange}
+              />
               <Labeled label={t("birth_place")}>
                 <Input {...field("birth_place")} maxLength={100} />
               </Labeled>
@@ -612,6 +611,7 @@ export function RegisterWizard() {
                 label={t("father_occ")}
                 value={form["father_occupation"] ?? ""}
                 onChange={set("father_occupation")}
+                includeOther
               />
               <Labeled label={t("mother_name")}>
                 <Input {...field("mother_name")} maxLength={100} />
@@ -621,6 +621,7 @@ export function RegisterWizard() {
                 label={t("mother_occ")}
                 value={form["mother_occupation"] ?? ""}
                 onChange={set("mother_occupation")}
+                includeOther
               />
               <Labeled label={t("brothers")}>
                 <Input type="number" min={0} {...field("brothers")} />
@@ -660,20 +661,38 @@ export function RegisterWizard() {
                 <Input type="number" {...field("pref_height_min_cm")} />
               </Labeled>
               <Labeled label={t("marital_status")}>
-                <Input {...field("pref_marital_status")} maxLength={60} />
+                <Choice
+                  value={form["pref_marital_status"] ?? ""}
+                  onChange={set("pref_marital_status")}
+                  options={choice(MARITAL_STATUSES)(t)}
+                />
               </Labeled>
-              <Labeled label={t("sub_caste")}>
-                <Input {...field("pref_sub_caste")} maxLength={80} />
-              </Labeled>
+              <LookupSelect
+                category="sub_caste"
+                label={t("sub_caste")}
+                value={form["pref_sub_caste"] ?? ""}
+                onChange={set("pref_sub_caste")}
+              />
               <Labeled label={t("education_level")}>
-                <Input {...field("pref_education")} maxLength={80} />
+                <Choice
+                  value={form["pref_education"] ?? ""}
+                  onChange={set("pref_education")}
+                  options={choice(EDUCATION_LEVELS)(t)}
+                />
               </Labeled>
-              <Labeled label={t("profession")}>
-                <Input {...field("pref_profession")} maxLength={80} />
-              </Labeled>
-              <Labeled label={t("district")}>
-                <Input {...field("pref_district")} maxLength={80} />
-              </Labeled>
+              <LookupSelect
+                category="profession"
+                label={t("profession")}
+                value={form["pref_profession"] ?? ""}
+                onChange={set("pref_profession")}
+                anyLabel="any_profession"
+              />
+              <LookupSelect
+                category="native_district"
+                label={t("district")}
+                value={form["pref_district"] ?? ""}
+                onChange={set("pref_district")}
+              />
               <Labeled label={t("pref_notes")} full>
                 <Textarea {...field("pref_notes")} maxLength={500} />
               </Labeled>
@@ -685,10 +704,11 @@ export function RegisterWizard() {
               <FileField
                 label={t("photo")}
                 required
-                accept="image/*"
+                accept="image/jpeg,image/png"
                 file={photo}
                 onFile={setPhoto}
                 placeholder={t("choose_file")}
+                note={t("upl_photo_hint")}
               />
               <div>
                 <Label className="mb-1.5 block text-sm">{t("id_kind")}</Label>
@@ -701,22 +721,25 @@ export function RegisterWizard() {
               <FileField
                 label={t("govt_id")}
                 required
-                accept="image/*"
+                accept="image/jpeg,image/png,application/pdf"
                 file={idFile}
                 onFile={setIdFile}
                 placeholder={t("choose_file")}
+                note={t("upl_docs_hint")}
               />
               {needsDivorceDoc && (
                 <FileField
                   label={t("divorce_doc")}
                   required
                   note={t("divorce_doc_note")}
-                  accept="image/*,application/pdf"
+                  accept="image/jpeg,image/png,application/pdf"
                   file={divorceFile}
                   onFile={setDivorceFile}
                   placeholder={t("choose_file")}
                 />
               )}
+
+              <p className="text-xs text-muted-foreground">{t("upl_storage_hint")}</p>
 
               <div className="rounded-lg border border-border bg-secondary/40 p-4">
                 <Button type="button" variant="secondary" onClick={runAiCheck} disabled={aiBusy}>

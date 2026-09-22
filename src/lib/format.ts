@@ -129,3 +129,19 @@ export function birthTimeToInputValue(raw: string | number | null | undefined): 
   if (!parsed) return "";
   return `${pad2(parsed.h)}:${pad2(parsed.m)}`;
 }
+
+/**
+ * Splits a stored birth time into the three parts of the 12-hour control
+ * ([Hour 01-12] [Minute 00-59] [AM/PM]). Any stored form NormalizeBirthTime
+ * understands is mapped to its 12-hour display form; unparseable/empty input
+ * yields empty parts so the control starts blank.
+ */
+export function birthTimeParts(
+  raw: string | number | null | undefined,
+): { hour: string; minute: string; period: "AM" | "PM" | "" } {
+  const parsed = parseBirthTime(raw);
+  if (!parsed) return { hour: "", minute: "", period: "" };
+  const h = parsed.h % 12 === 0 ? 12 : parsed.h % 12;
+  const period = parsed.h < 12 ? "AM" : "PM";
+  return { hour: pad2(h), minute: pad2(parsed.m), period };
+}

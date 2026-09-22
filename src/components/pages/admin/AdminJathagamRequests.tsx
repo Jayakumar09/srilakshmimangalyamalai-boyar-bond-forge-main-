@@ -66,7 +66,7 @@ export function AdminJathagamRequests() {
                         <span className="mr-2">{t("upload_report")}</span>
                         <input
                           type="file"
-                          accept="application/pdf,image/*"
+                          accept="application/pdf,image/jpeg,image/png"
                           disabled={d.busy}
                           onChange={(e) => {
                             const f = e.target.files?.[0];

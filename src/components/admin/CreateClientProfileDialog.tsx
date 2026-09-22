@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { useI18n } from "@/lib/i18n";
 import { createClientProfile } from "@/lib/admin-profiles.functions";
 import { uploadToR2 } from "@/lib/upload";
-import { formatBytes } from "@/lib/compress";
+import { formatBytes, friendlyUploadError } from "@/lib/compress";
 import { normalizeInternationalPhone } from "@/lib/phone";
 import { DEFAULT_COUNTRY_ISO } from "@/lib/country-codes";
 import { normalizeBirthTime } from "@/lib/format";
@@ -29,7 +29,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Upload } from "lucide-react";
 
-type LookupCategory = "sub_caste" | "profession" | "native_district" | "occupation";
+type LookupCategory = "sub_caste" | "profession" | "native_district" | "occupation" | "gothram" | "mother_tongue";
 
 type FieldDef =
   | { kind: "input"; key: string; labelKey: string; type?: string; min?: number; full?: boolean }
@@ -44,6 +44,7 @@ type FieldDef =
       labelKey: string;
       category: LookupCategory;
       anyLabel?: string;
+      includeOther?: boolean;
       full?: boolean;
     };
 
@@ -58,8 +59,8 @@ const SECTIONS: { titleKey: string; fields: FieldDef[] }[] = [
       { kind: "choice", key: "marital_status", labelKey: "adm_f_marital", options: MARITAL_STATUSES },
       { kind: "choice", key: "caste", labelKey: "caste", options: CASTE_OPTIONS },
       { kind: "lookup", key: "sub_caste", labelKey: "adm_f_subcaste", category: "sub_caste" },
-      { kind: "input", key: "gothram", labelKey: "gothram" },
-      { kind: "input", key: "mother_tongue", labelKey: "mother_tongue" },
+      { kind: "lookup", key: "gothram", labelKey: "gothram", category: "gothram", includeOther: true },
+      { kind: "lookup", key: "mother_tongue", labelKey: "mother_tongue", category: "mother_tongue", includeOther: true },
       { kind: "input", key: "height_cm", labelKey: "height", type: "number" },
       { kind: "input", key: "weight_kg", labelKey: "weight", type: "number" },
       { kind: "time", key: "birth_time", labelKey: "birth_time" },
@@ -95,9 +96,9 @@ const SECTIONS: { titleKey: string; fields: FieldDef[] }[] = [
       { kind: "choice", key: "family_type", labelKey: "family_type", options: FAMILY_TYPES },
       { kind: "choice", key: "family_status", labelKey: "family_status", options: FAMILY_STATUSES },
       { kind: "input", key: "father_name", labelKey: "father_name" },
-      { kind: "lookup", key: "father_occupation", labelKey: "father_occ", category: "occupation" },
+      { kind: "lookup", key: "father_occupation", labelKey: "father_occ", category: "occupation", includeOther: true },
       { kind: "input", key: "mother_name", labelKey: "mother_name" },
-      { kind: "lookup", key: "mother_occupation", labelKey: "mother_occ", category: "occupation" },
+      { kind: "lookup", key: "mother_occupation", labelKey: "mother_occ", category: "occupation", includeOther: true },
       { kind: "input", key: "brothers", labelKey: "brothers", type: "number", min: 0 },
       { kind: "input", key: "sisters", labelKey: "sisters", type: "number", min: 0 },
       { kind: "textarea", key: "family_details", labelKey: "adm_f_family", full: true },
@@ -175,6 +176,10 @@ export function CreateClientProfileDialog({
   async function submit() {
     if (!form["email"]?.trim() || !form["full_name"]?.trim()) {
       toast.error(t("adm_email_required"));
+      return;
+    }
+    if (timeError) {
+      toast.error(t("time_invalid"));
       return;
     }
     setBusy(true);
@@ -287,9 +292,7 @@ export function CreateClientProfileDialog({
           if (docError) throw docError;
         }
       } catch (err) {
-        toast.error(
-          err instanceof Error ? `${t("adm_created_ok")} — ${err.message}` : t("adm_upload_failed"),
-        );
+        toast.error(`${t("adm_created_ok")} — ${friendlyUploadError(err, t)}`);
       }
 
       toast.success(res.existed ? t("adm_exists_updated") : t("adm_created_ok"));
@@ -299,7 +302,7 @@ export function CreateClientProfileDialog({
       onCreated();
       onClose();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not create the profile");
+      toast.error(friendlyUploadError(err, t));
     } finally {
       setBusy(false);
     }
@@ -330,6 +333,7 @@ export function CreateClientProfileDialog({
                     onPhoneIso={(c) => setPhoneCountries((s) => ({ ...s, [f.key]: c }))}
                     onTimeBlur={handleTimeBlur}
                     timeError={timeError}
+                    onTimeValidity={(invalid) => setTimeError(invalid ? t("time_invalid") : "")}
                     educationLevel={form["education_level"] ?? ""}
                     t={t}
                   />
@@ -341,7 +345,7 @@ export function CreateClientProfileDialog({
           <div className="sm:col-span-2 space-y-4 border-t border-border pt-3">
             <h3 className="text-sm font-medium text-primary">{t("adm_documents")}</h3>
 
-            <FileField label={t("photo")} accept="image/*" file={photo} onFile={setPhoto} />
+            <FileField label={t("photo")} accept="image/jpeg,image/png" file={photo} onFile={setPhoto} />
             <div>
               <Label className="mb-1.5 block text-sm">{t("id_kind")}</Label>
               <select
@@ -356,12 +360,12 @@ export function CreateClientProfileDialog({
                 ))}
               </select>
             </div>
-            <FileField label={t("govt_id")} accept="image/*" file={idFile} onFile={setIdFile} />
+            <FileField label={t("govt_id")} accept="image/jpeg,image/png,application/pdf" file={idFile} onFile={setIdFile} />
             {needsDivorceDoc && (
               <FileField
                 label={t("divorce_doc")}
                 note={t("divorce_doc_note")}
-                accept="image/*,application/pdf"
+                accept="image/jpeg,image/png,application/pdf"
                 file={divorceFile}
                 onFile={setDivorceFile}
               />
@@ -391,6 +395,7 @@ function FormField({
   onPhoneIso,
   onTimeBlur,
   timeError,
+  onTimeValidity,
   educationLevel,
   t,
 }: {
@@ -403,6 +408,7 @@ function FormField({
   onPhoneIso?: (iso: string) => void;
   onTimeBlur?: () => void;
   timeError?: string;
+  onTimeValidity?: (valid: boolean) => void;
   educationLevel?: string;
   t: (k: string) => string;
 }) {
@@ -422,6 +428,7 @@ function FormField({
         onChange={onChange}
         onBlur={onTimeBlur}
         error={timeError}
+        onValidityChange={onTimeValidity}
       />
     );
   }
@@ -458,6 +465,7 @@ function FormField({
         value={value}
         onChange={onChange}
         anyLabel={field.anyLabel}
+        includeOther={field.includeOther}
       />
     );
   }

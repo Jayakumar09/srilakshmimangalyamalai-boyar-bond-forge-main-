@@ -7,6 +7,7 @@ import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
 import { Button } from "@/components/ui/button";
 import { uploadToR2 } from "@/lib/upload";
+import { friendlyUploadError } from "@/lib/compress";
 import { createViewUrl } from "@/lib/storage.functions";
 import { notifyJathagamReady } from "@/lib/notify.functions";
 
@@ -74,7 +75,7 @@ export function JathagamAdminPage() {
       toast.success(t("jat_uploaded_ok"));
       await load();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("jat_failed"));
+      toast.error(friendlyUploadError(err, t));
     } finally {
       setBusy(null);
     }
@@ -182,7 +183,7 @@ export function JathagamAdminPage() {
                     <span className="mr-2">{t("upload_report")}</span>
                     <input
                       type="file"
-                      accept="application/pdf,image/*"
+                      accept="application/pdf,image/jpeg,image/png"
                       disabled={busy === row.id}
                       onChange={(e) => {
                         const f = e.target.files?.[0];
