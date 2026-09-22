@@ -16,6 +16,7 @@ import { uploadToR2 } from "@/lib/upload";
 import { fileToDataUrl, prepareFileUpload, formatBytes, friendlyUploadError } from "@/lib/compress";
 import { preScreenDocuments, type PreScreenResult } from "@/lib/verify.functions";
 import { notifyProfileSubmitted } from "@/lib/notify.functions";
+import { ensureLookupOptions, lookupValueEntries } from "@/lib/lookup-options.functions";
 import { CountryCodePhoneField } from "@/components/CountryCodePhoneField";
 import { TimeInput } from "@/components/TimeInput";
 import { normalizeInternationalPhone, splitInternationalPhone } from "@/lib/phone";
@@ -210,6 +211,12 @@ export function RegisterWizard() {
         .from("profiles")
         .upsert(profileFields(user.id, user.email ?? null), { onConflict: "id" });
       if (error) throw error;
+      try {
+        // Any custom lookup values are persisted once progress is saved.
+        await ensureLookupOptions(lookupValueEntries(form));
+      } catch {
+        /* lookup persistence must never block a progress save */
+      }
       await loadProfile();
       toast.success(t("msg_saved"));
     } catch (err) {
@@ -317,6 +324,14 @@ export function RegisterWizard() {
         { onConflict: "id" },
       );
       if (profileError) throw profileError;
+
+      try {
+        // Only after a successful profile save: persist any custom lookup values
+        // (Other / "Add new") so future members see them in the same dropdown.
+        await ensureLookupOptions(lookupValueEntries(form));
+      } catch {
+        /* lookup persistence must never block a successful submission */
+      }
 
       const docs: {
         user_id: string;

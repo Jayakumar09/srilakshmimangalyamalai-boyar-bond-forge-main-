@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useI18n } from "@/lib/i18n";
 import { createClientProfile } from "@/lib/admin-profiles.functions";
+import { ensureLookupOptions, lookupValueEntries } from "@/lib/lookup-options.functions";
 import { uploadToR2 } from "@/lib/upload";
 import { formatBytes, friendlyUploadError } from "@/lib/compress";
 import { normalizeInternationalPhone } from "@/lib/phone";
@@ -220,6 +221,14 @@ export function CreateClientProfileDialog({
 
       const res = await createClientProfile({ data: payload as never });
       profileId = res.id;
+
+      try {
+        // Only after a successful profile create: persist custom lookup values
+        // (Other / "Add new") so future profiles see them in the dropdown.
+        await ensureLookupOptions(lookupValueEntries(payload));
+      } catch {
+        /* lookup persistence must never block the create flow */
+      }
 
       const { data: idRow } = await supabase
         .from("profiles")

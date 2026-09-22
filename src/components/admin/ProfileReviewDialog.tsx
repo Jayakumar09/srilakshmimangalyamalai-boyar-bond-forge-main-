@@ -7,6 +7,7 @@ import type { AdminData, AdminProfile, ClientRequest, ProfileAudit } from "@/lib
 import { ageFrom } from "@/lib/admin-data";
 import { uploadToR2 } from "@/lib/upload";
 import { formatBytes, friendlyUploadError } from "@/lib/compress";
+import { ensureLookupOptions, lookupValueEntries } from "@/lib/lookup-options.functions";
 import { LookupSelect } from "@/components/LookupSelect";
 import { supabase } from "@/integrations/supabase/client";
 import { actorLabel, createdByLabel, isProfileDraft, planLabel, statusLabel } from "@/lib/admin-labels";
@@ -391,6 +392,14 @@ export function ProfileReviewDialog({
         clientReq?.threadId ?? null,
       );
       if (!ok) return;
+
+      try {
+        // Only after a successful admin profile update: persist custom lookup
+        // values (Other / "Add new") so the same dropdown grows for everyone.
+        await ensureLookupOptions(lookupValueEntries(patch));
+      } catch {
+        /* lookup persistence must never block an admin save */
+      }
 
       try {
         const rows: {

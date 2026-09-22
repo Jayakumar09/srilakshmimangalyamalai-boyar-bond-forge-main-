@@ -8,8 +8,10 @@ import { Label } from "@/components/ui/label";
 type Option = { id: string; value_en: string; value_ta: string | null };
 
 /**
- * Database-backed dropdown. Typing a value that does not exist yet saves it to
- * the shared list so every future member sees it.
+ * Database-backed dropdown. Selecting an option (or "Other" with a custom
+ * value) commits it to the form. New values are persisted into lookup_options
+ * only when the profile is saved (see ensureLookupOptions), so a half-filled
+ * page never writes partial entries into the shared list.
  */
 export function LookupSelect({
   category,
@@ -33,8 +35,12 @@ export function LookupSelect({
   const [query, setQuery] = useState(value);
   const [open, setOpen] = useState(false);
   const [otherChosen, setOtherChosen] = useState(false);
+  const [showList, setShowList] = useState(false);
 
-  useEffect(() => setQuery(value), [value]);
+  useEffect(() => {
+    setQuery(value);
+    setShowList(false);
+  }, [value]);
 
   async function load() {
     const { data } = await supabase
@@ -61,6 +67,13 @@ export function LookupSelect({
       .slice(0, 40);
   }, [options, query]);
 
+  /**
+   * While returning to the predefined list from a custom value ("Choose from
+   * the list"), show the full list instead of filtering by the pending custom
+   * text, so the predefined options are immediately visible again.
+   */
+  const shown = useMemo(() => (showList ? options.slice(0, 40) : filtered), [showList, options, filtered]);
+
   /** The currently committed value matches a predefined option? */
   const committedExists = options.some(
     (o) => o.value_en.toLowerCase() === value.trim().toLowerCase(),
@@ -71,19 +84,31 @@ export function LookupSelect({
     (o) => o.value_en.toLowerCase() === query.trim().toLowerCase(),
   );
 
-  /** A saved value that does not match any predefined option is treated as a custom/Other value. */
+  /**
+   * A saved value that does not match any predefined option is treated as a
+   * custom/Other value. `showList` lets the user step back to the predefined
+   * list even while a custom value is committed (see "Choose from the list"),
+   * so the custom branch is suspended until they pick an option or re-choose
+   * Other. The effect above also clears it whenever the committed value changes.
+   */
   const isCustomValue = includeOther && value !== "" && !committedExists;
 
-  async function addNew() {
+  /**
+   * Commits a freshly typed value to the form. Persistence to lookup_options is
+   * deferred to the profile save handler, so abandoned pages never write into
+   * the shared list.
+   */
+  function addNew() {
     const value_en = query.trim();
     if (!value_en) return;
-    await supabase.from("lookup_options").insert({ category, value_en });
-    await load();
     onChange(value_en);
+    setQuery(value_en);
+    setOtherChosen(false);
+    setShowList(false);
     setOpen(false);
   }
 
-  if (includeOther && (otherChosen || isCustomValue)) {
+  if (includeOther && (otherChosen || (isCustomValue && !showList))) {
     return (
       <div className="relative">
         <Label className="mb-1.5 block text-sm">
@@ -104,6 +129,7 @@ export function LookupSelect({
           className="mt-1 text-xs text-primary hover:underline"
           onClick={() => {
             setOtherChosen(false);
+            setShowList(true);
             setOpen(true);
           }}
         >
@@ -142,6 +168,8 @@ export function LookupSelect({
                 onMouseDown={() => {
                   onChange("");
                   setQuery("");
+                  setOtherChosen(false);
+                  setShowList(false);
                   setOpen(false);
                 }}
               >
@@ -156,6 +184,7 @@ export function LookupSelect({
               className="block w-full rounded px-2 py-1.5 text-left text-sm font-medium text-muted-foreground hover:bg-accent/30"
               onMouseDown={() => {
                 setOtherChosen(true);
+                setShowList(false);
                 setQuery("");
                 onChange("");
                 setOpen(false);
@@ -164,7 +193,7 @@ export function LookupSelect({
               {t("other")}
             </button>
           )}
-          {filtered.map((o) => (
+          {shown.map((o) => (
             <button
               key={o.id}
               type="button"
@@ -172,6 +201,8 @@ export function LookupSelect({
               onMouseDown={() => {
                 onChange(o.value_en);
                 setQuery(o.value_en);
+                setOtherChosen(false);
+                setShowList(false);
                 setOpen(false);
               }}
             >
