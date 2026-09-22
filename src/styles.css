@@ -173,3 +173,33 @@
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-soft);
 }
+
+/*
+ * A4 profile document. Used by the My Profile page.
+ */
+@page {
+  size: A4 portrait;
+  margin: 12mm;
+
+  @bottom-center {
+    content: "Page " counter(page) " of " counter(pages);
+    font-family: var(--font-sans);
+    font-size: 10px;
+    color: oklch(0.5 0.035 40);
+  }
+}
+
+@media print {
+  html,
+  body {
+    background-color: oklch(1 0 0);
+  }
+
+  .profile-sheet {
+    max-width: 100%;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0;
+  }
+}

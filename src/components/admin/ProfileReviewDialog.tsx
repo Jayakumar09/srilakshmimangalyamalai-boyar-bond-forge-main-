@@ -58,7 +58,7 @@ type EditField = {
   labelKey: string;
   kind: EditKind;
   options?: ProfileOption[];
-  category?: "sub_caste" | "profession" | "native_district" | "occupation" | "gothram" | "mother_tongue";
+  category?: "sub_caste" | "profession" | "native_district" | "occupation" | "gothram" | "mother_tongue" | "job_details";
   anyLabel?: string;
   includeOther?: boolean;
   maxLength?: number;
@@ -76,7 +76,7 @@ const EDIT_FIELDS: Record<string, EditField> = {
     options: MARITAL_STATUSES,
   },
   caste: { key: "caste", labelKey: "caste", kind: "choice", options: CASTE_OPTIONS },
-  sub_caste: { key: "sub_caste", labelKey: "adm_f_subcaste", kind: "lookup", category: "sub_caste" },
+  sub_caste: { key: "sub_caste", labelKey: "adm_f_subcaste", kind: "lookup", category: "sub_caste", includeOther: true },
   gothram: { key: "gothram", labelKey: "gothram", kind: "lookup", category: "gothram", includeOther: true },
   mother_tongue: { key: "mother_tongue", labelKey: "mother_tongue", kind: "lookup", category: "mother_tongue", includeOther: true },
   height_cm: { key: "height_cm", labelKey: "height", kind: "number" },
@@ -97,8 +97,8 @@ const EDIT_FIELDS: Record<string, EditField> = {
     options: EDUCATION_LEVELS,
   },
   education_detail: { key: "education_detail", labelKey: "education_detail", kind: "text", maxLength: 120 },
-  profession: { key: "profession", labelKey: "adm_f_profession", kind: "lookup", category: "profession" },
-  job_detail: { key: "job_detail", labelKey: "job_detail", kind: "text", maxLength: 150 },
+  profession: { key: "profession", labelKey: "adm_f_profession", kind: "lookup", category: "profession", includeOther: true },
+  job_detail: { key: "job_detail", labelKey: "job_detail", kind: "lookup", category: "job_details", includeOther: true },
   annual_income: { key: "annual_income", labelKey: "income", kind: "text", maxLength: 60 },
   about: { key: "about", labelKey: "adm_f_about", kind: "textarea", maxLength: 800, full: true },
   family_type: { key: "family_type", labelKey: "family_type", kind: "choice", options: FAMILY_TYPES },
@@ -116,7 +116,7 @@ const EDIT_FIELDS: Record<string, EditField> = {
   pref_education: { key: "pref_education", labelKey: "education_level", kind: "choice", options: EDUCATION_LEVELS },
   pref_marital_status: { key: "pref_marital_status", labelKey: "marital_status", kind: "choice", options: MARITAL_STATUSES },
   pref_sub_caste: { key: "pref_sub_caste", labelKey: "sub_caste", kind: "lookup", category: "sub_caste" },
-  pref_profession: { key: "pref_profession", labelKey: "profession", kind: "lookup", category: "profession", anyLabel: "any_profession" },
+  pref_profession: { key: "pref_profession", labelKey: "profession", kind: "lookup", category: "profession", anyLabel: "any_profession", includeOther: true },
   pref_district: { key: "pref_district", labelKey: "district", kind: "lookup", category: "native_district" },
   pref_notes: { key: "pref_notes", labelKey: "adm_f_prefs", kind: "textarea", maxLength: 500, full: true },
 };

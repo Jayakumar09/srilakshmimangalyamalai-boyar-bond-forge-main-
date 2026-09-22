@@ -30,7 +30,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Upload } from "lucide-react";
 
-type LookupCategory = "sub_caste" | "profession" | "native_district" | "occupation" | "gothram" | "mother_tongue";
+type LookupCategory = "sub_caste" | "profession" | "native_district" | "occupation" | "gothram" | "mother_tongue" | "job_details";
 
 type FieldDef =
   | { kind: "input"; key: string; labelKey: string; type?: string; min?: number; full?: boolean }
@@ -59,7 +59,7 @@ const SECTIONS: { titleKey: string; fields: FieldDef[] }[] = [
       { kind: "input", key: "date_of_birth", labelKey: "adm_f_dob", type: "date" },
       { kind: "choice", key: "marital_status", labelKey: "adm_f_marital", options: MARITAL_STATUSES },
       { kind: "choice", key: "caste", labelKey: "caste", options: CASTE_OPTIONS },
-      { kind: "lookup", key: "sub_caste", labelKey: "adm_f_subcaste", category: "sub_caste" },
+      { kind: "lookup", key: "sub_caste", labelKey: "adm_f_subcaste", category: "sub_caste", includeOther: true },
       { kind: "lookup", key: "gothram", labelKey: "gothram", category: "gothram", includeOther: true },
       { kind: "lookup", key: "mother_tongue", labelKey: "mother_tongue", category: "mother_tongue", includeOther: true },
       { kind: "input", key: "height_cm", labelKey: "height", type: "number" },
@@ -85,8 +85,8 @@ const SECTIONS: { titleKey: string; fields: FieldDef[] }[] = [
     fields: [
       { kind: "choice", key: "education_level", labelKey: "adm_f_education", options: EDUCATION_LEVELS },
       { kind: "course", key: "education_detail", labelKey: "education_detail", full: true },
-      { kind: "lookup", key: "profession", labelKey: "adm_f_profession", category: "profession" },
-      { kind: "input", key: "job_detail", labelKey: "job_detail" },
+      { kind: "lookup", key: "profession", labelKey: "adm_f_profession", category: "profession", includeOther: true },
+      { kind: "lookup", key: "job_detail", labelKey: "job_detail", category: "job_details", includeOther: true },
       { kind: "input", key: "annual_income", labelKey: "income" },
       { kind: "textarea", key: "about", labelKey: "adm_f_about", full: true },
     ],
@@ -114,7 +114,7 @@ const SECTIONS: { titleKey: string; fields: FieldDef[] }[] = [
       { kind: "choice", key: "pref_education", labelKey: "education_level", options: EDUCATION_LEVELS },
       { kind: "choice", key: "pref_marital_status", labelKey: "marital_status", options: MARITAL_STATUSES },
       { kind: "lookup", key: "pref_sub_caste", labelKey: "sub_caste", category: "sub_caste" },
-      { kind: "lookup", key: "pref_profession", labelKey: "profession", category: "profession", anyLabel: "any_profession" },
+      { kind: "lookup", key: "pref_profession", labelKey: "profession", category: "profession", anyLabel: "any_profession", includeOther: true },
       { kind: "lookup", key: "pref_district", labelKey: "district", category: "native_district" },
       { kind: "textarea", key: "pref_notes", labelKey: "adm_f_prefs", full: true },
     ],

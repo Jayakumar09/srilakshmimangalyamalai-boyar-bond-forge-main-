@@ -472,6 +472,7 @@ export function RegisterWizard() {
                 value={form["sub_caste"] ?? ""}
                 onChange={set("sub_caste")}
                 required
+                includeOther
               />
               <LookupSelect
                 category="gothram"
@@ -603,10 +604,15 @@ export function RegisterWizard() {
                 label={t("profession")}
                 value={form["profession"] ?? ""}
                 onChange={set("profession")}
+                includeOther
               />
-              <Labeled label={t("job_detail")}>
-                <Input {...field("job_detail")} maxLength={150} />
-              </Labeled>
+              <LookupSelect
+                category="job_details"
+                label={t("job_detail")}
+                value={form["job_detail"] ?? ""}
+                onChange={set("job_detail")}
+                includeOther
+              />
               <Labeled label={t("income")}>
                 <Input {...field("annual_income")} maxLength={60} />
               </Labeled>
@@ -701,6 +707,7 @@ export function RegisterWizard() {
                 value={form["pref_profession"] ?? ""}
                 onChange={set("pref_profession")}
                 anyLabel="any_profession"
+                includeOther
               />
               <LookupSelect
                 category="native_district"

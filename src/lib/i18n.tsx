@@ -236,6 +236,15 @@ export const dict: Dict = {
     ta: "தேட அல்லது புதிதாக சேர்க்க தட்டச்சு செய்யவும்",
   },
   add_new: { en: "Add", ta: "சேர்" },
+  cancel: { en: "Cancel", ta: "ரத்து" },
+  custom_value_required: { en: "Please enter a value", ta: "மதிப்பை உள்ளிடவும்" },
+  enter_new_item: { en: "Enter new item", ta: "புதிய உருப்படியை உள்ளிடவும்" },
+  enter_new_occupation: { en: "Enter new occupation", ta: "புதிய தொழிலை உள்ளிடவும்" },
+  enter_new_sub_caste: { en: "Enter new Sub-caste", ta: "புதிய துணைச் சாதியை உள்ளிடவும்" },
+  enter_new_profession: { en: "Enter new profession", ta: "புதிய தொழிலை உள்ளிடவும்" },
+  enter_new_gothram: { en: "Enter new Gothram / Kulam", ta: "புதிய கோத்ரம் / குலத்தை உள்ளிடவும்" },
+  enter_new_mother_tongue: { en: "Enter new mother tongue", ta: "புதிய தாய்மொழியை உள்ளிடவும்" },
+  enter_new_job_details: { en: "Enter new job details", ta: "புதிய வேலை விவரங்களை உள்ளிடவும்" },
   // dashboard
   status_pending: { en: "Waiting for admin approval", ta: "நிர்வாக ஒப்புதலுக்காக காத்திருக்கிறது" },
   status_pending_d: {
@@ -245,6 +254,7 @@ export const dict: Dict = {
   status_approved: { en: "Profile approved", ta: "சுயவிவரம் அங்கீகரிக்கப்பட்டது" },
   my_profile: { en: "My profile", ta: "என் சுயவிவரம்" },
   edit_profile: { en: "Edit profile", ta: "சுயவிவரத்தைத் திருத்து" },
+  print_profile: { en: "Print", ta: "அச்சிடு" },
   draft_saved: {
     en: "Saved, not submitted yet",
     ta: "சேமிக்கப்பட்டது, இன்னும் சமர்ப்பிக்கப்படவில்லை",

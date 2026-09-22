@@ -6,7 +6,8 @@ export type LookupCategory =
   | "native_district"
   | "occupation"
   | "gothram"
-  | "mother_tongue";
+  | "mother_tongue"
+  | "job_details";
 
 const normalize = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
 
@@ -68,7 +69,9 @@ export function lookupValueEntries(
     { category: "mother_tongue", value: str("mother_tongue") },
     { category: "native_district", value: str("native_district") },
     { category: "profession", value: str("profession") },
+    { category: "profession", value: str("pref_profession") },
     { category: "occupation", value: str("father_occupation") },
     { category: "occupation", value: str("mother_occupation") },
+    { category: "job_details", value: str("job_detail") },
   ];
 }

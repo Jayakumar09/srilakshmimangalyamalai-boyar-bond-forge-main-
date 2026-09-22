@@ -7,11 +7,25 @@ import { Label } from "@/components/ui/label";
 
 type Option = { id: string; value_en: string; value_ta: string | null };
 
+/** "Other" is a UI-only action; it is never a real lookup option or field value. */
+const isOther = (s: string) => s.trim().toLowerCase() === "other";
+
+/** Field-specific label for the custom-entry panel (falls back to a generic one). */
+const ENTER_NEW_LABEL: Record<string, string> = {
+  sub_caste: "enter_new_sub_caste",
+  gothram: "enter_new_gothram",
+  mother_tongue: "enter_new_mother_tongue",
+  profession: "enter_new_profession",
+  occupation: "enter_new_occupation",
+  job_details: "enter_new_job_details",
+};
+
 /**
- * Database-backed dropdown. Selecting an option (or "Other" with a custom
- * value) commits it to the form. New values are persisted into lookup_options
- * only when the profile is saved (see ensureLookupOptions), so a half-filled
- * page never writes partial entries into the shared list.
+ * Database-backed dropdown. Existing values are selectable options; "Other" opens
+ * a separate custom-entry panel (label + input + Save) that commits a brand-new
+ * value to the form. New values are persisted into lookup_options only when the
+ * profile is saved (see ensureLookupOptions), so typing/abandoned pages never
+ * write partial entries into the shared list.
  */
 export function LookupSelect({
   category,
@@ -22,7 +36,7 @@ export function LookupSelect({
   anyLabel,
   includeOther,
 }: {
-  category: "sub_caste" | "profession" | "native_district" | "occupation" | "gothram" | "mother_tongue";
+  category: "sub_caste" | "profession" | "native_district" | "occupation" | "gothram" | "mother_tongue" | "job_details";
   label: string;
   value: string;
   onChange: (v: string) => void;
@@ -35,11 +49,14 @@ export function LookupSelect({
   const [query, setQuery] = useState(value);
   const [open, setOpen] = useState(false);
   const [otherChosen, setOtherChosen] = useState(false);
-  const [showList, setShowList] = useState(false);
+  const [customDraft, setCustomDraft] = useState("");
+  const [customError, setCustomError] = useState<string | null>(null);
 
   useEffect(() => {
     setQuery(value);
-    setShowList(false);
+    setOtherChosen(false);
+    setCustomDraft("");
+    setCustomError(null);
   }, [value]);
 
   async function load() {
@@ -48,7 +65,9 @@ export function LookupSelect({
       .select("id, value_en, value_ta")
       .eq("category", category)
       .order("value_en");
-    setOptions(data ?? []);
+    // Persisted "Other" rows (if any) are ignored so the dropdown shows exactly
+    // one UI-only "Other", generated below by includeOther.
+    setOptions((data ?? []).filter((o) => !includeOther || !isOther(o.value_en)));
   }
 
   useEffect(() => {
@@ -67,162 +86,171 @@ export function LookupSelect({
       .slice(0, 40);
   }, [options, query]);
 
-  /**
-   * While returning to the predefined list from a custom value ("Choose from
-   * the list"), show the full list instead of filtering by the pending custom
-   * text, so the predefined options are immediately visible again.
-   */
-  const shown = useMemo(() => (showList ? options.slice(0, 40) : filtered), [showList, options, filtered]);
-
-  /** The currently committed value matches a predefined option? */
-  const committedExists = options.some(
-    (o) => o.value_en.toLowerCase() === value.trim().toLowerCase(),
-  );
-
-  /** Does the typed query match a predefined option? (drives the "Add new" button) */
   const queryExists = options.some(
     (o) => o.value_en.toLowerCase() === query.trim().toLowerCase(),
   );
 
-  /**
-   * A saved value that does not match any predefined option is treated as a
-   * custom/Other value. `showList` lets the user step back to the predefined
-   * list even while a custom value is committed (see "Choose from the list"),
-   * so the custom branch is suspended until they pick an option or re-choose
-   * Other. The effect above also clears it whenever the committed value changes.
-   */
-  const isCustomValue = includeOther && value !== "" && !committedExists;
-
-  /**
-   * Commits a freshly typed value to the form. Persistence to lookup_options is
-   * deferred to the profile save handler, so abandoned pages never write into
-   * the shared list.
-   */
+  /** Commits the typed filter text as a new value. "Other" itself is never stored. */
   function addNew() {
     const value_en = query.trim();
-    if (!value_en) return;
+    if (!value_en || isOther(value_en)) return;
     onChange(value_en);
     setQuery(value_en);
-    setOtherChosen(false);
-    setShowList(false);
     setOpen(false);
   }
 
-  if (includeOther && (otherChosen || (isCustomValue && !showList))) {
-    return (
-      <div className="relative">
-        <Label className="mb-1.5 block text-sm">
-          {label}
-          {required && <span className="text-destructive"> *</span>}
-        </Label>
-        <Input
-          value={query}
-          placeholder={t("type_to_add")}
-          autoFocus={otherChosen}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            onChange(e.target.value);
-          }}
-        />
-        <button
-          type="button"
-          className="mt-1 text-xs text-primary hover:underline"
-          onClick={() => {
-            setOtherChosen(false);
-            setShowList(true);
-            setOpen(true);
-          }}
-        >
-          {t("other_pick_from_list")}
-        </button>
-      </div>
-    );
+  /** Select "Other": open the custom-entry panel without touching the form value. */
+  function selectOther() {
+    setOtherChosen(true);
+    setOpen(false);
+    setCustomDraft("");
+    setCustomError(null);
+    setQuery(t("other"));
   }
 
+  function cancelCustom() {
+    setOtherChosen(false);
+    setCustomDraft("");
+    setCustomError(null);
+    setQuery(value);
+    setOpen(false);
+  }
+
+  /** Confirm the custom value for the current form only (DB insert happens on profile save). */
+  function saveCustom() {
+    const value_en = customDraft.trim();
+    if (!value_en || isOther(value_en)) {
+      setCustomError(t("custom_value_required"));
+      return;
+    }
+    onChange(value_en);
+    setQuery(value_en);
+    setOtherChosen(false);
+    setCustomDraft("");
+    setCustomError(null);
+    setOpen(false);
+  }
+
+  const enterNewLabel = t(ENTER_NEW_LABEL[category] ?? "enter_new_item");
+
   return (
-    <div className="relative">
+    <div>
       <Label className="mb-1.5 block text-sm">
         {label}
         {required && <span className="text-destructive"> *</span>}
       </Label>
-      <Input
-        value={query}
-        placeholder={anyLabel && value === "" ? t(anyLabel) : t("type_to_add")}
-        onChange={(e) => {
-          // Strict select-to-commit: typing only filters the list. The value is
-          // saved exclusively when an option is picked (or a new one is added),
-          // so partial searches like "o" / "ot" never get stored as the answer.
-          setQuery(e.target.value);
-          setOpen(true);
-        }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => window.setTimeout(() => setOpen(false), 160)}
-      />
-      {open && (
-        <div className="absolute z-30 mt-1 max-h-60 w-full overflow-auto rounded-md border border-border bg-popover p-1 shadow-lg">
-          {anyLabel && (
-            <>
+      <div className="relative">
+        <Input
+          value={query}
+          readOnly={otherChosen}
+          placeholder={anyLabel && value === "" ? t(anyLabel) : t("type_to_add")}
+          onChange={(e) => {
+            // Typing only filters the list. The value is committed exclusively
+            // when an option is picked, "Add" is clicked, or the custom-entry
+            // panel Save is pressed — so partial text is never stored as the answer.
+            setQuery(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => {
+            if (!otherChosen) setOpen(true);
+          }}
+          onBlur={() => window.setTimeout(() => setOpen(false), 160)}
+        />
+        {open && (
+          <div className="absolute z-30 mt-1 max-h-60 w-full overflow-auto rounded-md border border-border bg-popover p-1 shadow-lg">
+            {anyLabel && (
+              <>
+                <button
+                  type="button"
+                  className="block w-full rounded px-2 py-1.5 text-left text-sm font-medium text-muted-foreground hover:bg-accent/30"
+                  onMouseDown={() => {
+                    onChange("");
+                    setQuery("");
+                    setOtherChosen(false);
+                    setCustomDraft("");
+                    setCustomError(null);
+                    setOpen(false);
+                  }}
+                >
+                  {t(anyLabel)}
+                </button>
+                <div className="my-1 border-t border-border" />
+              </>
+            )}
+            {includeOther && (
               <button
                 type="button"
                 className="block w-full rounded px-2 py-1.5 text-left text-sm font-medium text-muted-foreground hover:bg-accent/30"
+                onMouseDown={selectOther}
+              >
+                {t("other")}
+              </button>
+            )}
+            {filtered.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                className="block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent/30"
                 onMouseDown={() => {
-                  onChange("");
-                  setQuery("");
+                  onChange(o.value_en);
+                  setQuery(o.value_en);
                   setOtherChosen(false);
-                  setShowList(false);
+                  setCustomDraft("");
+                  setCustomError(null);
                   setOpen(false);
                 }}
               >
-                {t(anyLabel)}
+                {lang === "ta" && o.value_ta ? `${o.value_ta} (${o.value_en})` : o.value_en}
               </button>
-              <div className="my-1 border-t border-border" />
-            </>
-          )}
-          {includeOther && (
-            <button
-              type="button"
-              className="block w-full rounded px-2 py-1.5 text-left text-sm font-medium text-muted-foreground hover:bg-accent/30"
-              onMouseDown={() => {
-                setOtherChosen(true);
-                setShowList(false);
-                setQuery("");
-                onChange("");
-                setOpen(false);
-              }}
-            >
-              {t("other")}
-            </button>
-          )}
-          {shown.map((o) => (
-            <button
-              key={o.id}
-              type="button"
-              className="block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent/30"
-              onMouseDown={() => {
-                onChange(o.value_en);
-                setQuery(o.value_en);
-                setOtherChosen(false);
-                setShowList(false);
-                setOpen(false);
-              }}
-            >
-              {lang === "ta" && o.value_ta ? `${o.value_ta} (${o.value_en})` : o.value_en}
-            </button>
-          ))}
-          {!queryExists && query.trim() !== "" && (
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="mt-1 w-full"
-              onMouseDown={(e) => {
+            ))}
+            {!queryExists && query.trim() !== "" && (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="mt-1 w-full"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  void addNew();
+                }}
+              >
+                {t("add_new")} “{query.trim()}”
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+      {otherChosen && (
+        <div className="mt-2 rounded-md border border-border bg-card p-3">
+          <Label className="mb-1.5 block text-sm">{enterNewLabel}</Label>
+          <Input
+            value={customDraft}
+            autoFocus
+            placeholder={t("type_to_add")}
+            onChange={(e) => {
+              setCustomDraft(e.target.value);
+              if (customError) setCustomError(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
                 e.preventDefault();
-                void addNew();
-              }}
-            >
-              {t("add_new")} “{query.trim()}”
+                saveCustom();
+              }
+            }}
+          />
+          {customError && <p className="mt-1 text-xs text-destructive">{customError}</p>}
+          <div className="mt-2 flex items-center gap-2">
+            <Button type="button" size="sm" onClick={saveCustom}>
+              {t("save")}
             </Button>
-          )}
+            <button
+              type="button"
+              className="text-xs text-muted-foreground hover:underline"
+              onClick={cancelCustom}
+            >
+              {t("cancel")}
+            </button>
+          </div>
         </div>
       )}
     </div>
