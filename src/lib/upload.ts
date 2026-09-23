@@ -7,7 +7,8 @@ import {
 import { prepareFileUpload } from "@/lib/compress";
 import { uploadFile } from "@/lib/storage.functions";
 
-export type UploadFolder = "photo" | "govt_id" | "divorce_doc" | "payment_proof" | "jathagam";
+export type UploadFolder =
+  "photo" | "govt_id" | "divorce_doc" | "payment_proof" | "jathagam" | "attachment";
 
 export type UploadResult = {
   key: string;

@@ -280,6 +280,8 @@ export const dict: Dict = {
   // navigation / app
   nav_matches: { en: "Find matches", ta: "பொருத்தங்கள்" },
   nav_messages: { en: "Messages", ta: "செய்திகள்" },
+  nav_member_messages: { en: "Member Messages", ta: "உறுப்பினர் செய்திகள்" },
+  nav_communication: { en: "Communication", ta: "தொடர்பு" },
   nav_payments: { en: "Payments", ta: "கட்டணம்" },
   // checkout
   checkout_title: { en: "Activate your plan", ta: "உங்கள் திட்டத்தை செயல்படுத்துங்கள்" },
@@ -769,7 +771,9 @@ export const dict: Dict = {
   adm_upload_docs: { en: "Photo & identity documents", ta: "புகைப்படம் & அடையாள ஆவணங்கள்" },
   adm_upload_failed: { en: "Upload failed", ta: "பதிவேற்றம் தோல்வியடைந்தது" },
   // Admin ↔ client support messages
-  adm_nav_messages: { en: "Client messages", ta: "வாடிக்கையாளர் செய்திகள்" },
+  adm_nav_messages: { en: "Messages", ta: "செய்திகள்" },
+  adm_nav_support: { en: "Support", ta: "உதவி" },
+  adm_nav_communication: { en: "Communication", ta: "தொடர்பு" },
   adm_msg_sub: {
     en: "Support conversations between members and the office.",
     ta: "உறுப்பினர்களுக்கும் அலுவலகத்திற்கும் இடையிலான உதவி உரையாடல்கள்.",
@@ -803,6 +807,10 @@ export const dict: Dict = {
     ta: "ஒரு உரையாடலைத் தொடங்குங்கள்; அலுவலகம் இங்கே பதிலளிக்கும்.",
   },
   sup_you: { en: "You", ta: "நீங்கள்" },
+  msg_attach: { en: "Attach a file", ta: "கோப்பை இணைக்கவும்" },
+  msg_attach_view: { en: "View", ta: "பார்க்க" },
+  msg_attach_open: { en: "Open attachment", ta: "இணைப்பைத் திற" },
+  msg_attach_open_failed: { en: "Could not open attachment", ta: "இணைப்பைத் திறக்க முடியவில்லை" },
   adm_storage_warn: {
     en: "Storage is at or above 90% capacity. Free up space or upgrade your plan now.",
     ta: "சேமிப்பு 90% அல்லது அதற்கு மேல் நிரம்பியுள்ளது. இடத்தை காலி செய்யவும் அல்லது திட்டத்தை உயர்த்தவும்.",
@@ -827,6 +835,8 @@ const ENGLISH_TWIN_BASES = [
   "/dashboard",
   "/jathagam",
   "/support",
+  "/office-messages",
+  "/communication",
 ];
 
 /**

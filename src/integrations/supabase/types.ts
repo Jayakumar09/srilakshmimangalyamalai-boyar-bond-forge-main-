@@ -584,6 +584,10 @@ export type Database = {
       }
       support_messages: {
         Row: {
+          attachment_key: string | null
+          attachment_mime: string | null
+          attachment_name: string | null
+          attachment_size: number | null
           body: string
           created_at: string
           id: string
@@ -593,6 +597,10 @@ export type Database = {
           thread_id: string
         }
         Insert: {
+          attachment_key?: string | null
+          attachment_mime?: string | null
+          attachment_name?: string | null
+          attachment_size?: number | null
           body: string
           created_at?: string
           id?: string
@@ -602,6 +610,10 @@ export type Database = {
           thread_id: string
         }
         Update: {
+          attachment_key?: string | null
+          attachment_mime?: string | null
+          attachment_name?: string | null
+          attachment_size?: number | null
           body?: string
           created_at?: string
           id?: string
@@ -622,6 +634,7 @@ export type Database = {
       }
       support_threads: {
         Row: {
+          channel: string
           created_at: string
           id: string
           last_message_at: string
@@ -631,6 +644,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          channel?: string
           created_at?: string
           id?: string
           last_message_at?: string
@@ -640,6 +654,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          channel?: string
           created_at?: string
           id?: string
           last_message_at?: string

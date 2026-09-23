@@ -21,7 +21,7 @@ import {
 const UploadInput = z.object({
   fileName: z.string().min(1).max(200),
   contentType: z.string().min(1).max(120),
-  folder: z.enum(["photo", "govt_id", "divorce_doc", "payment_proof", "jathagam"]),
+  folder: z.enum(["photo", "govt_id", "divorce_doc", "payment_proof", "jathagam", "attachment"]),
   ownerId: z.string().uuid().optional(),
 });
 
@@ -125,7 +125,14 @@ export const createUploadUrl = createServerFn({ method: "POST" })
     return { key, uploadUrl };
   });
 
-const FOLDERS = ["photo", "govt_id", "divorce_doc", "payment_proof", "jathagam"] as const;
+const FOLDERS = [
+  "photo",
+  "govt_id",
+  "divorce_doc",
+  "payment_proof",
+  "jathagam",
+  "attachment",
+] as const;
 const PROFILE_FOLDERS = new Set(["photo", "govt_id", "divorce_doc"]);
 
 /**

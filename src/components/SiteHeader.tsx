@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -13,30 +13,56 @@ export function SiteHeader() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
-  const [supportUnread, setSupportUnread] = useState(0);
+  const [channelUnread, setChannelUnread] = useState<Record<string, number>>({});
 
   const { pathname } = location;
   const supportHref = lang === "ta" ? "/ta/support" : "/support";
-  const isSupportActive =
-    pathname === supportHref || pathname.startsWith(`${supportHref}/`);
-  const isDashboardActive =
-    pathname === "/dashboard" || pathname === "/ta/dashboard";
+  const officeHref = lang === "ta" ? "/ta/office-messages" : "/office-messages";
+  const communicationHref = lang === "ta" ? "/ta/communication" : "/communication";
+  const isSupportActive = pathname === supportHref || pathname.startsWith(`${supportHref}/`);
+  const isOfficeActive = pathname === officeHref || pathname.startsWith(`${officeHref}/`);
+  const isCommunicationActive =
+    pathname === communicationHref || pathname.startsWith(`${communicationHref}/`);
+  const isDashboardActive = pathname === "/dashboard" || pathname === "/ta/dashboard";
 
-  useEffect(() => {
+  const loadUnread = useCallback(async () => {
     if (!session || isAdmin) return;
     let active = true;
-    supabase
+    await supabase
       .from("support_messages")
-      .select("id")
+      .select("thread_id")
       .eq("sender_type", "admin")
       .is("read_at", null)
-      .then(({ data }) => {
-        if (active) setSupportUnread(data?.length ?? 0);
+      .then(async ({ data }) => {
+        const rowCounts: Record<string, number> = {};
+        for (const row of data ?? []) {
+          rowCounts[row.thread_id] = (rowCounts[row.thread_id] ?? 0) + 1;
+        }
+        const ids = Object.keys(rowCounts);
+        const counts: Record<string, number> = { support: 0, messages: 0, communication: 0 };
+        if (ids.length) {
+          const { data: threads } = await supabase
+            .from("support_threads")
+            .select("id, channel")
+            .in("id", ids);
+          for (const th of threads ?? []) {
+            const n = rowCounts[th.id];
+            if (n) counts[th.channel] = (counts[th.channel] ?? 0) + n;
+          }
+        }
+        if (active) setChannelUnread(counts);
       });
-    return () => {
-      active = false;
-    };
+    active = false;
   }, [session, isAdmin]);
+
+  useEffect(() => {
+    void loadUnread();
+    const onSync = () => void loadUnread();
+    window.addEventListener("slmm:app-sync-changed", onSync);
+    return () => {
+      window.removeEventListener("slmm:app-sync-changed", onSync);
+    };
+  }, [loadUnread]);
 
   async function signOut() {
     await queryClient.cancelQueries();
@@ -80,21 +106,44 @@ export function SiteHeader() {
                 </Button>
                 <Button asChild variant={pathname === "/messages" ? "secondary" : "ghost"} size="sm">
                   <Link to="/messages" search={{}}>
-                    {t("nav_messages")}
+                    {t("nav_member_messages")}
                   </Link>
                 </Button>
                 <Button asChild variant={pathname === "/checkout" ? "secondary" : "ghost"} size="sm">
                   <Link to="/checkout">{t("nav_payments")}</Link>
                 </Button>
                 <Button asChild variant={isSupportActive ? "secondary" : "ghost"} size="sm">
-                  <a
-                    href={supportHref}
-                    className="inline-flex items-center gap-1.5"
-                  >
+                  <a href={supportHref} className="inline-flex items-center gap-1.5">
                     {t("sup_title")}
-                    {supportUnread > 0 && (
+                    {(channelUnread["support"] ?? 0) > 0 && (
                       <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-primary">
-                        {supportUnread > 99 ? "99+" : supportUnread}
+                        {(channelUnread["support"] ?? 0) > 99
+                          ? "99+"
+                          : (channelUnread["support"] ?? 0)}
+                      </span>
+                    )}
+                  </a>
+                </Button>
+                <Button asChild variant={isOfficeActive ? "secondary" : "ghost"} size="sm">
+                  <a href={officeHref} className="inline-flex items-center gap-1.5">
+                    {t("nav_messages")}
+                    {(channelUnread["messages"] ?? 0) > 0 && (
+                      <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-primary">
+                        {(channelUnread["messages"] ?? 0) > 99
+                          ? "99+"
+                          : (channelUnread["messages"] ?? 0)}
+                      </span>
+                    )}
+                  </a>
+                </Button>
+                <Button asChild variant={isCommunicationActive ? "secondary" : "ghost"} size="sm">
+                  <a href={communicationHref} className="inline-flex items-center gap-1.5">
+                    {t("nav_communication")}
+                    {(channelUnread["communication"] ?? 0) > 0 && (
+                      <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-primary">
+                        {(channelUnread["communication"] ?? 0) > 99
+                          ? "99+"
+                          : (channelUnread["communication"] ?? 0)}
                       </span>
                     )}
                   </a>

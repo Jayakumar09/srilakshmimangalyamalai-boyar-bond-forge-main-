@@ -18,38 +18,46 @@ import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as TermsRouteImport } from './routes/terms'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
 import { Route as AuthenticatedCheckoutRouteImport } from './routes/_authenticated/checkout'
+import { Route as AuthenticatedCommunicationRouteImport } from './routes/_authenticated/communication'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedJathagamRouteImport } from './routes/_authenticated/jathagam'
 import { Route as AuthenticatedMatchesRouteImport } from './routes/_authenticated/matches'
 import { Route as AuthenticatedMessagesRouteImport } from './routes/_authenticated/messages'
+import { Route as AuthenticatedOfficeMessagesRouteImport } from './routes/_authenticated/office-messages'
 import { Route as AuthenticatedRegisterRouteImport } from './routes/_authenticated/register'
 import { Route as AuthenticatedSupportRouteImport } from './routes/_authenticated/support'
 import { Route as TaIndexRouteImport } from './routes/ta/index'
 import { Route as TaPrivacyRouteImport } from './routes/ta/privacy'
 import { Route as TaRefundPolicyRouteImport } from './routes/ta/refund-policy'
 import { Route as TaTermsRouteImport } from './routes/ta/terms'
+import { Route as AuthenticatedTaCommunicationRouteImport } from './routes/_authenticated/ta.communication'
 import { Route as AuthenticatedTaDashboardRouteImport } from './routes/_authenticated/ta.dashboard'
 import { Route as AuthenticatedTaJathagamRouteImport } from './routes/_authenticated/ta.jathagam'
+import { Route as AuthenticatedTaOfficeMessagesRouteImport } from './routes/_authenticated/ta.office-messages'
 import { Route as AuthenticatedTaRegisterRouteImport } from './routes/_authenticated/ta.register'
 import { Route as AuthenticatedTaSupportRouteImport } from './routes/_authenticated/ta.support'
 import { Route as AuthenticatedEnAdminIndexRouteImport } from './routes/_authenticated/en.admin.index'
 import { Route as AuthenticatedEnAdminAlertsRouteImport } from './routes/_authenticated/en.admin.alerts'
 import { Route as AuthenticatedEnAdminApprovalsRouteImport } from './routes/_authenticated/en.admin.approvals'
+import { Route as AuthenticatedEnAdminCommunicationRouteImport } from './routes/_authenticated/en.admin.communication'
 import { Route as AuthenticatedEnAdminJathagamRouteImport } from './routes/_authenticated/en.admin.jathagam'
 import { Route as AuthenticatedEnAdminMembersRouteImport } from './routes/_authenticated/en.admin.members'
 import { Route as AuthenticatedEnAdminMessagesRouteImport } from './routes/_authenticated/en.admin.messages'
 import { Route as AuthenticatedEnAdminPaymentsRouteImport } from './routes/_authenticated/en.admin.payments'
 import { Route as AuthenticatedEnAdminReportsRouteImport } from './routes/_authenticated/en.admin.reports'
 import { Route as AuthenticatedEnAdminSettingsRouteImport } from './routes/_authenticated/en.admin.settings'
+import { Route as AuthenticatedEnAdminSupportRouteImport } from './routes/_authenticated/en.admin.support'
 import { Route as AuthenticatedTnAdminIndexRouteImport } from './routes/_authenticated/tn.admin.index'
 import { Route as AuthenticatedTnAdminAlertsRouteImport } from './routes/_authenticated/tn.admin.alerts'
 import { Route as AuthenticatedTnAdminApprovalsRouteImport } from './routes/_authenticated/tn.admin.approvals'
+import { Route as AuthenticatedTnAdminCommunicationRouteImport } from './routes/_authenticated/tn.admin.communication'
 import { Route as AuthenticatedTnAdminJathagamRouteImport } from './routes/_authenticated/tn.admin.jathagam'
 import { Route as AuthenticatedTnAdminMembersRouteImport } from './routes/_authenticated/tn.admin.members'
 import { Route as AuthenticatedTnAdminMessagesRouteImport } from './routes/_authenticated/tn.admin.messages'
 import { Route as AuthenticatedTnAdminPaymentsRouteImport } from './routes/_authenticated/tn.admin.payments'
 import { Route as AuthenticatedTnAdminReportsRouteImport } from './routes/_authenticated/tn.admin.reports'
 import { Route as AuthenticatedTnAdminSettingsRouteImport } from './routes/_authenticated/tn.admin.settings'
+import { Route as AuthenticatedTnAdminSupportRouteImport } from './routes/_authenticated/tn.admin.support'
 import { Route as LovableEmailTransactionalPreviewRouteImport } from './routes/lovable/email/transactional/preview'
 
 const IndexRoute = IndexRouteImport.update({
@@ -96,6 +104,12 @@ const AuthenticatedCheckoutRoute = AuthenticatedCheckoutRouteImport.update({
   path: '/checkout',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedCommunicationRoute =
+  AuthenticatedCommunicationRouteImport.update({
+    id: '/communication',
+    path: '/communication',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
@@ -116,6 +130,12 @@ const AuthenticatedMessagesRoute = AuthenticatedMessagesRouteImport.update({
   path: '/messages',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedOfficeMessagesRoute =
+  AuthenticatedOfficeMessagesRouteImport.update({
+    id: '/office-messages',
+    path: '/office-messages',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedRegisterRoute = AuthenticatedRegisterRouteImport.update({
   id: '/register',
   path: '/register',
@@ -146,6 +166,12 @@ const TaTermsRoute = TaTermsRouteImport.update({
   path: '/ta/terms',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedTaCommunicationRoute =
+  AuthenticatedTaCommunicationRouteImport.update({
+    id: '/ta/communication',
+    path: '/ta/communication',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedTaDashboardRoute =
   AuthenticatedTaDashboardRouteImport.update({
     id: '/ta/dashboard',
@@ -157,6 +183,12 @@ const AuthenticatedTaJathagamRoute = AuthenticatedTaJathagamRouteImport.update({
   path: '/ta/jathagam',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedTaOfficeMessagesRoute =
+  AuthenticatedTaOfficeMessagesRouteImport.update({
+    id: '/ta/office-messages',
+    path: '/ta/office-messages',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedTaRegisterRoute = AuthenticatedTaRegisterRouteImport.update({
   id: '/ta/register',
   path: '/ta/register',
@@ -183,6 +215,12 @@ const AuthenticatedEnAdminApprovalsRoute =
   AuthenticatedEnAdminApprovalsRouteImport.update({
     id: '/en/admin/approvals',
     path: '/en/admin/approvals',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedEnAdminCommunicationRoute =
+  AuthenticatedEnAdminCommunicationRouteImport.update({
+    id: '/en/admin/communication',
+    path: '/en/admin/communication',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedEnAdminJathagamRoute =
@@ -221,6 +259,12 @@ const AuthenticatedEnAdminSettingsRoute =
     path: '/en/admin/settings',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedEnAdminSupportRoute =
+  AuthenticatedEnAdminSupportRouteImport.update({
+    id: '/en/admin/support',
+    path: '/en/admin/support',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedTnAdminIndexRoute =
   AuthenticatedTnAdminIndexRouteImport.update({
     id: '/tn/admin/',
@@ -237,6 +281,12 @@ const AuthenticatedTnAdminApprovalsRoute =
   AuthenticatedTnAdminApprovalsRouteImport.update({
     id: '/tn/admin/approvals',
     path: '/tn/admin/approvals',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedTnAdminCommunicationRoute =
+  AuthenticatedTnAdminCommunicationRouteImport.update({
+    id: '/tn/admin/communication',
+    path: '/tn/admin/communication',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedTnAdminJathagamRoute =
@@ -275,6 +325,12 @@ const AuthenticatedTnAdminSettingsRoute =
     path: '/tn/admin/settings',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedTnAdminSupportRoute =
+  AuthenticatedTnAdminSupportRouteImport.update({
+    id: '/tn/admin/support',
+    path: '/tn/admin/support',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const LovableEmailTransactionalPreviewRoute =
   LovableEmailTransactionalPreviewRouteImport.update({
     id: '/lovable/email/transactional/preview',
@@ -291,36 +347,44 @@ export interface FileRoutesByFullPath {
   '/terms': typeof TermsRoute
   '/admin': typeof AuthenticatedAdminRoute
   '/checkout': typeof AuthenticatedCheckoutRoute
+  '/communication': typeof AuthenticatedCommunicationRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/jathagam': typeof AuthenticatedJathagamRoute
   '/matches': typeof AuthenticatedMatchesRoute
   '/messages': typeof AuthenticatedMessagesRoute
+  '/office-messages': typeof AuthenticatedOfficeMessagesRoute
   '/register': typeof AuthenticatedRegisterRoute
   '/support': typeof AuthenticatedSupportRoute
   '/ta/privacy': typeof TaPrivacyRoute
   '/ta/refund-policy': typeof TaRefundPolicyRoute
   '/ta/terms': typeof TaTermsRoute
   '/ta/': typeof TaIndexRoute
+  '/ta/communication': typeof AuthenticatedTaCommunicationRoute
   '/ta/dashboard': typeof AuthenticatedTaDashboardRoute
   '/ta/jathagam': typeof AuthenticatedTaJathagamRoute
+  '/ta/office-messages': typeof AuthenticatedTaOfficeMessagesRoute
   '/ta/register': typeof AuthenticatedTaRegisterRoute
   '/ta/support': typeof AuthenticatedTaSupportRoute
   '/en/admin/alerts': typeof AuthenticatedEnAdminAlertsRoute
   '/en/admin/approvals': typeof AuthenticatedEnAdminApprovalsRoute
+  '/en/admin/communication': typeof AuthenticatedEnAdminCommunicationRoute
   '/en/admin/jathagam': typeof AuthenticatedEnAdminJathagamRoute
   '/en/admin/members': typeof AuthenticatedEnAdminMembersRoute
   '/en/admin/messages': typeof AuthenticatedEnAdminMessagesRoute
   '/en/admin/payments': typeof AuthenticatedEnAdminPaymentsRoute
   '/en/admin/reports': typeof AuthenticatedEnAdminReportsRoute
   '/en/admin/settings': typeof AuthenticatedEnAdminSettingsRoute
+  '/en/admin/support': typeof AuthenticatedEnAdminSupportRoute
   '/tn/admin/alerts': typeof AuthenticatedTnAdminAlertsRoute
   '/tn/admin/approvals': typeof AuthenticatedTnAdminApprovalsRoute
+  '/tn/admin/communication': typeof AuthenticatedTnAdminCommunicationRoute
   '/tn/admin/jathagam': typeof AuthenticatedTnAdminJathagamRoute
   '/tn/admin/members': typeof AuthenticatedTnAdminMembersRoute
   '/tn/admin/messages': typeof AuthenticatedTnAdminMessagesRoute
   '/tn/admin/payments': typeof AuthenticatedTnAdminPaymentsRoute
   '/tn/admin/reports': typeof AuthenticatedTnAdminReportsRoute
   '/tn/admin/settings': typeof AuthenticatedTnAdminSettingsRoute
+  '/tn/admin/support': typeof AuthenticatedTnAdminSupportRoute
   '/lovable/email/transactional/preview': typeof LovableEmailTransactionalPreviewRoute
   '/en/admin/': typeof AuthenticatedEnAdminIndexRoute
   '/tn/admin/': typeof AuthenticatedTnAdminIndexRoute
@@ -334,36 +398,44 @@ export interface FileRoutesByTo {
   '/terms': typeof TermsRoute
   '/admin': typeof AuthenticatedAdminRoute
   '/checkout': typeof AuthenticatedCheckoutRoute
+  '/communication': typeof AuthenticatedCommunicationRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/jathagam': typeof AuthenticatedJathagamRoute
   '/matches': typeof AuthenticatedMatchesRoute
   '/messages': typeof AuthenticatedMessagesRoute
+  '/office-messages': typeof AuthenticatedOfficeMessagesRoute
   '/register': typeof AuthenticatedRegisterRoute
   '/support': typeof AuthenticatedSupportRoute
   '/ta/privacy': typeof TaPrivacyRoute
   '/ta/refund-policy': typeof TaRefundPolicyRoute
   '/ta/terms': typeof TaTermsRoute
   '/ta': typeof TaIndexRoute
+  '/ta/communication': typeof AuthenticatedTaCommunicationRoute
   '/ta/dashboard': typeof AuthenticatedTaDashboardRoute
   '/ta/jathagam': typeof AuthenticatedTaJathagamRoute
+  '/ta/office-messages': typeof AuthenticatedTaOfficeMessagesRoute
   '/ta/register': typeof AuthenticatedTaRegisterRoute
   '/ta/support': typeof AuthenticatedTaSupportRoute
   '/en/admin/alerts': typeof AuthenticatedEnAdminAlertsRoute
   '/en/admin/approvals': typeof AuthenticatedEnAdminApprovalsRoute
+  '/en/admin/communication': typeof AuthenticatedEnAdminCommunicationRoute
   '/en/admin/jathagam': typeof AuthenticatedEnAdminJathagamRoute
   '/en/admin/members': typeof AuthenticatedEnAdminMembersRoute
   '/en/admin/messages': typeof AuthenticatedEnAdminMessagesRoute
   '/en/admin/payments': typeof AuthenticatedEnAdminPaymentsRoute
   '/en/admin/reports': typeof AuthenticatedEnAdminReportsRoute
   '/en/admin/settings': typeof AuthenticatedEnAdminSettingsRoute
+  '/en/admin/support': typeof AuthenticatedEnAdminSupportRoute
   '/tn/admin/alerts': typeof AuthenticatedTnAdminAlertsRoute
   '/tn/admin/approvals': typeof AuthenticatedTnAdminApprovalsRoute
+  '/tn/admin/communication': typeof AuthenticatedTnAdminCommunicationRoute
   '/tn/admin/jathagam': typeof AuthenticatedTnAdminJathagamRoute
   '/tn/admin/members': typeof AuthenticatedTnAdminMembersRoute
   '/tn/admin/messages': typeof AuthenticatedTnAdminMessagesRoute
   '/tn/admin/payments': typeof AuthenticatedTnAdminPaymentsRoute
   '/tn/admin/reports': typeof AuthenticatedTnAdminReportsRoute
   '/tn/admin/settings': typeof AuthenticatedTnAdminSettingsRoute
+  '/tn/admin/support': typeof AuthenticatedTnAdminSupportRoute
   '/lovable/email/transactional/preview': typeof LovableEmailTransactionalPreviewRoute
   '/en/admin': typeof AuthenticatedEnAdminIndexRoute
   '/tn/admin': typeof AuthenticatedTnAdminIndexRoute
@@ -379,36 +451,44 @@ export interface FileRoutesById {
   '/terms': typeof TermsRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRoute
   '/_authenticated/checkout': typeof AuthenticatedCheckoutRoute
+  '/_authenticated/communication': typeof AuthenticatedCommunicationRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/jathagam': typeof AuthenticatedJathagamRoute
   '/_authenticated/matches': typeof AuthenticatedMatchesRoute
   '/_authenticated/messages': typeof AuthenticatedMessagesRoute
+  '/_authenticated/office-messages': typeof AuthenticatedOfficeMessagesRoute
   '/_authenticated/register': typeof AuthenticatedRegisterRoute
   '/_authenticated/support': typeof AuthenticatedSupportRoute
   '/ta/privacy': typeof TaPrivacyRoute
   '/ta/refund-policy': typeof TaRefundPolicyRoute
   '/ta/terms': typeof TaTermsRoute
   '/ta/': typeof TaIndexRoute
+  '/_authenticated/ta/communication': typeof AuthenticatedTaCommunicationRoute
   '/_authenticated/ta/dashboard': typeof AuthenticatedTaDashboardRoute
   '/_authenticated/ta/jathagam': typeof AuthenticatedTaJathagamRoute
+  '/_authenticated/ta/office-messages': typeof AuthenticatedTaOfficeMessagesRoute
   '/_authenticated/ta/register': typeof AuthenticatedTaRegisterRoute
   '/_authenticated/ta/support': typeof AuthenticatedTaSupportRoute
   '/_authenticated/en/admin/alerts': typeof AuthenticatedEnAdminAlertsRoute
   '/_authenticated/en/admin/approvals': typeof AuthenticatedEnAdminApprovalsRoute
+  '/_authenticated/en/admin/communication': typeof AuthenticatedEnAdminCommunicationRoute
   '/_authenticated/en/admin/jathagam': typeof AuthenticatedEnAdminJathagamRoute
   '/_authenticated/en/admin/members': typeof AuthenticatedEnAdminMembersRoute
   '/_authenticated/en/admin/messages': typeof AuthenticatedEnAdminMessagesRoute
   '/_authenticated/en/admin/payments': typeof AuthenticatedEnAdminPaymentsRoute
   '/_authenticated/en/admin/reports': typeof AuthenticatedEnAdminReportsRoute
   '/_authenticated/en/admin/settings': typeof AuthenticatedEnAdminSettingsRoute
+  '/_authenticated/en/admin/support': typeof AuthenticatedEnAdminSupportRoute
   '/_authenticated/tn/admin/alerts': typeof AuthenticatedTnAdminAlertsRoute
   '/_authenticated/tn/admin/approvals': typeof AuthenticatedTnAdminApprovalsRoute
+  '/_authenticated/tn/admin/communication': typeof AuthenticatedTnAdminCommunicationRoute
   '/_authenticated/tn/admin/jathagam': typeof AuthenticatedTnAdminJathagamRoute
   '/_authenticated/tn/admin/members': typeof AuthenticatedTnAdminMembersRoute
   '/_authenticated/tn/admin/messages': typeof AuthenticatedTnAdminMessagesRoute
   '/_authenticated/tn/admin/payments': typeof AuthenticatedTnAdminPaymentsRoute
   '/_authenticated/tn/admin/reports': typeof AuthenticatedTnAdminReportsRoute
   '/_authenticated/tn/admin/settings': typeof AuthenticatedTnAdminSettingsRoute
+  '/_authenticated/tn/admin/support': typeof AuthenticatedTnAdminSupportRoute
   '/lovable/email/transactional/preview': typeof LovableEmailTransactionalPreviewRoute
   '/_authenticated/en/admin/': typeof AuthenticatedEnAdminIndexRoute
   '/_authenticated/tn/admin/': typeof AuthenticatedTnAdminIndexRoute
@@ -424,36 +504,44 @@ export interface FileRouteTypes {
     | '/terms'
     | '/admin'
     | '/checkout'
+    | '/communication'
     | '/dashboard'
     | '/jathagam'
     | '/matches'
     | '/messages'
+    | '/office-messages'
     | '/register'
     | '/support'
     | '/ta/privacy'
     | '/ta/refund-policy'
     | '/ta/terms'
     | '/ta/'
+    | '/ta/communication'
     | '/ta/dashboard'
     | '/ta/jathagam'
+    | '/ta/office-messages'
     | '/ta/register'
     | '/ta/support'
     | '/en/admin/alerts'
     | '/en/admin/approvals'
+    | '/en/admin/communication'
     | '/en/admin/jathagam'
     | '/en/admin/members'
     | '/en/admin/messages'
     | '/en/admin/payments'
     | '/en/admin/reports'
     | '/en/admin/settings'
+    | '/en/admin/support'
     | '/tn/admin/alerts'
     | '/tn/admin/approvals'
+    | '/tn/admin/communication'
     | '/tn/admin/jathagam'
     | '/tn/admin/members'
     | '/tn/admin/messages'
     | '/tn/admin/payments'
     | '/tn/admin/reports'
     | '/tn/admin/settings'
+    | '/tn/admin/support'
     | '/lovable/email/transactional/preview'
     | '/en/admin/'
     | '/tn/admin/'
@@ -467,36 +555,44 @@ export interface FileRouteTypes {
     | '/terms'
     | '/admin'
     | '/checkout'
+    | '/communication'
     | '/dashboard'
     | '/jathagam'
     | '/matches'
     | '/messages'
+    | '/office-messages'
     | '/register'
     | '/support'
     | '/ta/privacy'
     | '/ta/refund-policy'
     | '/ta/terms'
     | '/ta'
+    | '/ta/communication'
     | '/ta/dashboard'
     | '/ta/jathagam'
+    | '/ta/office-messages'
     | '/ta/register'
     | '/ta/support'
     | '/en/admin/alerts'
     | '/en/admin/approvals'
+    | '/en/admin/communication'
     | '/en/admin/jathagam'
     | '/en/admin/members'
     | '/en/admin/messages'
     | '/en/admin/payments'
     | '/en/admin/reports'
     | '/en/admin/settings'
+    | '/en/admin/support'
     | '/tn/admin/alerts'
     | '/tn/admin/approvals'
+    | '/tn/admin/communication'
     | '/tn/admin/jathagam'
     | '/tn/admin/members'
     | '/tn/admin/messages'
     | '/tn/admin/payments'
     | '/tn/admin/reports'
     | '/tn/admin/settings'
+    | '/tn/admin/support'
     | '/lovable/email/transactional/preview'
     | '/en/admin'
     | '/tn/admin'
@@ -511,36 +607,44 @@ export interface FileRouteTypes {
     | '/terms'
     | '/_authenticated/admin'
     | '/_authenticated/checkout'
+    | '/_authenticated/communication'
     | '/_authenticated/dashboard'
     | '/_authenticated/jathagam'
     | '/_authenticated/matches'
     | '/_authenticated/messages'
+    | '/_authenticated/office-messages'
     | '/_authenticated/register'
     | '/_authenticated/support'
     | '/ta/privacy'
     | '/ta/refund-policy'
     | '/ta/terms'
     | '/ta/'
+    | '/_authenticated/ta/communication'
     | '/_authenticated/ta/dashboard'
     | '/_authenticated/ta/jathagam'
+    | '/_authenticated/ta/office-messages'
     | '/_authenticated/ta/register'
     | '/_authenticated/ta/support'
     | '/_authenticated/en/admin/alerts'
     | '/_authenticated/en/admin/approvals'
+    | '/_authenticated/en/admin/communication'
     | '/_authenticated/en/admin/jathagam'
     | '/_authenticated/en/admin/members'
     | '/_authenticated/en/admin/messages'
     | '/_authenticated/en/admin/payments'
     | '/_authenticated/en/admin/reports'
     | '/_authenticated/en/admin/settings'
+    | '/_authenticated/en/admin/support'
     | '/_authenticated/tn/admin/alerts'
     | '/_authenticated/tn/admin/approvals'
+    | '/_authenticated/tn/admin/communication'
     | '/_authenticated/tn/admin/jathagam'
     | '/_authenticated/tn/admin/members'
     | '/_authenticated/tn/admin/messages'
     | '/_authenticated/tn/admin/payments'
     | '/_authenticated/tn/admin/reports'
     | '/_authenticated/tn/admin/settings'
+    | '/_authenticated/tn/admin/support'
     | '/lovable/email/transactional/preview'
     | '/_authenticated/en/admin/'
     | '/_authenticated/tn/admin/'
@@ -626,6 +730,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCheckoutRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/communication': {
+      id: '/_authenticated/communication'
+      path: '/communication'
+      fullPath: '/communication'
+      preLoaderRoute: typeof AuthenticatedCommunicationRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/dashboard': {
       id: '/_authenticated/dashboard'
       path: '/dashboard'
@@ -652,6 +763,13 @@ declare module '@tanstack/react-router' {
       path: '/messages'
       fullPath: '/messages'
       preLoaderRoute: typeof AuthenticatedMessagesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/office-messages': {
+      id: '/_authenticated/office-messages'
+      path: '/office-messages'
+      fullPath: '/office-messages'
+      preLoaderRoute: typeof AuthenticatedOfficeMessagesRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/register': {
@@ -696,6 +814,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TaTermsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/ta/communication': {
+      id: '/_authenticated/ta/communication'
+      path: '/ta/communication'
+      fullPath: '/ta/communication'
+      preLoaderRoute: typeof AuthenticatedTaCommunicationRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/ta/dashboard': {
       id: '/_authenticated/ta/dashboard'
       path: '/ta/dashboard'
@@ -708,6 +833,13 @@ declare module '@tanstack/react-router' {
       path: '/ta/jathagam'
       fullPath: '/ta/jathagam'
       preLoaderRoute: typeof AuthenticatedTaJathagamRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/ta/office-messages': {
+      id: '/_authenticated/ta/office-messages'
+      path: '/ta/office-messages'
+      fullPath: '/ta/office-messages'
+      preLoaderRoute: typeof AuthenticatedTaOfficeMessagesRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/ta/register': {
@@ -743,6 +875,13 @@ declare module '@tanstack/react-router' {
       path: '/en/admin/approvals'
       fullPath: '/en/admin/approvals'
       preLoaderRoute: typeof AuthenticatedEnAdminApprovalsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/en/admin/communication': {
+      id: '/_authenticated/en/admin/communication'
+      path: '/en/admin/communication'
+      fullPath: '/en/admin/communication'
+      preLoaderRoute: typeof AuthenticatedEnAdminCommunicationRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/en/admin/jathagam': {
@@ -787,6 +926,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedEnAdminSettingsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/en/admin/support': {
+      id: '/_authenticated/en/admin/support'
+      path: '/en/admin/support'
+      fullPath: '/en/admin/support'
+      preLoaderRoute: typeof AuthenticatedEnAdminSupportRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/tn/admin/': {
       id: '/_authenticated/tn/admin/'
       path: '/tn/admin'
@@ -806,6 +952,13 @@ declare module '@tanstack/react-router' {
       path: '/tn/admin/approvals'
       fullPath: '/tn/admin/approvals'
       preLoaderRoute: typeof AuthenticatedTnAdminApprovalsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/tn/admin/communication': {
+      id: '/_authenticated/tn/admin/communication'
+      path: '/tn/admin/communication'
+      fullPath: '/tn/admin/communication'
+      preLoaderRoute: typeof AuthenticatedTnAdminCommunicationRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/tn/admin/jathagam': {
@@ -850,6 +1003,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedTnAdminSettingsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/tn/admin/support': {
+      id: '/_authenticated/tn/admin/support'
+      path: '/tn/admin/support'
+      fullPath: '/tn/admin/support'
+      preLoaderRoute: typeof AuthenticatedTnAdminSupportRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/lovable/email/transactional/preview': {
       id: '/lovable/email/transactional/preview'
       path: '/lovable/email/transactional/preview'
@@ -863,32 +1023,40 @@ declare module '@tanstack/react-router' {
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedAdminRoute: typeof AuthenticatedAdminRoute
   AuthenticatedCheckoutRoute: typeof AuthenticatedCheckoutRoute
+  AuthenticatedCommunicationRoute: typeof AuthenticatedCommunicationRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedJathagamRoute: typeof AuthenticatedJathagamRoute
   AuthenticatedMatchesRoute: typeof AuthenticatedMatchesRoute
   AuthenticatedMessagesRoute: typeof AuthenticatedMessagesRoute
+  AuthenticatedOfficeMessagesRoute: typeof AuthenticatedOfficeMessagesRoute
   AuthenticatedRegisterRoute: typeof AuthenticatedRegisterRoute
   AuthenticatedSupportRoute: typeof AuthenticatedSupportRoute
+  AuthenticatedTaCommunicationRoute: typeof AuthenticatedTaCommunicationRoute
   AuthenticatedTaDashboardRoute: typeof AuthenticatedTaDashboardRoute
   AuthenticatedTaJathagamRoute: typeof AuthenticatedTaJathagamRoute
+  AuthenticatedTaOfficeMessagesRoute: typeof AuthenticatedTaOfficeMessagesRoute
   AuthenticatedTaRegisterRoute: typeof AuthenticatedTaRegisterRoute
   AuthenticatedTaSupportRoute: typeof AuthenticatedTaSupportRoute
   AuthenticatedEnAdminAlertsRoute: typeof AuthenticatedEnAdminAlertsRoute
   AuthenticatedEnAdminApprovalsRoute: typeof AuthenticatedEnAdminApprovalsRoute
+  AuthenticatedEnAdminCommunicationRoute: typeof AuthenticatedEnAdminCommunicationRoute
   AuthenticatedEnAdminJathagamRoute: typeof AuthenticatedEnAdminJathagamRoute
   AuthenticatedEnAdminMembersRoute: typeof AuthenticatedEnAdminMembersRoute
   AuthenticatedEnAdminMessagesRoute: typeof AuthenticatedEnAdminMessagesRoute
   AuthenticatedEnAdminPaymentsRoute: typeof AuthenticatedEnAdminPaymentsRoute
   AuthenticatedEnAdminReportsRoute: typeof AuthenticatedEnAdminReportsRoute
   AuthenticatedEnAdminSettingsRoute: typeof AuthenticatedEnAdminSettingsRoute
+  AuthenticatedEnAdminSupportRoute: typeof AuthenticatedEnAdminSupportRoute
   AuthenticatedTnAdminAlertsRoute: typeof AuthenticatedTnAdminAlertsRoute
   AuthenticatedTnAdminApprovalsRoute: typeof AuthenticatedTnAdminApprovalsRoute
+  AuthenticatedTnAdminCommunicationRoute: typeof AuthenticatedTnAdminCommunicationRoute
   AuthenticatedTnAdminJathagamRoute: typeof AuthenticatedTnAdminJathagamRoute
   AuthenticatedTnAdminMembersRoute: typeof AuthenticatedTnAdminMembersRoute
   AuthenticatedTnAdminMessagesRoute: typeof AuthenticatedTnAdminMessagesRoute
   AuthenticatedTnAdminPaymentsRoute: typeof AuthenticatedTnAdminPaymentsRoute
   AuthenticatedTnAdminReportsRoute: typeof AuthenticatedTnAdminReportsRoute
   AuthenticatedTnAdminSettingsRoute: typeof AuthenticatedTnAdminSettingsRoute
+  AuthenticatedTnAdminSupportRoute: typeof AuthenticatedTnAdminSupportRoute
   AuthenticatedEnAdminIndexRoute: typeof AuthenticatedEnAdminIndexRoute
   AuthenticatedTnAdminIndexRoute: typeof AuthenticatedTnAdminIndexRoute
 }
@@ -896,32 +1064,42 @@ interface AuthenticatedRouteRouteChildren {
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAdminRoute: AuthenticatedAdminRoute,
   AuthenticatedCheckoutRoute: AuthenticatedCheckoutRoute,
+  AuthenticatedCommunicationRoute: AuthenticatedCommunicationRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedJathagamRoute: AuthenticatedJathagamRoute,
   AuthenticatedMatchesRoute: AuthenticatedMatchesRoute,
   AuthenticatedMessagesRoute: AuthenticatedMessagesRoute,
+  AuthenticatedOfficeMessagesRoute: AuthenticatedOfficeMessagesRoute,
   AuthenticatedRegisterRoute: AuthenticatedRegisterRoute,
   AuthenticatedSupportRoute: AuthenticatedSupportRoute,
+  AuthenticatedTaCommunicationRoute: AuthenticatedTaCommunicationRoute,
   AuthenticatedTaDashboardRoute: AuthenticatedTaDashboardRoute,
   AuthenticatedTaJathagamRoute: AuthenticatedTaJathagamRoute,
+  AuthenticatedTaOfficeMessagesRoute: AuthenticatedTaOfficeMessagesRoute,
   AuthenticatedTaRegisterRoute: AuthenticatedTaRegisterRoute,
   AuthenticatedTaSupportRoute: AuthenticatedTaSupportRoute,
   AuthenticatedEnAdminAlertsRoute: AuthenticatedEnAdminAlertsRoute,
   AuthenticatedEnAdminApprovalsRoute: AuthenticatedEnAdminApprovalsRoute,
+  AuthenticatedEnAdminCommunicationRoute:
+    AuthenticatedEnAdminCommunicationRoute,
   AuthenticatedEnAdminJathagamRoute: AuthenticatedEnAdminJathagamRoute,
   AuthenticatedEnAdminMembersRoute: AuthenticatedEnAdminMembersRoute,
   AuthenticatedEnAdminMessagesRoute: AuthenticatedEnAdminMessagesRoute,
   AuthenticatedEnAdminPaymentsRoute: AuthenticatedEnAdminPaymentsRoute,
   AuthenticatedEnAdminReportsRoute: AuthenticatedEnAdminReportsRoute,
   AuthenticatedEnAdminSettingsRoute: AuthenticatedEnAdminSettingsRoute,
+  AuthenticatedEnAdminSupportRoute: AuthenticatedEnAdminSupportRoute,
   AuthenticatedTnAdminAlertsRoute: AuthenticatedTnAdminAlertsRoute,
   AuthenticatedTnAdminApprovalsRoute: AuthenticatedTnAdminApprovalsRoute,
+  AuthenticatedTnAdminCommunicationRoute:
+    AuthenticatedTnAdminCommunicationRoute,
   AuthenticatedTnAdminJathagamRoute: AuthenticatedTnAdminJathagamRoute,
   AuthenticatedTnAdminMembersRoute: AuthenticatedTnAdminMembersRoute,
   AuthenticatedTnAdminMessagesRoute: AuthenticatedTnAdminMessagesRoute,
   AuthenticatedTnAdminPaymentsRoute: AuthenticatedTnAdminPaymentsRoute,
   AuthenticatedTnAdminReportsRoute: AuthenticatedTnAdminReportsRoute,
   AuthenticatedTnAdminSettingsRoute: AuthenticatedTnAdminSettingsRoute,
+  AuthenticatedTnAdminSupportRoute: AuthenticatedTnAdminSupportRoute,
   AuthenticatedEnAdminIndexRoute: AuthenticatedEnAdminIndexRoute,
   AuthenticatedTnAdminIndexRoute: AuthenticatedTnAdminIndexRoute,
 }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -11,6 +11,8 @@ import {
   ShieldAlert,
   Bell,
   MessageSquare,
+  LifeBuoy,
+  Mail,
   Settings,
   Menu,
   X,
@@ -27,7 +29,9 @@ export type AdminSection =
   | "payments"
   | "jathagam"
   | "reports"
+  | "support"
   | "messages"
+  | "communication"
   | "alerts"
   | "settings";
 
@@ -38,7 +42,9 @@ const NAV: { key: AdminSection; slug: string; labelKey: string; icon: typeof Use
   { key: "payments", slug: "/payments", labelKey: "adm_nav_payments", icon: IndianRupee },
   { key: "jathagam", slug: "/jathagam", labelKey: "adm_nav_jathagam", icon: Sparkles },
   { key: "reports", slug: "/reports", labelKey: "adm_nav_reports", icon: ShieldAlert },
+  { key: "support", slug: "/support", labelKey: "adm_nav_support", icon: LifeBuoy },
   { key: "messages", slug: "/messages", labelKey: "adm_nav_messages", icon: MessageSquare },
+  { key: "communication", slug: "/communication", labelKey: "adm_nav_communication", icon: Mail },
   { key: "alerts", slug: "/alerts", labelKey: "adm_nav_alerts", icon: Bell },
   { key: "settings", slug: "/settings", labelKey: "adm_nav_settings", icon: Settings },
 ];
@@ -59,6 +65,40 @@ export function AdminShell({
   const queryClient = useQueryClient();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [open, setOpen] = useState(false);
+  const [channelUnread, setChannelUnread] = useState<Record<string, number>>({});
+
+  const refreshChannelUnread = useCallback(async () => {
+    const { data } = await supabase
+      .from("support_messages")
+      .select("thread_id")
+      .eq("sender_type", "member")
+      .is("read_at", null);
+    const rowCounts: Record<string, number> = {};
+    for (const row of data ?? []) {
+      rowCounts[row.thread_id] = (rowCounts[row.thread_id] ?? 0) + 1;
+    }
+    const ids = Object.keys(rowCounts);
+    const counts: Record<string, number> = { messages: 0, support: 0, communication: 0 };
+    if (ids.length) {
+      const { data: threads } = await supabase
+        .from("support_threads")
+        .select("id, channel")
+        .in("id", ids);
+      for (const th of threads ?? []) {
+        const n = rowCounts[th.id];
+        if (n) counts[th.channel] = (counts[th.channel] ?? 0) + n;
+      }
+    }
+    setChannelUnread(counts);
+  }, []);
+
+  useEffect(() => {
+    void refreshChannelUnread();
+    window.addEventListener("slmm:admin-messages-refreshed", refreshChannelUnread);
+    return () => {
+      window.removeEventListener("slmm:admin-messages-refreshed", refreshChannelUnread);
+    };
+  }, [refreshChannelUnread, pathname]);
 
   const isTa = pathname.startsWith("/tn");
   const base = isTa ? "/tn/admin" : "/en/admin";
@@ -88,6 +128,19 @@ export function AdminShell({
           >
             <Icon className="size-4 shrink-0" />
             <span className="truncate">{t(item.labelKey)}</span>
+            {(item.key === "support" || item.key === "messages" || item.key === "communication") &&
+              (channelUnread[item.key] ?? 0) > 0 && (
+                <span
+                  className={cn(
+                    "ml-auto rounded-full px-1.5 py-0.5 text-[11px] font-semibold leading-none",
+                    active === item.key
+                      ? "bg-background/25 text-primary-foreground"
+                      : "bg-primary/10 text-primary",
+                  )}
+                >
+                  {(channelUnread[item.key] ?? 0) > 99 ? "99+" : (channelUnread[item.key] ?? 0)}
+                </span>
+              )}
           </a>
         );
       })}

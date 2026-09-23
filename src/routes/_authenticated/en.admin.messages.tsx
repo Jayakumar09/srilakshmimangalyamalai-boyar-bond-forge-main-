@@ -5,17 +5,20 @@ import { AdminClientMessages } from "@/components/pages/admin/AdminClientMessage
 export const Route = createFileRoute("/_authenticated/en/admin/messages")({
   head: () => ({
     meta: [
-      { title: "Client messages — Sri Lakshmi Mangalya Malai" },
-      { name: "description", content: "Client support messages — administration area." },
-      { property: "og:title", content: "Client messages — Sri Lakshmi Mangalya Malai" },
-      { property: "og:description", content: "Client support messages — administration area." },
+      { title: "Messages — Sri Lakshmi Mangalya Malai" },
+      { name: "description", content: "Office messages with members — administration area." },
+      { property: "og:title", content: "Messages — Sri Lakshmi Mangalya Malai" },
+      {
+        property: "og:description",
+        content: "Office messages with members — administration area.",
+      },
       { name: "robots", content: "noindex" },
     ],
     links: [{ rel: "alternate", hrefLang: "ta", href: "/tn/admin/messages" }],
   }),
   component: () => (
     <EnglishPage>
-      <AdminClientMessages />
+      <AdminClientMessages channel="messages" />
     </EnglishPage>
   ),
 });
