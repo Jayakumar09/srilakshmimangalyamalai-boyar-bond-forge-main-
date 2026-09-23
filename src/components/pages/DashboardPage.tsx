@@ -160,15 +160,19 @@ export function DashboardPage() {
     { label: t("birth_place"), value: v("birth_place") },
   ];
 
-  const contactRows: SectionRow[] = [
-    { label: t("phone"), value: formatPhoneForDisplay(v("phone")) },
-    { label: t("whatsapp"), value: formatPhoneForDisplay(v("whatsapp")) },
-    { label: t("email"), value: v("email") },
-    { label: t("address"), value: v("address_line"), full: true },
-    { label: t("city"), value: v("city") },
-    { label: t("district"), value: v("native_district") },
-    { label: t("state"), value: v("state") },
-    { label: t("pincode"), value: v("pincode") },
+  const contactCols: SectionRow[][] = [
+    [
+      { label: t("phone"), value: formatPhoneForDisplay(v("phone")) },
+      { label: t("email"), value: v("email") },
+      { label: t("address"), value: v("address_line") },
+      { label: t("city"), value: v("city") },
+      { label: t("state"), value: v("state") },
+    ],
+    [
+      { label: t("whatsapp"), value: formatPhoneForDisplay(v("whatsapp")) },
+      { label: t("district"), value: v("native_district") },
+      { label: t("pincode"), value: v("pincode") },
+    ],
   ];
 
   const eduRows: SectionRow[] = [
@@ -213,9 +217,13 @@ export function DashboardPage() {
     { label: t("pref_notes"), value: v("pref_notes"), full: true },
   ];
 
-  const sections: { title: string; rows: SectionRow[] }[] = [
+  const sections: { title: string; rows: SectionRow[]; cols?: SectionRow[][] }[] = [
     { title: t("step_basic"), rows: keep(basicRows) },
-    { title: t("step_contact"), rows: keep(contactRows) },
+    {
+      title: t("step_contact"),
+      rows: [],
+      cols: contactCols.map((col) => col.filter((r) => present(r.value))),
+    },
     { title: t("step_edu"), rows: keep(eduRows) },
     { title: t("step_family"), rows: keep(familyRows) },
     { title: t("step_pref"), rows: keep(prefRows) },
@@ -362,8 +370,8 @@ export function DashboardPage() {
                 <h1 className="font-display text-2xl font-semibold text-primary sm:text-3xl">
                   {t("brand")}
                 </h1>
-                <p className="mt-1 font-display text-lg font-medium tracking-wide text-muted-foreground">
-                  Boyar Matrimony
+                <p className="mt-1.5 font-display text-xl font-semibold text-muted-foreground sm:text-2xl">
+                  {t("brand_line2")}
                 </p>
                 <div className="gold-rule mx-auto mt-3 w-24" />
               </header>
@@ -428,8 +436,10 @@ export function DashboardPage() {
                 </div>
               </div>
 
-              {sections.map((s, i) =>
-                s.rows.length === 0 ? null : (
+              {sections.map((s, i) => {
+                const colCount = s.cols?.reduce((n, col) => n + col.length, 0) ?? 0;
+                if (s.rows.length === 0 && colCount === 0) return null;
+                return (
                   <section key={`${i}-${s.title}`} className="profile-section mt-6">
                     <div className="flex items-center gap-3 break-after-avoid">
                       <h3 className="shrink-0 font-display text-base font-semibold text-primary sm:text-lg">
@@ -437,22 +447,44 @@ export function DashboardPage() {
                       </h3>
                       <div className="gold-rule h-px min-w-8 flex-1 opacity-70" />
                     </div>
-                    <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-2.5 text-sm sm:grid-cols-2">
-                      {s.rows.map((r) => (
-                        <div
-                          key={`${r.label}-${String(r.value)}`}
-                          className={`grid grid-cols-[minmax(0,10rem)_1fr] gap-x-3 break-inside-avoid ${
-                            r.full ? "sm:col-span-2" : ""
-                          }`}
-                        >
-                          <dt className="text-xs font-medium text-muted-foreground">{r.label}</dt>
-                          <dd className="font-medium">{String(r.value)}</dd>
-                        </div>
-                      ))}
-                    </dl>
+                    {s.cols ? (
+                      <dl className="mt-4 grid grid-cols-1 gap-y-2.5 text-sm sm:grid-cols-2 sm:gap-x-8">
+                        {s.cols.map((col, ci) => (
+                          <div key={ci} className="grid content-start gap-y-2.5">
+                            {col.map((r) => (
+                              <div
+                                key={`${r.label}-${String(r.value)}`}
+                                className="grid grid-cols-[minmax(0,10rem)_minmax(0,1fr)] gap-x-3 break-inside-avoid"
+                              >
+                                <dt className="text-xs font-medium text-muted-foreground">
+                                  {r.label}
+                                </dt>
+                                <dd className="min-w-0 break-words font-medium">
+                                  {String(r.value)}
+                                </dd>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </dl>
+                    ) : (
+                      <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-2.5 text-sm sm:grid-cols-2">
+                        {s.rows.map((r) => (
+                          <div
+                            key={`${r.label}-${String(r.value)}`}
+                            className={`grid grid-cols-[minmax(0,10rem)_1fr] gap-x-3 break-inside-avoid ${
+                              r.full ? "sm:col-span-2" : ""
+                            }`}
+                          >
+                            <dt className="text-xs font-medium text-muted-foreground">{r.label}</dt>
+                            <dd className="font-medium">{String(r.value)}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
                   </section>
-                ),
-              )}
+                );
+              })}
 
               <section className="profile-section break-inside-avoid mt-6">
                 <div className="flex items-center gap-3 break-after-avoid">

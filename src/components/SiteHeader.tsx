@@ -27,7 +27,7 @@ export function SiteHeader() {
             {t("brand_badge")}
           </span>
           <span className="leading-tight">
-            <span className="block font-display text-lg font-semibold sm:text-xl">
+            <span className="block font-display text-2xl font-semibold sm:text-3xl">
               {t("brand")}
             </span>
             <span className="block font-display text-xl font-semibold sm:text-2xl">

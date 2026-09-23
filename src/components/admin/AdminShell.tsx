@@ -112,10 +112,10 @@ export function AdminShell({
             {t("brand_badge")}
           </span>
           <span className="leading-tight">
-            <span className="block font-display text-base font-semibold sm:text-lg">
+            <span className="block font-display text-xl font-semibold sm:text-3xl">
               {t("brand")}
             </span>
-            <span className="block font-display text-base font-semibold sm:text-lg">
+            <span className="block font-display text-lg font-semibold sm:text-2xl">
               {t("brand_line2")}
             </span>
             <span className="block text-xs text-muted-foreground">{t("adm_title")}</span>

@@ -70,7 +70,7 @@ export function HomePage() {
             <h1 className="mt-5 font-display text-5xl leading-tight font-semibold sm:text-6xl md:text-7xl">
               {t("brand")}
             </h1>
-            <p className="mt-1 font-display text-2xl font-semibold sm:text-3xl md:text-4xl">
+            <p className="mt-2 font-display text-4xl font-semibold sm:text-5xl md:text-6xl">
               {t("brand_line2")}
             </p>
             <div className="gold-rule mt-6 w-32" />
