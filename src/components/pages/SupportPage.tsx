@@ -17,6 +17,21 @@ type SupportMessage = {
   created_at: string;
 };
 
+/** Formats a UTC timestamp for display in India time (Asia/Kolkata). */
+function istTimestamp(iso: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  })
+    .format(new Date(iso))
+    .replace(/\b(am|pm)\b/gi, (m) => m.toUpperCase());
+}
+
 /** Member ↔ office support area. Separate from member-to-member matrimonial messaging. */
 export function SupportPage() {
   const { t } = useI18n();
@@ -155,7 +170,7 @@ export function SupportPage() {
                   <p>{m.body}</p>
                   <p className="mt-1 text-[11px] opacity-70">
                     {m.sender_type === "member" ? t("sup_you") : t("adm_msg_admin")} ·{" "}
-                    {new Date(m.created_at).toLocaleString()}
+                    {istTimestamp(m.created_at)}
                   </p>
                 </div>
               ))}

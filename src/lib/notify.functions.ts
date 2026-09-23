@@ -4,6 +4,21 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
 export const ADMIN_EMAIL = "vijayalakshmi@srilakshmimangalyamalai.com";
 
+/** Formats a UTC ISO timestamp for display in India time (Asia/Kolkata). */
+function istDisplay(iso: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  })
+    .format(new Date(iso))
+    .replace(/\b(am|pm)\b/gi, (m) => m.toUpperCase());
+}
+
 async function clientProfileIdFor(profileId: string): Promise<string | null> {
   try {
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
@@ -168,7 +183,7 @@ export async function notifyAdminProfileAction(input: {
       ? `Dear ${input.fullName}, a profile has been created for you on Sri Lakshmi Mangalya Malai on behalf of the team and submitted through our standard approval process. Our team will review it and notify you once a decision is made.`
       : input.awaitingReview
         ? `Dear ${input.fullName}, your profile was updated by an administrator on your behalf and submitted through our standard approval process. Our team will review it and notify you once a decision is made.`
-        : `Dear ${input.fullName}, your profile was updated by an administrator on your behalf (${new Date(input.at).toISOString()}). If you have any questions, please contact us.`;
+        : `Dear ${input.fullName}, your profile was updated by an administrator on your behalf (${istDisplay(input.at)}). If you have any questions, please contact us.`;
 
   alerts.push({
     kind:
