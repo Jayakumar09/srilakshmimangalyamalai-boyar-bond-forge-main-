@@ -79,19 +79,22 @@ export function DashboardPage() {
         .eq("user_id", userId)
         .order("created_at", { ascending: true });
       const rows = (data ?? []) as GalleryDoc[];
+      // The list renders straight from the documents query. Each private
+      // signed URL resolves independently so one slow/failed key can never
+      // freeze the whole "Documents & verification" section at the loading
+      // state; thumbnails pop in as their URLs arrive.
       setDocs(rows);
-      const urls: Record<string, string> = {};
-      await Promise.all(
-        rows.map(async (r) => {
-          try {
-            const { url } = await createViewUrl({ data: { key: r.storage_key } });
-            urls[r.storage_key] = url;
-          } catch {
+      for (const r of rows) {
+        void createViewUrl({ data: { key: r.storage_key } })
+          .then(({ url }) => {
+            setViewUrls((prev) =>
+              prev[r.storage_key] === url ? prev : { ...prev, [r.storage_key]: url },
+            );
+          })
+          .catch(() => {
             /* individual file URLs resolve lazily on demand */
-          }
-        }),
-      );
-      setViewUrls(urls);
+          });
+      }
     } finally {
       setDocsLoading(false);
     }
