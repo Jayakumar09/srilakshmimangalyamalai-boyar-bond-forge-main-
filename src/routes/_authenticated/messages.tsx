@@ -98,7 +98,8 @@ function Messages() {
           filter: `conversation_id=eq.${activeId}`,
         },
         (payload) => {
-          setMessages((m) => [...m, payload.new as Message]);
+          const msg = payload.new as Message;
+          setMessages((m) => (m.some((x) => x.id === msg.id) ? m : [...m, msg]));
         },
       )
       .subscribe();
@@ -115,14 +116,20 @@ function Messages() {
     if (!me || !activeId || !draft.trim()) return;
     const body = draft.trim().slice(0, 2000);
     setDraft("");
-    const { error } = await supabase
+    const { data: created, error } = await supabase
       .from("messages")
-      .insert({ conversation_id: activeId, sender_id: me, body });
+      .insert({ conversation_id: activeId, sender_id: me, body })
+      .select("id, sender_id, body, created_at")
+      .single();
     if (error) {
       toast.error(
         error.message.includes("policy") ? t("upgrade_to_message") : error.message,
       );
       return;
+    }
+    if (created) {
+      const msg = created as Message;
+      setMessages((m) => (m.some((x) => x.id === msg.id) ? m : [...m, msg]));
     }
     await supabase
       .from("conversations")
