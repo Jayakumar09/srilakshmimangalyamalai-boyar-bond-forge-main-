@@ -7,6 +7,11 @@
 //    exact UUIDs returned by its own INSERTs.
 //  * Cleanup deletes ONLY recorded primary keys via the guard allowlist.
 //    There is no `DELETE ...?user_id=eq.<id>` anywhere in this file.
+//  * A scratch user may only be registered with its test-only scratch email
+//    marker; known production UUIDs are refused at registration and there is
+//    no silent fallback to another email/id.
+//  * Threads and messages are tied to the scratch owner; cleanup refuses any
+//    row it cannot positively prove belongs to this run's scratch account.
 //  * Cleanup refuses entirely unless SLMM_TEST_MODE=true AND every target
 //    is in this run's allowlist AND markers/baseline checks pass.
 //  * `node slmm-comm-test.mjs --cleanup-preview` prints the dry-run plan
@@ -103,11 +108,20 @@ function buildGuardFromState(state, modeEnv) {
     deleter,
     logger: console,
   });
-  for (const id of state.created?.users || []) guard.recordUser(id, state.created?.userEmails?.[id] ?? `e2e-comm-client@slmm.test`);
+  for (const id of state.created?.users || []) {
+    // NO fallback: a user without its recorded test-only scratch email is
+    // refused outright. Never silently substitute another email/id.
+    const email = state.created?.userEmails?.[id];
+    if (!email) throw new Error(`state file has no scratch email for user ${id} - refusing to build cleanup guard`);
+    guard.recordUser(id, email);
+  }
   for (const id of state.created?.profiles || []) guard.recordProfile(id);
   for (const id of state.created?.roles || []) guard.recordRole(id);
   for (const t of state.created?.threads || []) guard.recordThread(t.id, t.owner);
-  for (const id of state.created?.messages || []) guard.recordMessage(id);
+  for (const m of state.created?.messages || []) {
+    const mid = typeof m === "string" ? m : m?.id;
+    guard.recordMessage(mid, (m && m.owner) || undefined);
+  }
   return guard;
 }
 
@@ -271,7 +285,7 @@ if (process.argv.includes("--cleanup-preview")) {
   const myMsg = (msgRows || []).find((x) => x.body === MSG);
   r("T7 thread persisted (REST: user, channel, status open)", thr.user_id === CL_UID && thr.channel === "communication" && thr.status === "open" ? true : false, `ch=${thr.channel} st=${thr.status}`);
   r("T8 message persisted (REST: member sender)", myMsg?.sender_type === "member" && myMsg?.sender_id === CL_UID ? true : false, `sender_type=${myMsg?.sender_type}`);
-  if (myMsg?.id) guard.recordMessage(myMsg.id);
+  if (myMsg?.id) guard.recordMessage(myMsg.id, CL_UID);
 
   // ============ T9: OFFICE REPLY (service-key admin message) ============
   await svc("POST", "/rest/v1/support_messages", { thread_id: thr.id, sender_id: CL_UID, sender_type: "admin", body: OFFICE }); // POST representation NOT assumed
@@ -281,7 +295,7 @@ if (process.argv.includes("--cleanup-preview")) {
   // unique match - never guess, never discover by ownership.
   const officeRows = await (await svc("GET", `/rest/v1/support_messages?select=id,thread_id,sender_type,body&thread_id=eq.${thr.id}&sender_type=eq.admin&body=eq.${encodeURIComponent(OFFICE)}`)).json();
   const officeId = resolveOfficeReplyId(officeRows, { threadId: thr.id, body: OFFICE });
-  guard.recordMessage(officeId); // current-run allowlist only (never a discovered/owned row)
+  guard.recordMessage(officeId, CL_UID); // current-run allowlist only (never a discovered/owned row)
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForFunction((s) => document.body.innerText.includes(s), OFFICE, { timeout: 15000 });
   await page.waitForTimeout(1500);
@@ -310,7 +324,7 @@ if (process.argv.includes("--cleanup-preview")) {
   const longBd = await (await svc("GET", `/rest/v1/support_messages?select=id,body&thread_id=eq.${longThr?.id ?? thr.id}&body=like.y%25%25`)).json();
   const longBodyRow = (longBd || []).filter((x) => x.body.startsWith("yyyyyy")).at(-1) ?? null;
   r("V4 message length limit enforced (2000)", longBodyRow && longBodyRow.body.length === 2000 ? true : false, `len=${longBodyRow ? longBodyRow.body.length : 0}`);
-  if (longBodyRow?.id) guard.recordMessage(longBodyRow.id);
+  if (longBodyRow?.id) guard.recordMessage(longBodyRow.id, CL_UID);
 
   // ============ X: AUTHORIZATION / SECURITY ============
   const ownThreads = await restAs(`support_threads?select=id,user_id,channel`);
@@ -377,7 +391,7 @@ if (process.argv.includes("--cleanup-preview")) {
       profiles: profRow?.[0]?.id ? [profRow[0].id] : [],
       roles: [],
       threads: guard.plan().filter((x) => x.kind === "threads").map((x) => ({ id: x.id, owner: CL_UID })),
-      messages: guard.plan().filter((x) => x.kind === "messages").map((x) => x.id),
+      messages: guard.plan().filter((x) => x.kind === "messages").map((x) => ({ id: x.id, owner: guard.getMessageOwner(x.id) ?? CL_UID })),
     },
   };
   writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));

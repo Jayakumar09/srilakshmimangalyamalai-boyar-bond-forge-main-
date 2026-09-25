@@ -18,6 +18,20 @@
 //  G/H. Baseline ids captured before the run can never be cleaned.
 //  K. Audit output logs ids and guard decisions only - NEVER secrets.
 //
+// HARD SAFETY GUARD (added for the real-data deletion incident):
+//  * recordUser() FAILS CLOSED at registration: a user may only enter the
+//    scratch registry if the exact test-only scratch email marker is supplied
+//    AND the id is not a known production account. There is NO silent fallback
+//    to any other id/email when the marker is missing.
+//  * Threads and messages must be tied to a scratch user owner recorded THIS
+//    run; ownerless or foreign-owned rows are refused at registration or, if
+//    recorded leniently, refused at evaluation -> the WHOLE cleanup refuses.
+//  * cleanup() re-verifies every row immediately before its DELETE; any
+//    re-verification failure aborts the ENTIRE cleanup with ZERO deletes.
+//  * Every original guard check also runs again in cleanup()'s execution loop
+//    (defense in depth), so a previously-approved row can never be deleted
+//    just because it passed once.
+//
 // This module is pure: it performs no network I/O. A live run must inject a
 // `deleter` callback; mock tests inject a fake one.
 // ---------------------------------------------------------------------------
@@ -56,30 +70,58 @@ export function createCleanupGuard(options = {}) {
   const userEmail = new Map();      // userId -> email recorded at creation
   const userMarkerOk = new Map();   // userId -> matches scratch email pattern
   const threadOwner = new Map();    // threadId -> ownerUserId
+  const messageOwner = new Map();   // messageId -> ownerUserId (scratch thread owner)
   const baselineThreads = new Set(baselineThreadIds);
   const externalProposals = [];     // rows offered from lookups/filters; never deletable
 
   const isTestModeActive = () => modeEnv === "true";
 
   // --- recording (the ONLY source of cleanup targets) ----------------------
+  // FAIL-CLOSED at registration: a user may only be recorded as a scratch
+  // target if its exact test-email marker is supplied and it is not a known
+  // production account. No marker, no registration, no silent fallback.
   function recordUser(id, email) {
     if (!id) return false;
-    created.users.add(id);
-    if (email !== undefined) {
-      userEmail.set(id, email);
-      userMarkerOk.set(id, scratchEmailPattern.test(email));
+    if (knownProductionUserIds.has(id)) {
+      throw new Error(`refusing to register known production user ${id} as a scratch cleanup target`);
     }
+    if (typeof email !== "string" || !scratchEmailPattern.test(email)) {
+      throw new Error(`refusing to register user ${id}: email must match the test-only scratch marker convention (got ${String(email)})`);
+    }
+    created.users.add(id);
+    userEmail.set(id, email);
+    userMarkerOk.set(id, true);
     return true;
   }
   function recordProfile(id) { if (!id) return false; created.profiles.add(id); return true; }
   function recordRole(id) { if (!id) return false; created.roles.add(id); return true; }
+  // A thread may only be attributed to a scratch user created THIS run. An
+  // explicit owner is mandatory for live runs; ownerless threads are recorded
+  // leniently but ALWAYS refused at evaluation (fail-closed).
   function recordThread(id, ownerUserId) {
     if (!id) return false;
+    if (ownerUserId !== undefined) {
+      if (!created.users.has(ownerUserId)) {
+        throw new Error(`refusing to register thread ${id}: owner ${ownerUserId} is not a scratch user created by this run`);
+      }
+      threadOwner.set(id, ownerUserId);
+    }
     created.threads.add(id);
-    if (ownerUserId) threadOwner.set(id, ownerUserId);
     return true;
   }
-  function recordMessage(id) { if (!id) return false; created.messages.add(id); return true; }
+  // Messages must be tied to the scratch owner of the thread they belong to.
+  // Same rule: explicit owner for live runs, ownerless refused at evaluation.
+  function recordMessage(id, ownerUserId = undefined) {
+    if (!id) return false;
+    if (ownerUserId !== undefined) {
+      if (!created.users.has(ownerUserId)) {
+        throw new Error(`refusing to register message ${id}: owner ${ownerUserId} is not a scratch user created by this run`);
+      }
+      messageOwner.set(id, ownerUserId);
+    }
+    created.messages.add(id);
+    return true;
+  }
 
   // --- evaluation -----------------------------------------------------------
   function evaluateRow(kind, id, opts = {}) {
@@ -97,15 +139,27 @@ export function createCleanupGuard(options = {}) {
       reasons.push("target id is a known real production account");
     }
     if (kind === "users" && created.users.has(id)) {
-      if (userMarkerOk.get(id) === false) {
-        reasons.push("recorded email does not match the test-only scratch marker convention");
+      // Positive requirement: the scratch marker must be VERIFIED, not merely
+      // "not wrong". A user recorded without a marker is never eligible.
+      if (userMarkerOk.get(id) !== true) {
+        reasons.push("no verified test-only scratch marker recorded for this user");
       }
     }
     if (kind === "threads") {
       if (baselineThreads.has(id)) reasons.push("thread id existed before this test run (baseline)");
       const owner = threadOwner.get(id);
-      if (owner && !created.users.has(owner)) {
+      if (!owner) {
+        reasons.push("thread has no scratch owner recorded - cannot prove it was created by this run");
+      } else if (!created.users.has(owner)) {
         reasons.push("thread owner is not a scratch user created by this run");
+      }
+    }
+    if (kind === "messages") {
+      const owner = messageOwner.get(id);
+      if (!owner) {
+        reasons.push("message has no scratch owner recorded - cannot prove it belongs to a scratch thread of this run");
+      } else if (!created.users.has(owner)) {
+        reasons.push("message owner is not a scratch user created by this run");
       }
     }
     return { kind, id, allowed: reasons.length === 0, reasons };
@@ -212,6 +266,15 @@ export function createCleanupGuard(options = {}) {
     let executed = 0;
     let aborted = false;
     for (const row of e.approved) {
+      // Re-verify the row IMMEDIATELY before deleting it. Any re-verification
+      // failure aborts the ENTIRE cleanup (fail-closed, zero further deletes),
+      // so nothing is ever deleted on a stale/once-approved decision.
+      const recheck = evaluateRow(row.kind, row.id);
+      if (!recheck.allowed) {
+        aborted = true;
+        logger.error(`ABORTING CLEANUP - ${row.kind} ${row.id} failed immediate pre-delete verification: ${recheck.reasons.join("; ")}`);
+        break;
+      }
       // deleter receives ONLY {kind,id}; it must issue a primary-key DELETE.
       const res = await deleter(row);
       const ok = res && (res.status === 200 || res.status === 204 || res.ok === true);
@@ -230,6 +293,8 @@ export function createCleanupGuard(options = {}) {
   return {
     testRunId,
     recordUser, recordProfile, recordRole, recordThread, recordMessage,
+    getMessageOwner: (id) => messageOwner.get(id),
+    getThreadOwner: (id) => threadOwner.get(id),
     proposeExternal,
     evaluateRow: (kind, id, opts) => evaluateRow(kind, id, opts),
     plan,
