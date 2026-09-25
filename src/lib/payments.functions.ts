@@ -19,6 +19,26 @@ export const createPaymentOrder = createServerFn({ method: "POST" })
     }
 
     const amount = PRICES[data.item];
+
+    // Already-purchased and still-active plans must not be bought again:
+    // a fresh verification would overwrite (not extend) the current validity
+    // window, and repeated orders would pile up pending payment rows.
+    if (data.item === "standard" || data.item === "premium") {
+      const { data: profile } = await context.supabase
+        .from("profiles")
+        .select("membership_plan, plan_valid_until")
+        .eq("id", context.userId)
+        .maybeSingle();
+      if (profile?.membership_plan === data.item && profile.plan_valid_until) {
+        const expiry = new Date(`${profile.plan_valid_until}T00:00:00`);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        if (expiry.getTime() >= today.getTime()) {
+          throw new Error("This plan is already active on your account.");
+        }
+      }
+    }
+
     const res = await fetch("https://api.razorpay.com/v1/orders", {
       method: "POST",
       headers: {
@@ -37,17 +57,61 @@ export const createPaymentOrder = createServerFn({ method: "POST" })
     }
     const order = (await res.json()) as { id: string };
 
-    const { error } = await context.supabase.from("payments").insert({
-      user_id: context.userId,
-      item: data.item,
-      amount_inr: amount,
-      method: "online",
-      gateway_order_id: order.id,
-      status: "submitted",
-    });
+    // Payment rows are created with the service role (never with the session
+    // client, whose INSERT privilege is revoked): amount, method and status
+    // are therefore always server-authored.
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: inserted, error } = await supabaseAdmin
+      .from("payments")
+      .insert({
+        user_id: context.userId,
+        item: data.item,
+        amount_inr: amount,
+        method: "online",
+        gateway_order_id: order.id,
+        status: "submitted",
+      })
+      .select("id")
+      .single();
     if (error) throw new Error(error.message);
 
-    return { orderId: order.id, amount, keyId };
+    return { orderId: order.id, paymentId: inserted.id, amount, keyId };
+  });
+
+/**
+ * Records a manual payment submission. The amount is computed server-side from
+ * the fixed price list and the status is always 'submitted', so a client can
+ * never insert a payment row carrying invented payment facts.
+ */
+export const submitManualPayment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        item: ItemSchema,
+        method: z.enum(["upi", "card", "bank"]),
+        utrReference: z.string().min(1).max(120),
+        proofKey: z.string().max(300).nullable(),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: inserted, error } = await supabaseAdmin
+      .from("payments")
+      .insert({
+        user_id: context.userId,
+        item: data.item,
+        amount_inr: PRICES[data.item],
+        method: data.method,
+        utr_reference: data.utrReference,
+        proof_key: data.proofKey ?? null,
+        status: "submitted",
+      })
+      .select("id")
+      .single();
+    if (error) throw new Error(error.message);
+    return { paymentId: inserted.id };
   });
 
 async function hmacSha256Hex(secret: string, message: string) {
@@ -85,41 +149,28 @@ export const confirmPaymentOrder = createServerFn({ method: "POST" })
     if (expected !== data.signature) throw new Error("Payment signature could not be verified");
 
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: payment, error } = await supabaseAdmin
-      .from("payments")
-      .update({
-        status: "verified",
-        gateway_payment_id: data.paymentId,
-        verified_at: new Date().toISOString(),
-      })
-      .eq("gateway_order_id", data.orderId)
-      .eq("user_id", context.userId)
-      .select("item, amount_inr")
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    if (!payment) throw new Error("Payment record not found");
-
-    if (payment.item === "standard" || payment.item === "premium") {
-      const validUntil = new Date();
-      validUntil.setFullYear(validUntil.getFullYear() + 1);
-      await supabaseAdmin
-        .from("profiles")
-        .update({
-          membership_plan: payment.item,
-          plan_valid_until: validUntil.toISOString().slice(0, 10),
-        })
-        .eq("id", context.userId);
-    }
-
-    await supabaseAdmin.from("notifications").insert({
-      kind: "payment_online",
-      subject: `Online payment received — ₹${payment.amount_inr} (${payment.item})`,
-      body: `An online ${payment.item} payment of ₹${payment.amount_inr} was completed and verified automatically. Gateway payment id: ${data.paymentId}.`,
-      email_to: "vijayalakshmi@srilakshmimangalyamalai.com",
-      related_user_id: context.userId,
+    // The whole business transition -- mark verified, activate the plan, admin
+    // alert, exactly-once PAYMENT_VERIFIED outbox + receipt metadata -- runs
+    // inside the database in one transaction (verify_payment). If any step
+    // fails, everything rolls back and the payment stays 'submitted'.
+    const adminClient = supabaseAdmin as unknown as {
+      rpc(fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }>;
+    };
+    const { data: rows, error } = await adminClient.rpc("verify_payment", {
+      p_gateway_order_id: data.orderId,
+      p_user_id: context.userId,
+      p_gateway_payment_id: data.paymentId,
     });
+    if (error) throw new Error(error.message);
 
-    return { ok: true, item: payment.item };
+    const row = (Array.isArray(rows) ? rows[0] : rows) as
+      | ({ payment_id: string | null; item: PayItem; amount_inr: number; verified: boolean; already_processed: boolean } | null)
+      | null;
+    if (!row || !row.payment_id) throw new Error("Payment record not found");
+    if (!row.verified) {
+      return { ok: true, item: row.item, alreadyProcessed: true };
+    }
+    return { ok: true, item: row.item };
   });
 
 /** Admin: verify or reject a manually submitted payment and set the plan. */
