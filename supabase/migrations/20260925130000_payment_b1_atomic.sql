@@ -51,6 +51,10 @@ ALTER TABLE public.payment_events ENABLE ROW LEVEL SECURITY;
 --   verified         true  => this request performed the transition
 --   already_processed true => payment was already verified (replay)
 -- ---------------------------------------------------------------------------
+CREATE UNIQUE INDEX payments_gateway_order_user_uniq
+ON public.payments (gateway_order_id, user_id)
+WHERE gateway_order_id IS NOT NULL;
+
 CREATE OR REPLACE FUNCTION public.verify_payment(
   p_gateway_order_id text,
   p_user_id uuid,
@@ -65,12 +69,23 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_payment public.payments%ROWTYPE;
   v_valid_until date;
+  v_match_count bigint;
 BEGIN
+  SELECT count(*)
+    INTO v_match_count
+    FROM public.payments
+    WHERE gateway_order_id = p_gateway_order_id
+      AND user_id = p_user_id;
+
+  IF v_match_count > 1 THEN
+    RAISE EXCEPTION 'multiple payments match gateway order and user';
+  END IF;
+
   -- Atomic claim: only one concurrent invocation can transition this payment
   -- from 'submitted' to 'verified'. The WHERE clause carries the identity
   -- (gateway_order_id + user_id) AND the status guard, so a second
@@ -138,4 +153,5 @@ BEGIN
 END;
 $$;
 
+REVOKE EXECUTE ON FUNCTION public.verify_payment(text, uuid, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.verify_payment(text, uuid, text) TO service_role;
