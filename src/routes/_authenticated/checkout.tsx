@@ -78,6 +78,7 @@ function Checkout() {
   const [userId, setUserId] = useState<string | null>(null);
   const [fullName, setFullName] = useState("Member");
   const [payments, setPayments] = useState<PaymentRow[]>([]);
+  const [delivery, setDelivery] = useState<Map<string, { receipt_key: string | null; receipt_status: string | null }>>(new Map());
   const [jathagam, setJathagam] = useState<JathagamRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [manualFor, setManualFor] = useState<Item | null>(null);
@@ -87,7 +88,7 @@ function Checkout() {
   const [birth, setBirth] = useState({ date: "", time: "", place: "" });
 
   const load = useCallback(async (uid: string) => {
-    const [{ data: pays }, { data: jats }, { data: profile }] = await Promise.all([
+    const [{ data: pays }, { data: jats }, { data: profile }, evRows] = await Promise.all([
       supabase
         .from("payments")
         .select("id, item, amount_inr, method, utr_reference, status, admin_notes, created_at")
@@ -97,9 +98,19 @@ function Checkout() {
         .select("id, birth_date, birth_time, birth_place, status, report_key")
         .order("created_at", { ascending: false }),
       supabase.from("profiles").select("full_name").eq("id", uid).maybeSingle(),
+      ((supabase as unknown as {
+        from(table: string): unknown;
+      }).from("payment_events") as unknown as {
+        select(
+          cols: string,
+        ): Promise<{
+          data: Array<{ payment_id: string; receipt_key: string | null; receipt_status: string | null }> | null;
+        }>;
+      }).select("payment_id, receipt_key, receipt_status"),
     ]);
     setPayments((pays ?? []) as PaymentRow[]);
     setJathagam((jats ?? []) as JathagamRow[]);
+    setDelivery(new Map((evRows?.data ?? []).map((e) => [e.payment_id, e])));
     if (profile?.full_name) setFullName(profile.full_name);
   }, []);
 
@@ -373,6 +384,22 @@ function Checkout() {
               {p.admin_notes && (
                 <span className="w-full text-xs text-muted-foreground">{p.admin_notes}</span>
               )}
+              {p.status === "verified" &&
+                (delivery.get(p.id)?.receipt_key ? (
+                  <>
+                    <span className="text-xs text-success">{t("receipt_available")}</span>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => openReport(delivery.get(p.id)!.receipt_key!)}
+                    >
+                      <Download className="mr-1 size-4" />
+                      {t("download_receipt")}
+                    </Button>
+                  </>
+                ) : delivery.get(p.id)?.receipt_status === "failed" ? null : (
+                  <span className="text-xs text-muted-foreground">{t("receipt_pending")}</span>
+                ))}
             </div>
           ))}
         </div>

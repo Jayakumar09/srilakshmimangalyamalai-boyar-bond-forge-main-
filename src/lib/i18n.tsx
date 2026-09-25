@@ -302,6 +302,9 @@ export const dict: Dict = {
   my_payments: { en: "My payments", ta: "என் கட்டணங்கள்" },
   jathagam_details: { en: "Birth details for Jathagam", ta: "ஜாதகத்திற்கான பிறப்பு விவரங்கள்" },
   download_report: { en: "Download report", ta: "அறிக்கையைப் பதிவிறக்கு" },
+  receipt_available: { en: "Receipt available", ta: "ரசீது கிடைக்கிறது" },
+  download_receipt: { en: "Download receipt", ta: "ரசீதைப் பதிவிறக்கு" },
+  receipt_pending: { en: "Receipt pending", ta: "ரசீது நிலுவையில் உள்ளது" },
   // matches
   matches_title: { en: "Find matches", ta: "பொருத்தங்களைத் தேடுங்கள்" },
   matches_locked: {
@@ -445,6 +448,9 @@ export const dict: Dict = {
   adm_new_regs: { en: "New this week", ta: "இந்த வாரம் புதியவை" },
   adm_open_reports: { en: "Open reports", ta: "திறந்த புகார்கள்" },
   adm_pending_payments: { en: "Payments to verify", ta: "சரிபார்க்க வேண்டிய கட்டணங்கள்" },
+  adm_receipt_status: { en: "Receipt", ta: "ரசீது" },
+  adm_notif_status: { en: "Notif", ta: "அறிவிப்பு" },
+  adm_retry_delivery: { en: "Retry delivery", ta: "மீண்டும் முயற்சி" },
   adm_jat_requests: { en: "Jathagam requests", ta: "ஜாதக கோரிக்கைகள்" },
   adm_active_alerts: { en: "Recent alerts", ta: "சமீபத்திய அறிவிப்புகள்" },
   adm_system_usage: { en: "System usage", ta: "அமைப்பு பயன்பாடு" },

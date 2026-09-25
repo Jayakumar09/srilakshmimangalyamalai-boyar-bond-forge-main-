@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { createViewUrl, deleteUpload } from "@/lib/storage.functions";
 import { uploadToR2 } from "@/lib/upload";
 import { reviewPayment } from "@/lib/payments.functions";
+import { retryPaymentDeliveries } from "@/lib/receipts.functions";
 import { notifyApprovalChanged, notifyProfileUpdatedByAdmin } from "@/lib/notify.functions";
 
 export type AdminProfile = {
@@ -158,6 +159,12 @@ export type AdminAlert = {
   created_at: string;
 };
 
+export type AdminDelivery = {
+  payment_id: string;
+  receipt_status: string | null;
+  notification_status: string | null;
+};
+
 export const R2_QUOTA_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB free tier
 export const DB_QUOTA_BYTES = 500 * 1024 * 1024; // 500 MB
 
@@ -176,6 +183,7 @@ export function useAdminData() {
   const [reports, setReports] = useState<AdminReport[]>([]);
   const [blocks, setBlocks] = useState<AdminBlock[]>([]);
   const [alerts, setAlerts] = useState<AdminAlert[]>([]);
+  const [deliveries, setDeliveries] = useState<Record<string, AdminDelivery>>({});
 
   const reload = useCallback(async () => {
     const [
@@ -186,6 +194,7 @@ export function useAdminData() {
       { data: reps },
       { data: blockRows },
       { data: alertRows },
+      evRows,
     ] = await Promise.all([
       supabase
         .from("profiles")
@@ -215,6 +224,15 @@ export function useAdminData() {
         .select("id, kind, subject, body, email_to, emailed, created_at")
         .order("created_at", { ascending: false })
         .limit(50),
+      ((supabase as unknown as {
+        from(table: string): unknown;
+      }).from("payment_events") as unknown as {
+        select(
+          cols: string,
+        ): Promise<{
+          data: Array<{ payment_id: string; receipt_status: string | null; notification_status: string | null }> | null;
+        }>;
+      }).select("payment_id, receipt_status, notification_status"),
     ]);
     setProfiles((profileRows ?? []) as AdminProfile[]);
     setDocs((documents ?? []) as AdminDoc[]);
@@ -223,6 +241,11 @@ export function useAdminData() {
     setReports((reps ?? []) as AdminReport[]);
     setBlocks((blockRows ?? []) as AdminBlock[]);
     setAlerts((alertRows ?? []) as AdminAlert[]);
+    const deliveryMap: Record<string, AdminDelivery> = {};
+    for (const e of (evRows?.data ?? []) as AdminDelivery[]) {
+      deliveryMap[e.payment_id] = e;
+    }
+    setDeliveries(deliveryMap);
     setLoading(false);
   }, []);
 
@@ -244,6 +267,22 @@ export function useAdminData() {
       await reload();
     });
   }, [reload, navigate]);
+
+  const retryDelivery = useCallback(
+    async (paymentId: string) => {
+      setBusy(true);
+      try {
+        await retryPaymentDeliveries({ data: { paymentId } });
+        toast.success("Delivery retried");
+        await reload();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not retry delivery");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [reload],
+  );
 
   const decideProfile = useCallback(
     async (id: string, status: "approved" | "rejected", note: string | null) => {
@@ -504,6 +543,7 @@ export function useAdminData() {
     jathagam,
     reports,
     blocks,
+    deliveries,
     alerts,
     storageUsed,
     dbApprox,
@@ -512,6 +552,7 @@ export function useAdminData() {
     reload,
     decideProfile,
     decidePayment,
+    retryDelivery,
     uploadHoroscope,
     closeReport,
     openDoc,

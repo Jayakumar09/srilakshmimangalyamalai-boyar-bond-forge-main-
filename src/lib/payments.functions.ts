@@ -167,9 +167,15 @@ export const confirmPaymentOrder = createServerFn({ method: "POST" })
       | ({ payment_id: string | null; item: PayItem; amount_inr: number; verified: boolean; already_processed: boolean } | null)
       | null;
     if (!row || !row.payment_id) throw new Error("Payment record not found");
+    const paidPaymentId = row.payment_id;
     if (!row.verified) {
       return { ok: true, item: row.item, alreadyProcessed: true };
     }
+    // Receipt + client notification delivery is downstream, best-effort and
+    // never blocks or reverses the completed verification.
+    void import("@/lib/receipts.functions").then((m) =>
+      m.processPendingPaymentDeliveries({ paymentId: paidPaymentId }).catch(() => {}),
+    );
     return { ok: true, item: row.item };
   });
 
@@ -200,7 +206,7 @@ export const reviewPayment = createServerFn({ method: "POST" })
         verified_at: data.decision === "verified" ? new Date().toISOString() : null,
       })
       .eq("id", data.paymentId)
-      .select("user_id, item")
+      .select("user_id, item, amount_inr, verified_at")
       .maybeSingle();
     if (error) throw new Error(error.message);
     if (!payment) throw new Error("Payment not found");
@@ -215,6 +221,41 @@ export const reviewPayment = createServerFn({ method: "POST" })
           plan_valid_until: validUntil.toISOString().slice(0, 10),
         })
         .eq("id", payment.user_id);
+    }
+
+    // Both verification paths must produce the authoritative PAYMENT_VERIFIED
+    // event. Guarded insert (unique payment_id): a repeated admin verification
+    // never creates a duplicate event.
+    if (data.decision === "verified") {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      const evClient = (supabaseAdmin as unknown as {
+        from(table: string): unknown;
+      }).from("payment_events") as unknown as {
+        insert(
+          row: Record<string, unknown>,
+          opts?: { ignoreDuplicates?: boolean },
+        ): Promise<{ error: { message: string } | null }>;
+      };
+      const { error: evError } = await evClient.insert(
+        {
+          payment_id: data.paymentId,
+          user_id: payment.user_id,
+          item: payment.item,
+          amount_inr: payment.amount_inr,
+          kind: "PAYMENT_VERIFIED",
+          gateway_order_id: null,
+          gateway_payment_id: null,
+          verified_at: payment.verified_at,
+        },
+        { ignoreDuplicates: true },
+      );
+      if (evError) throw new Error(evError.message);
+
+      // Receipt + notification delivery is downstream, best-effort and never
+      // blocks or reverses the completed verification.
+      void import("@/lib/receipts.functions").then((m) =>
+        m.processPendingPaymentDeliveries({ paymentId: data.paymentId }).catch(() => {}),
+      );
     }
 
     return { ok: true };

@@ -75,6 +75,26 @@ export function AdminPayments() {
                           {t("adm_view")}
                         </Button>
                       )}
+                      {p.status === "verified" && d.deliveries[p.id] && (
+                        <>
+                          {(d.deliveries[p.id]?.receipt_status !== "generated" ||
+                            d.deliveries[p.id]?.notification_status !== "sent") && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              disabled={d.busy}
+                              onClick={() => d.retryDelivery(p.id)}
+                            >
+                              {t("adm_retry_delivery")}
+                            </Button>
+                          )}
+                          <span className="text-xs text-muted-foreground">
+                            {t("adm_receipt_status")}: {d.deliveries[p.id]?.receipt_status ?? "\u2014"}
+                            {", "}
+                            {t("adm_notif_status")}: {d.deliveries[p.id]?.notification_status ?? "\u2014"}
+                          </span>
+                        </>
+                      )}
                       {p.status === "submitted" && (
                         <>
                           <Button
