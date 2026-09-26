@@ -22,8 +22,9 @@
 -- transaction; only durable state is written. Receipt/notification delivery is
 -- a later retryable step that reads payment_events.
 --
--- NOTE: This migration defines the intended change only; it must NOT be
--- applied to a production Supabase project as part of this exercise.
+-- NOTE: This migration is APPLIED to production (project
+-- sxpkutjkqfekqwpabgrk; verified 2026-09-26) and is part of the intended end
+-- state. Do not re-apply: it is not idempotent.
 
 -- ---------------------------------------------------------------------------
 -- Exactly-once outbox + receipt metadata for a verified payment.

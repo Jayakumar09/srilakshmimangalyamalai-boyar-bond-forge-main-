@@ -5,7 +5,8 @@
 -- row as the durable outbox + processing state, and they can NEVER reverse a
 -- completed payment verification.
 --
--- Review-only migration for this exercise - must NOT be applied to production.
+-- APPLIED to production (project sxpkutjkqfekqwpabgrk; verified 2026-09-26)
+-- and part of the intended end state. Do not re-apply: it is not idempotent.
 
 -- ---------------------------------------------------------------------------
 -- Delivery state on the authoritative PAYMENT_VERIFIED event (exactly-once per

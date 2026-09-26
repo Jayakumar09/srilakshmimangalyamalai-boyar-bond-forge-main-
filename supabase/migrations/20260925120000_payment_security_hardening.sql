@@ -1,8 +1,9 @@
 -- payment_security_hardening
 -- Closes the payment-verification gaps found in the checkout inspection.
 --
--- NOTE: This migration defines the intended change only; it must NOT be
--- applied to a production Supabase project as part of this exercise.
+-- NOTE: This migration is APPLIED to production (project
+-- sxpkutjkqfekqwpabgrk; verified 2026-09-26) and is part of the intended end
+-- state. Do not re-apply: it is not idempotent.
 
 -- ---------------------------------------------------------------------------
 -- F1: Clients must not be able to directly modify payment-controlled profile
