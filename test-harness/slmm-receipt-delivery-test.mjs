@@ -57,12 +57,28 @@ const rest = async (p) => {
   return r;
 };
 
-// Production payments that must never be touched. Hard-coded from the
-// read-only precheck; the harness refuses if they ever appear as a target.
-const PROD_PAYMENT_IDS = new Set([
-  "2a1797d0-cfef-48c6-a976-966ed9b0451d",
-  "856ddcf3-0460-407b-962b-964ef03c0c01",
-]);
+// Production payments are identified at RUNTIME from a read-only preflight
+// rather than pinned as literals in this tracked file. Every payment that
+// already exists is protected, which is strictly stronger than a hard-coded
+// list: it cannot go stale as production data changes and it covers rows this
+// file has never seen. Stays null until the preflight succeeds, so any delete
+// attempted before then is refused (see deleter).
+let PROTECTED_PAYMENT_IDS = null;
+
+// Fail-closed loader. Throws - aborting the run before anything is created -
+// if the protected set cannot be established. It never falls back to an empty,
+// guessed, or placeholder set.
+async function loadProtectedPaymentIds() {
+  const res = await svc("GET", "/rest/v1/payments?select=id");
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`protected payment id preflight failed (HTTP ${res.status}) - refusing to continue`);
+  }
+  const rows = await res.json();
+  if (!Array.isArray(rows)) {
+    throw new Error("protected payment id preflight returned a non-array payload - refusing to continue");
+  }
+  return new Set(rows.map((r) => r?.id).filter((id) => typeof id === "string" && id.length > 0));
+}
 const PROD_USER_IDS = new Set([
   "4409e9c8-b57c-4e92-9333-983bdc2cb6fc",
   "0c615e44-7c07-4efd-b917-1414db32cf10",
@@ -129,7 +145,10 @@ async function snapshot() {
 }
 
 const deleter = async (row) => {
-  if (PROD_PAYMENT_IDS.has(row.id) || PROD_USER_IDS.has(row.id)) {
+  // Fail-closed: refuse while the protected set is unknown, and refuse any row
+  // that pre-existed this run. Returning a non-ok response makes the guard
+  // abort the ENTIRE cleanup with zero further deletes.
+  if (!PROTECTED_PAYMENT_IDS || PROTECTED_PAYMENT_IDS.has(row.id) || PROD_USER_IDS.has(row.id)) {
     return { status: 409, ok: false };
   }
   switch (row.kind) {
@@ -164,6 +183,15 @@ const notifRows = async (uid) =>
   check("baseline payment_events is empty (nothing to backfill, no prod outbox rows)", baseline.counts.payment_events === 0, `count=${baseline.counts.payment_events}`);
   log("");
 
+  // Fail-closed preflight: establish the protected production payment set
+  // BEFORE the guard is constructed and before any row is created. A failure
+  // here throws into the catch/finally, where the still-empty allowlist makes
+  // the guard REFUSE - so nothing is created and nothing is deleted.
+  PROTECTED_PAYMENT_IDS = await loadProtectedPaymentIds();
+  log(`protected production payment ids loaded at runtime: ${PROTECTED_PAYMENT_IDS.size} (values never printed)`);
+  check("protected production payment set established from runtime preflight", PROTECTED_PAYMENT_IDS.size > 0, `size=${PROTECTED_PAYMENT_IDS.size}`);
+  log("");
+
   // --- load the real processor from app source -----------------------------
   const server = await createServer({
     root: ROOT,
@@ -180,7 +208,7 @@ const notifRows = async (uid) =>
     testRunId: TEST_RUN_ID,
     modeEnv: process.env.SLMM_TEST_MODE,
     knownProductionUserIds: PROD_USER_IDS,
-    baselinePaymentIds: PROD_PAYMENT_IDS,
+    baselinePaymentIds: PROTECTED_PAYMENT_IDS,
     deleter,
     logger: console,
   });
@@ -220,7 +248,7 @@ const notifRows = async (uid) =>
     const payRow = (await payIns.json())?.[0];
     const PID = payRow?.id;
     if (!PID) throw new Error(`scratch payment insert failed status=${payIns.status}`);
-    if (PROD_PAYMENT_IDS.has(PID)) throw new Error("refusing: scratch payment id collides with production");
+    if (PROTECTED_PAYMENT_IDS.has(PID)) throw new Error("refusing: scratch payment id collides with a pre-existing payment");
     guard.recordPayment(PID, UID);
     cleanedPaymentId = PID;
     check("scratch payment created (id from our own INSERT)", true, PID);
@@ -346,12 +374,13 @@ const notifRows = async (uid) =>
     const foreign = (allEvents || []).filter((r) => r.payment_id !== PID);
     check("scoping: no other payment_events row exists to be touched", foreign.length === 0, `foreign=${foreign.length}`);
     const allPayments = (await rest("/rest/v1/payments?select=id,status,verified_at,gateway_payment_id,updated_at")) ?? [];
-    check("scoping: payments table holds exactly the 2 production rows + 1 scratch row", Array.isArray(allPayments) && allPayments.length === 3, `count=${Array.isArray(allPayments) ? allPayments.length : "ERR"}`);
+    const baselineCount = baseline.counts.payments;
+    check("scoping: payments table holds the pre-existing rows + 1 scratch row", Array.isArray(allPayments) && allPayments.length === baselineCount + 1, `count=${Array.isArray(allPayments) ? allPayments.length : "ERR"}`);
     const prodPayments = (allPayments || []).filter((x) => x.id !== PID);
-    check("scoping: both production payments still present", prodPayments.length === 2, `count=${prodPayments.length}`);
-    for (const pid of PROD_PAYMENT_IDS) {
+    check("scoping: every pre-existing payment still present", prodPayments.length === baselineCount, `count=${prodPayments.length}`);
+    for (const pid of PROTECTED_PAYMENT_IDS) {
       const p = prodPayments.find((x) => x.id === pid);
-      check(`scoping: production payment ${pid.slice(0, 8)} still present and unchanged`, !!p && p.status !== undefined, `status=${p?.status}`);
+      check("scoping: a protected pre-existing payment is still present and unchanged", !!p && p.status !== undefined, `status=${p?.status}`);
     }
     check("scoping: production payment row state byte-identical to baseline",
       JSON.stringify(prodPayments.map((r) => `${r.id}|${r.status}|${r.verified_at}|${r.gateway_payment_id}|${r.updated_at}`).sort()) === JSON.stringify(baseline.detail.paymentState));
@@ -406,8 +435,11 @@ const notifRows = async (uid) =>
     log(failures === 0 ? "RESULT: ALL CHECKS PASSED" : `RESULT: ${failures} CHECK(S) FAILED`);
     log("=".repeat(78));
 
-    report.baseline = baseline;
-    report.after = after;
+    // Persist counts only. The id-bearing detail (paymentIds / paymentState) is
+    // kept in memory for the before/after comparison above but is deliberately
+    // NOT written to the report, so no real production identifier lands on disk.
+    report.baseline = { counts: baseline.counts };
+    report.after = { counts: after.counts };
     report.failures = failures;
     report.r2BucketUsed = r2.bucket;
     report.maxAttempts = MAX;
