@@ -44,9 +44,15 @@ const KIND_LABEL = {
   roles: "scratch role",
   threads: "scratch support thread",
   messages: "scratch support message",
+  payments: "scratch payment",
+  notifications: "scratch notification",
 };
 
-const DEFAULT_DELETE_ORDER = ["roles", "profiles", "threads", "messages", "users"];
+// payments/notifications are ordered before profiles/users so dependent rows go
+// first. payment_events needs no slot of its own: payment_id is
+// REFERENCES payments(id) ON DELETE CASCADE, so the PK-scoped payment delete
+// removes its event rows atomically.
+const DEFAULT_DELETE_ORDER = ["roles", "payments", "notifications", "profiles", "threads", "messages", "users"];
 
 export function createCleanupGuard(options = {}) {
   const {
@@ -54,6 +60,7 @@ export function createCleanupGuard(options = {}) {
     modeEnv = process.env.SLMM_TEST_MODE,
     scratchEmailPattern = DEFAULT_SCRATCH_EMAIL_RE,
     baselineThreadIds = new Set(),
+    baselinePaymentIds = new Set(),
     knownProductionUserIds = new Set(),
     deleter = null,
     logger = console,
@@ -66,12 +73,17 @@ export function createCleanupGuard(options = {}) {
     roles: new Set(),    // role UUIDs created THIS run
     threads: new Set(),  // support_thread UUIDs created THIS run
     messages: new Set(), // support_message UUIDs created THIS run
+    payments: new Set(), // payment UUIDs created THIS run
+    notifications: new Set(), // notification UUIDs created THIS run
   };
   const userEmail = new Map();      // userId -> email recorded at creation
   const userMarkerOk = new Map();   // userId -> matches scratch email pattern
   const threadOwner = new Map();    // threadId -> ownerUserId
-  const messageOwner = new Map();   // messageId -> ownerUserId (scratch thread owner)
+  const messageOwner = new Map();    // messageId -> ownerUserId (scratch thread owner)
+  const paymentOwner = new Map();   // paymentId -> ownerUserId
+  const notificationOwner = new Map(); // notificationId -> ownerUserId
   const baselineThreads = new Set(baselineThreadIds);
+  const baselinePayments = new Set(baselinePaymentIds);
   const externalProposals = [];     // rows offered from lookups/filters; never deletable
 
   const isTestModeActive = () => modeEnv === "true";
@@ -122,6 +134,36 @@ export function createCleanupGuard(options = {}) {
     created.messages.add(id);
     return true;
   }
+  // A payment may only be attributed to a scratch user created THIS run. This
+  // mirrors recordThread(): an explicit owner is mandatory for live runs, and an
+  // ownerless payment is always refused at evaluation (fail-closed). A payment
+  // id that existed before this run is refused even if it was recorded.
+  function recordPayment(id, ownerUserId) {
+    if (!id) return false;
+    if (ownerUserId !== undefined) {
+      if (!created.users.has(ownerUserId)) {
+        throw new Error(`refusing to register payment ${id}: owner ${ownerUserId} is not a scratch user created by this run`);
+      }
+      paymentOwner.set(id, ownerUserId);
+    }
+    created.payments.add(id);
+    return true;
+  }
+  // Notifications carry no foreign key to the user, so nothing cascades them
+  // when the scratch profile is deleted. They must be registered explicitly or
+  // they would be orphaned in production, so the same fail-closed owner rule
+  // applies.
+  function recordNotification(id, ownerUserId) {
+    if (!id) return false;
+    if (ownerUserId !== undefined) {
+      if (!created.users.has(ownerUserId)) {
+        throw new Error(`refusing to register notification ${id}: owner ${ownerUserId} is not a scratch user created by this run`);
+      }
+      notificationOwner.set(id, ownerUserId);
+    }
+    created.notifications.add(id);
+    return true;
+  }
 
   // --- evaluation -----------------------------------------------------------
   function evaluateRow(kind, id, opts = {}) {
@@ -160,6 +202,23 @@ export function createCleanupGuard(options = {}) {
         reasons.push("message has no scratch owner recorded - cannot prove it belongs to a scratch thread of this run");
       } else if (!created.users.has(owner)) {
         reasons.push("message owner is not a scratch user created by this run");
+      }
+    }
+    if (kind === "payments") {
+      if (baselinePayments.has(id)) reasons.push("payment id existed before this test run (baseline)");
+      const owner = paymentOwner.get(id);
+      if (!owner) {
+        reasons.push("payment has no scratch owner recorded - cannot prove it was created by this run");
+      } else if (!created.users.has(owner)) {
+        reasons.push("payment owner is not a scratch user created by this run");
+      }
+    }
+    if (kind === "notifications") {
+      const owner = notificationOwner.get(id);
+      if (!owner) {
+        reasons.push("notification has no scratch owner recorded - cannot prove it belongs to a scratch user of this run");
+      } else if (!created.users.has(owner)) {
+        reasons.push("notification owner is not a scratch user created by this run");
       }
     }
     return { kind, id, allowed: reasons.length === 0, reasons };
@@ -206,6 +265,8 @@ export function createCleanupGuard(options = {}) {
         roles: created.roles.size,
         threads: created.threads.size,
         messages: created.messages.size,
+        payments: created.payments.size,
+        notifications: created.notifications.size,
       },
     };
   }
@@ -222,6 +283,8 @@ export function createCleanupGuard(options = {}) {
       `Scratch roles created:    ${e.counts.roles}`,
       `Scratch threads created:  ${e.counts.threads}`,
       `Scratch messages created: ${e.counts.messages}`,
+      `Scratch payments created:  ${e.counts.payments}`,
+      `Scratch notifs created:    ${e.counts.notifications}`,
       "Rows eligible for cleanup:",
     ];
     if (e.rows.length === 0) {
@@ -293,8 +356,11 @@ export function createCleanupGuard(options = {}) {
   return {
     testRunId,
     recordUser, recordProfile, recordRole, recordThread, recordMessage,
+    recordPayment, recordNotification,
     getMessageOwner: (id) => messageOwner.get(id),
     getThreadOwner: (id) => threadOwner.get(id),
+    getPaymentOwner: (id) => paymentOwner.get(id),
+    getNotificationOwner: (id) => notificationOwner.get(id),
     proposeExternal,
     evaluateRow: (kind, id, opts) => evaluateRow(kind, id, opts),
     plan,

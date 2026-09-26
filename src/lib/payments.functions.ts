@@ -206,10 +206,19 @@ export const reviewPayment = createServerFn({ method: "POST" })
         verified_at: data.decision === "verified" ? new Date().toISOString() : null,
       })
       .eq("id", data.paymentId)
+      // The status guard belongs on the write itself, not only on the UI that
+      // offers review actions for 'submitted' rows: without it an admin
+      // session could re-drive an already-decided payment back to 'verified',
+      // re-extending membership, and would do so silently because the
+      // payment_events insert is ignoreDuplicates-guarded. This predicate is
+      // evaluated inside the same UPDATE, so it also acts as the compare-and-
+      // swap that keeps 'verified' and 'rejected' terminal here, matching the
+      // claim predicate verify_payment() already uses.
+      .eq("status", "submitted")
       .select("user_id, item, amount_inr, verified_at")
       .maybeSingle();
     if (error) throw new Error(error.message);
-    if (!payment) throw new Error("Payment not found");
+    if (!payment) throw new Error("Payment is not awaiting review");
 
     if (data.decision === "verified" && (payment.item === "standard" || payment.item === "premium")) {
       const validUntil = new Date();
