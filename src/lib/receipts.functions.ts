@@ -298,6 +298,7 @@ export async function processPendingPaymentDeliveries(opts?: {
         .in("receipt_status", ["pending", "failed"])
         .eq("receipt_attempts", row.receipt_attempts ?? 0)
         .is("receipt_key", null)
+        .select("payment_id,user_id,item,amount_inr,gateway_order_id,gateway_payment_id,verified_at")
         .maybeSingle();
       if (!claimed) continue;
 
@@ -334,6 +335,7 @@ export async function processPendingPaymentDeliveries(opts?: {
           })
           .eq("payment_id", claimed.payment_id)
           .is("receipt_key", null)
+          .select("payment_id")
           .maybeSingle();
         if (committed) receipts++;
       } catch (err) {
@@ -356,6 +358,7 @@ export async function processPendingPaymentDeliveries(opts?: {
         .eq("payment_id", row.payment_id)
         .in("notification_status", ["pending", "failed"])
         .eq("notification_attempts", row.notification_attempts ?? 0)
+        .select("payment_id,user_id,item,amount_inr,verified_at")
         .maybeSingle();
       if (!claimed) continue;
 
