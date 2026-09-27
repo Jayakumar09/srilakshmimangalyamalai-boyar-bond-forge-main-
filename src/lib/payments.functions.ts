@@ -229,7 +229,17 @@ export const reviewPayment = createServerFn({ method: "POST" })
           membership_plan: payment.item,
           plan_valid_until: validUntil.toISOString().slice(0, 10),
         })
-        .eq("id", payment.user_id);
+        .eq("id", payment.user_id)
+        .then(({ error }) => {
+          // PostgREST reports a rejected write (for example the admin
+          // membership-plan guard answering 42501) in the returned error
+          // instead of throwing, so an unchecked update let this handler
+          // answer { ok: true } for a payment that granted no membership
+          // at all. The payment itself stays terminally 'verified' -- it is
+          // not rolled back here -- but the failure is now surfaced so the
+          // admin never sees a false "Payment verified" confirmation.
+          if (error) throw new Error(error.message);
+        });
     }
 
     // Both verification paths must produce the authoritative PAYMENT_VERIFIED
