@@ -271,6 +271,8 @@ export function ProfileReviewDialog({
   const [idFile, setIdFile] = useState<File | null>(null);
   const [divorceFile, setDivorceFile] = useState<File | null>(null);
   const [idKind, setIdKind] = useState("Aadhaar");
+  const [rejecting, setRejecting] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
 
   const docs = d.docs.filter((x) => x.user_id === profile.id);
   const payment = d.payments.find((x) => x.user_id === profile.id);
@@ -471,6 +473,21 @@ export function ProfileReviewDialog({
     if (!text) return;
     const ok = await d.requestCorrection(profile.id, text);
     if (ok) toast.success(t("adm_correction_sent"));
+  }
+
+  function closeReject() {
+    setRejecting(false);
+    setRejectReason("");
+  }
+
+  function confirmReject() {
+    const trimmedReason = rejectReason.trim();
+    if (!trimmedReason) {
+      toast.error(t("custom_value_required"));
+      return;
+    }
+    closeReject();
+    void d.decideProfile(profile.id, "rejected", trimmedReason);
   }
 
   return (
@@ -726,10 +743,7 @@ export function ProfileReviewDialog({
               <Button
                 size="sm"
                 variant="destructive"
-                onClick={() => {
-                  if (window.confirm(t("adm_confirm_reject")))
-                    void d.decideProfile(profile.id, "rejected", null);
-                }}
+                onClick={() => setRejecting(true)}
               >
                 {t("reject")}
               </Button>
@@ -752,6 +766,44 @@ export function ProfileReviewDialog({
           )}
         </div>
       </div>
+
+      {rejecting && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-foreground/40 p-4">
+          <div className="w-full max-w-md space-y-4 rounded-xl border border-border bg-card p-4 shadow-lg">
+            <h3 className="font-display text-base font-semibold">{t("adm_confirm_reject")}</h3>
+            <div>
+              <Label className="mb-1.5 block text-sm" htmlFor="adm_reject_reason">
+                Rejection reason
+              </Label>
+              <Textarea
+                id="adm_reject_reason"
+                rows={4}
+                maxLength={1000}
+                autoFocus
+                required
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+              />
+              {rejectReason.length > 0 && rejectReason.trim().length === 0 && (
+                <p className="mt-1 text-xs text-destructive">{t("custom_value_required")}</p>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="ghost" disabled={saving || d.busy} onClick={closeReject}>
+                {t("cancel")}
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={saving || d.busy || rejectReason.trim().length === 0}
+                onClick={confirmReject}
+              >
+                {t("reject")}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
