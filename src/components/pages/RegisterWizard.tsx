@@ -42,6 +42,32 @@ type Form = Record<string, string>;
 
 const STEPS = ["step_basic", "step_contact", "step_edu", "step_family", "step_pref", "step_docs"];
 
+/**
+ * Typed fields that render a red asterisk, per step. Enforced at every step
+ * boundary and again before submit so an incomplete profile can never be saved.
+ * Documents and Terms are validated separately in submitAll().
+ */
+const REQUIRED_BY_STEP: string[][] = [
+  ["full_name", "gender", "date_of_birth", "marital_status", "caste", "sub_caste"],
+  ["phone"],
+  ["education_level"],
+  [],
+  [],
+  [],
+];
+
+/** Existing i18n label for each required field, used to name what is missing. */
+const REQUIRED_LABEL: Record<string, string> = {
+  full_name: "full_name",
+  gender: "gender",
+  date_of_birth: "dob",
+  marital_status: "marital_status",
+  caste: "caste",
+  sub_caste: "sub_caste",
+  phone: "phone",
+  education_level: "education_level",
+};
+
 export function RegisterWizard() {
   const { t, lang } = useI18n();
   const navigate = useNavigate();
@@ -266,7 +292,37 @@ export function RegisterWizard() {
     }
   }
 
+  /** Keys of required fields still empty across steps 0..`upTo`. */
+  function missingRequiredFields(upTo: number) {
+    return REQUIRED_BY_STEP.slice(0, upTo + 1)
+      .flat()
+      .filter((key) => !(form[key] ?? "").trim());
+  }
+
+  function reportMissingRequired(missing: string[]) {
+    toast.error(
+      `${t("msg_required_fields")} ${missing.map((k) => t(REQUIRED_LABEL[k] ?? k)).join(", ")}`,
+    );
+  }
+
+  /** Moving forwards is blocked while an earlier step is incomplete; back is always free. */
+  function goToStep(target: number) {
+    if (target > step) {
+      const missing = missingRequiredFields(target - 1);
+      if (missing.length) {
+        reportMissingRequired(missing);
+        return;
+      }
+    }
+    setStep(target);
+  }
+
   async function submitAll() {
+    const missing = missingRequiredFields(STEPS.length - 1);
+    if (missing.length) {
+      reportMissingRequired(missing);
+      return;
+    }
     if (!consent) {
       toast.error(t("msg_consent_required"));
       return;
@@ -424,7 +480,7 @@ export function RegisterWizard() {
             <button
               key={s}
               type="button"
-              onClick={() => setStep(i)}
+              onClick={() => goToStep(i)}
               className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
                 i === step
                   ? "border-primary bg-primary text-primary-foreground"
@@ -833,7 +889,7 @@ export function RegisterWizard() {
                 {t("save")}
               </Button>
               {step < STEPS.length - 1 && (
-                <Button type="button" onClick={() => setStep((s) => s + 1)}>
+                <Button type="button" onClick={() => goToStep(step + 1)}>
                   {t("next")}
                 </Button>
               )}

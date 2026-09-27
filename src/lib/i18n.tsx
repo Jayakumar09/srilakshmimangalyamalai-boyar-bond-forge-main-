@@ -362,6 +362,10 @@ export const dict: Dict = {
   ai_id_readable: { en: "ID readable", ta: "அடையாளம் படிக்கக்கூடியது" },
   ai_photo_clear: { en: "Photo clear", ta: "புகைப்படம் தெளிவானது" },
   msg_signin_again: { en: "Please sign in again.", ta: "மீண்டும் உள்நுழையவும்." },
+  msg_required_fields: {
+    en: "Please complete the required fields:",
+    ta: "தேவையான புலங்களை நிரப்பவும்:",
+  },
   msg_name_required: {
     en: "Please enter your name before saving.",
     ta: "சேமிப்பதற்கு முன் உங்கள் பெயரை உள்ளிடவும்.",
