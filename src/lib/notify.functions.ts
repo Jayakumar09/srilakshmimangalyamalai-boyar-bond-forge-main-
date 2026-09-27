@@ -141,6 +141,7 @@ export const notifyApprovalChanged = createServerFn({ method: "POST" })
         body: `${data.fullName} was marked ${data.status}.${data.note ? ` Note: ${data.note}` : ""}${cpid ? `\nClient Profile ID: ${cpid}` : ""}`,
         email_to: ADMIN_EMAIL,
         related_user_id: data.memberId,
+        dedupeKey: `approval-changed-${data.memberId}-${data.status}`,
       },
     ];
     if (data.memberEmail) {
@@ -156,9 +157,10 @@ export const notifyApprovalChanged = createServerFn({ method: "POST" })
             : `Dear ${data.fullName}, your profile could not be approved at this time.${data.note ? ` Reason: ${data.note}` : ""} You may correct the details and submit again.`,
         email_to: data.memberEmail,
         related_user_id: data.memberId,
+        dedupeKey: `approval-changed-member-${data.memberId}-${data.status}`,
       });
     }
-    await deliver(alerts);
+    await deliver(alerts, { dedupe: true });
     return { ok: true };
   });
 
