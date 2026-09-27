@@ -287,12 +287,29 @@ export function useAdminData() {
   const decideProfile = useCallback(
     async (id: string, status: "approved" | "rejected", note: string | null) => {
       const member = profiles.find((r) => r.id === id);
-      const { error } = await supabase
-        .from("profiles")
-        .update({ status, admin_notes: note })
-        .eq("id", id);
+      const { data, error } = await (supabase as any).rpc("decide_profile_approval", {
+        p_profile_id: id,
+        p_status: status,
+        p_rejection_reason: note,
+      });
       if (error) {
         toast.error(error.message);
+        return;
+      }
+      const result = (data as any[])?.[0];
+      if (result?.error_code) {
+        const messages: Record<string, string> = {
+          unauthenticated: "You must be logged in to perform this action",
+          forbidden: "Only admins can approve or reject profiles",
+          not_found: "Profile not found",
+          already_processed: "This profile has already been processed",
+          self_approval_blocked: "Admins cannot approve or reject their own profile",
+        };
+        toast.error(messages[result.error_code] ?? "Action not permitted");
+        return;
+      }
+      if (!result?.profile_id) {
+        toast.error("Unexpected response from server");
         return;
       }
       try {
