@@ -7,6 +7,13 @@ export type PayItem = keyof typeof PRICES;
 
 const ItemSchema = z.enum(["standard", "premium", "jathagam"]);
 
+// The outbox insert in reviewPayment is the one step whose loss is
+// unrecoverable, and the one step that can fail for reasons unrelated to a
+// rejected write. Bounded attempts keep a transient storage fault from
+// stranding an already-verified payment.
+const OUTBOX_INSERT_ATTEMPTS = 3;
+const OUTBOX_RETRY_DELAY_MS = 250;
+
 /** Creates a Razorpay order and a matching pending payment row. */
 export const createPaymentOrder = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -245,6 +252,16 @@ export const reviewPayment = createServerFn({ method: "POST" })
     // Both verification paths must produce the authoritative PAYMENT_VERIFIED
     // event. Guarded insert (unique payment_id): a repeated admin verification
     // never creates a duplicate event.
+    //
+    // Ordering matters: by this point the payment is terminally 'verified' and
+    // the plan is already active, and neither write can be replayed because
+    // the status guard only claims 'submitted' rows. This event row is also the
+    // only thing receipt/notification delivery reads, and
+    // retryPaymentDeliveries can only recover an event that exists -- so a lost
+    // insert used to leave the payment verified with no receipt, no
+    // notification and no way to repair it short of a manual database write,
+    // all behind a raw storage error that read as if the verification itself
+    // had failed.
     if (data.decision === "verified") {
       const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
       const evClient = (supabaseAdmin as unknown as {
@@ -255,20 +272,36 @@ export const reviewPayment = createServerFn({ method: "POST" })
           opts?: { ignoreDuplicates?: boolean },
         ): Promise<{ error: { message: string } | null }>;
       };
-      const { error: evError } = await evClient.insert(
-        {
-          payment_id: data.paymentId,
-          user_id: payment.user_id,
-          item: payment.item,
-          amount_inr: payment.amount_inr,
-          kind: "PAYMENT_VERIFIED",
-          gateway_order_id: null,
-          gateway_payment_id: null,
-          verified_at: payment.verified_at,
-        },
-        { ignoreDuplicates: true },
-      );
-      if (evError) throw new Error(evError.message);
+      const event = {
+        payment_id: data.paymentId,
+        user_id: payment.user_id,
+        item: payment.item,
+        amount_inr: payment.amount_inr,
+        kind: "PAYMENT_VERIFIED",
+        gateway_order_id: null,
+        gateway_payment_id: null,
+        verified_at: payment.verified_at,
+      };
+      // Every field is derived from the row this handler just claimed, and
+      // unique(payment_id) turns a duplicate into a no-op, so retrying cannot
+      // double-write and cannot undo an attempt that already succeeded.
+      let evError: { message: string } | null = null;
+      for (let attempt = 1; attempt <= OUTBOX_INSERT_ATTEMPTS; attempt += 1) {
+        evError = (await evClient.insert(event, { ignoreDuplicates: true })).error;
+        if (!evError) break;
+        if (attempt < OUTBOX_INSERT_ATTEMPTS) {
+          await new Promise((resolve) => setTimeout(resolve, OUTBOX_RETRY_DELAY_MS * attempt));
+        }
+      }
+      if (evError) {
+        // The completed transition is deliberately not rolled back here, so
+        // the failure is reported with its real consequence instead of the bare
+        // storage message: the payment stands, membership stands, and what is
+        // missing is the receipt/notification event this payment now needs.
+        throw new Error(
+          `Payment ${data.paymentId} is verified and the membership plan is active, but its receipt/notification event could not be recorded (${evError.message}). No receipt or notification will be sent for this payment until that event row is created, and re-running this review cannot create it because the payment is no longer awaiting review.`,
+        );
+      }
 
       // Receipt + notification delivery is downstream, best-effort and never
       // blocks or reverses the completed verification.
