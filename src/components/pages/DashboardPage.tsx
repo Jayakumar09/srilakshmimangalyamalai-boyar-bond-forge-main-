@@ -24,6 +24,7 @@ import {
   MAX_PHOTOS_PER_PROFILE,
   MAX_PROFILE_STORAGE_BYTES,
 } from "@/lib/compress";
+import { ID_KINDS } from "@/lib/profile-options";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
 import { Button } from "@/components/ui/button";
@@ -72,6 +73,13 @@ export function DashboardPage() {
   const [removing, setRemoving] = useState(false);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const registerHref = lang === "ta" ? "/ta/register" : "/register";
+  // Label for a persisted document type. Falls back to the stored value so a
+  // kind that predates ID_KINDS is shown verbatim rather than hidden.
+  const docKindLabel = (raw: string | null) => {
+    if (!raw) return null;
+    const opt = ID_KINDS.find((k) => k.v === raw);
+    return opt ? t(opt.labelKey) : raw;
+  };
 
   const loadDocs = async (userId: string) => {
     setDocsLoading(true);
@@ -644,8 +652,12 @@ export function DashboardPage() {
                                   onClick={() => openFile(doc.storage_key)}
                                 >
                                   <FileText className="mr-1 inline size-4 align-[-2px]" />
-                                  {doc.file_name ||
-                                    `${t("docLabel")}${doc.id_kind ? ` (${doc.id_kind})` : ""}`}
+                                  {doc.id_kind && (
+                                    <span className="font-semibold text-foreground">
+                                      {docKindLabel(doc.id_kind)} ·{" "}
+                                    </span>
+                                  )}
+                                  {doc.file_name || t("docLabel")}
                                 </button>
                                 <p className="mt-0.5 text-xs text-muted-foreground">
                                   {doc.mime_type ?? "—"} · {formatBytes(doc.size_bytes ?? 0)} ·{" "}
