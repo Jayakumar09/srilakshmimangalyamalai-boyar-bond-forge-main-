@@ -22,6 +22,8 @@ import {
   friendlyUploadError,
   formatBytes,
   MAX_PHOTOS_PER_PROFILE,
+  MAX_DOCS_PER_PROFILE,
+  MAX_TOTAL_FILES_PER_PROFILE,
   MAX_PROFILE_STORAGE_BYTES,
 } from "@/lib/compress";
 import { ID_KINDS } from "@/lib/profile-options";
@@ -72,6 +74,8 @@ export function DashboardPage() {
   const [photoUploading, setPhotoUploading] = useState(false);
   const [removing, setRemoving] = useState(false);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const docInputRef = useRef<HTMLInputElement | null>(null);
+  const [docKind, setDocKind] = useState("Aadhaar");
   const registerHref = lang === "ta" ? "/ta/register" : "/register";
   // Label for a persisted document type. Falls back to the stored value so a
   // kind that predates ID_KINDS is shown verbatim rather than hidden.
@@ -310,6 +314,42 @@ export function DashboardPage() {
       toast.error(friendlyUploadError(err, t));
     } finally {
       setPhotoUploading(false);
+    }
+  };
+
+  const addDocument = async (file: File) => {
+    if (docRows.length >= MAX_DOCS_PER_PROFILE) {
+      toast.error(t("msg_limit_docs"));
+      return;
+    }
+    if (docRows.length + photos.length >= MAX_TOTAL_FILES_PER_PROFILE) {
+      toast.error(t("msg_limit_total_files"));
+      return;
+    }
+    if (usedBytes + file.size > MAX_PROFILE_STORAGE_BYTES) {
+      toast.error(t("msg_limit_storage"));
+      return;
+    }
+    setUploading(true);
+    try {
+      const up = await uploadToR2(file, "govt_id");
+      const { error } = await supabase.from("documents").insert({
+        user_id: userId ?? (profile?.["id"] as string),
+        doc_type: "govt_id",
+        id_kind: docKind,
+        storage_key: up.key,
+        file_name: up.fileName,
+        mime_type: up.mimeType,
+        size_bytes: up.sizeBytes,
+        ai_check_status: "not_run",
+      });
+      if (error) throw error;
+      toast.success(t("adm_uploaded"));
+      if (userId) await loadDocs(userId);
+    } catch (err) {
+      toast.error(friendlyUploadError(err, t));
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -634,105 +674,107 @@ export function DashboardPage() {
                       </div>
                     )}
 
-                    {docRows.length > 0 && (
-                      <div className="break-inside-avoid">
-                        <h4 className="font-display text-sm font-semibold text-foreground sm:text-base">
-                          {t("upl_docs_title")}
-                        </h4>
-                        <ul className="mt-2 space-y-1.5">
-                          {docRows.map((doc) => (
-                            <li
-                              key={doc.id}
-                              className="break-inside-avoid flex items-start justify-between gap-3 rounded-md border border-border p-2.5 text-sm"
-                            >
-                              <div className="min-w-0">
-                                <button
-                                  type="button"
-                                  className="block max-w-full truncate py-3 text-left font-medium text-primary hover:underline"
-                                  onClick={() => openFile(doc.storage_key)}
-                                >
-                                  <FileText className="mr-1 inline size-4 align-[-2px]" />
-                                  {doc.id_kind && (
-                                    <span className="font-semibold text-foreground">
-                                      {docKindLabel(doc.id_kind)} ┬╖{" "}
-                                    </span>
-                                  )}
-                                  {doc.file_name || t("docLabel")}
-                                </button>
-                                <p className="mt-0.5 text-xs text-muted-foreground">
-                                  {doc.mime_type ?? "ΓÇö"} ┬╖ {formatBytes(doc.size_bytes ?? 0)} ┬╖{" "}
-                                  {t("upl_uploaded_on")}{" "}
-                                  {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : "ΓÇö"} ┬╖{" "}
-                                  {doc.verified ? t("yes") : t("unverified")}
-                                </p>
-                              </div>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                className="print:hidden min-h-11 shrink-0"
-                                disabled={removing}
-                                onClick={() => removeFile(doc)}
+                    <div className="break-inside-avoid">
+                      <h4 className="font-display text-sm font-semibold text-foreground sm:text-base">
+                        {t("upl_docs_title")}
+                      </h4>
+                      {docRows.length > 0 ? (
+                        <>
+                          <ul className="mt-2 space-y-1.5">
+                            {docRows.map((doc) => (
+                              <li
+                                key={doc.id}
+                                className="break-inside-avoid flex items-start justify-between gap-3 rounded-md border border-border p-2.5 text-sm"
                               >
-                                <Trash2 className="mr-1 size-3.5" />
-                                {t("delete")}
-                              </Button>
-                            </li>
-                          ))}
-                        </ul>
-                        <p className="print:hidden mt-3 text-xs text-muted-foreground">
-                          {t("upl_storage_used_pre")}: {formatBytes(usedBytes)} /{" "}
-                          {formatBytes(MAX_PROFILE_STORAGE_BYTES)}
-                        </p>
-                      </div>
-                    )}
+                                <div className="min-w-0">
+                                  <button
+                                    type="button"
+                                    className="block max-w-full truncate py-3 text-left font-medium text-primary hover:underline"
+                                    onClick={() => openFile(doc.storage_key)}
+                                  >
+                                    <FileText className="mr-1 inline size-4 align-[-2px]" />
+                                    {doc.id_kind && (
+                                      <span className="font-semibold text-foreground">
+                                        {docKindLabel(doc.id_kind)} ┬╖{" "}
+                                      </span>
+                                    )}
+                                    {doc.file_name || t("docLabel")}
+                                  </button>
+                                  <p className="mt-0.5 text-xs text-muted-foreground">
+                                    {doc.mime_type ?? "ΓÇö"} ┬╖ {formatBytes(doc.size_bytes ?? 0)} ┬╖{" "}
+                                    {t("upl_uploaded_on")}{" "}
+                                    {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : "ΓÇö"} ┬╖{" "}
+                                    {doc.verified ? t("yes") : t("unverified")}
+                                  </p>
+                                </div>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="print:hidden min-h-11 shrink-0"
+                                  disabled={removing}
+                                  onClick={() => removeFile(doc)}
+                                >
+                                  <Trash2 className="mr-1 size-3.5" />
+                                  {t("delete")}
+                                </Button>
+                              </li>
+                            ))}
+                          </ul>
+                          <p className="print:hidden mt-3 text-xs text-muted-foreground">
+                            {t("upl_storage_used_pre")}: {formatBytes(usedBytes)} /{" "}
+                            {formatBytes(MAX_PROFILE_STORAGE_BYTES)}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">{t("upl_no_docs")}</p>
+                      )}
 
-                    {photos.length === 0 && docRows.length === 0 && (
-                      <p className="text-sm text-muted-foreground">{t("upl_no_docs")}</p>
-                    )}
+                      {/* Controls - moved inside documents section */}
+                      <div className="print:hidden mt-4 flex flex-wrap items-center gap-2">
+                        <span className="text-xs text-muted-foreground">{t("id_kind")}:</span>
+                        <select
+                          className="min-h-11 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+                          value={docKind}
+                          aria-label={t("id_kind")}
+                          onChange={(e) => setDocKind(e.target.value)}
+                        >
+                          {ID_KINDS.map((k) => (
+                            <option key={k.v} value={k.v}>
+                              {t(k.labelKey)}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          className="flex min-h-11 items-center gap-1.5 rounded-md border border-dashed border-border px-3 py-1.5 text-sm text-muted-foreground hover:bg-secondary/40"
+                          onClick={() => docInputRef.current?.click()}
+                          disabled={uploading}
+                        >
+                          {uploading ? (
+                            <span className="text-xs">{t("uploading_label")}</span>
+                          ) : (
+                            <>
+                              <Plus className="size-4" />
+                              <span>{t("upl_add_doc")}</span>
+                            </>
+                          )}
+                        </button>
+                        <input
+                          ref={docInputRef}
+                          type="file"
+                          accept="image/jpeg,image/png,application/pdf"
+                          className="hidden"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) void addDocument(f);
+                            e.target.value = "";
+                          }}
+                        />
+                      </div>
+</div>
                   </div>
                 )}
-                  <div className="print:hidden mt-4 flex flex-wrap items-center gap-2">
-                                      <span className="text-xs text-muted-foreground">{t("id_kind")}:</span>
-                                      <select
-                                        className="min-h-11 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-                                        value={docKind}
-                                        aria-label={t("id_kind")}
-                                        onChange={(e) => setDocKind(e.target.value)}
-                                      >
-                                        {ID_KINDS.map((k) => (
-                                          <option key={k.v} value={k.v}>
-                                            {t(k.labelKey)}
-                                          </option>
-                                        ))}
-                                      </select>
-                                      <button
-                                        type="button"
-                                        className="flex min-h-11 items-center gap-1.5 rounded-md border border-dashed border-border px-3 py-1.5 text-sm text-muted-foreground hover:bg-secondary/40"
-                                        onClick={() => docInputRef.current?.click()}
-                                        disabled={uploading}
-                                      >
-                                        {uploading ? (
-                                          <span className="text-xs">{t("uploading_label")}</span>
-                                        ) : (
-                                          <>
-                                            <Plus className="size-4" />
-                                            <span>{t("upl_add_doc")}</span>
-                                          </>
-                                        )}
-                                      </button>
-                                      <input
-                                        ref={docInputRef}
-                                        type="file"
-                                        accept="image/jpeg,image/png,application/pdf"
-                                        className="hidden"
-                                        onChange={(e) => {
-                                          const f = e.target.files?.[0];
-                                          if (f) void addDocument(f);
-                                          e.target.value = "";
-                                        }}
-                                      />
-                                    </div>
 </section>
             </article>
           </>
