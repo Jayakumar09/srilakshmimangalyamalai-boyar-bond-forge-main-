@@ -252,10 +252,25 @@ export function DashboardPage() {
     !submitted ? FileEdit : status === "approved" ? CheckCircle2 : status === "rejected" ? XCircle : Clock;
 
   const openFile = async (key: string) => {
+    // iOS Safari only honours window.open() while the call is still inside the
+    // user's tap. createViewUrl() is a network-backed, authenticated server
+    // function, so awaiting it first loses the gesture and Safari can silently
+    // drop the new tab. Claim the tab synchronously, then aim it at the signed
+    // URL. The features string is left empty on purpose: "noopener" makes
+    // Chrome return null for the handle even when the tab does open, which
+    // would make the blocked-popup branch below unreachable in every browser.
+    // Clearing .opener is the equivalent protection and survives the navigation.
+    const viewWindow = window.open("about:blank", "_blank");
+    if (!viewWindow) {
+      toast.error(t("msg_something_wrong"));
+      return;
+    }
+    viewWindow.opener = null;
     try {
       const { url } = await createViewUrl({ data: { key } });
-      window.open(url, "_blank", "noopener");
+      viewWindow.location.href = url;
     } catch (err) {
+      viewWindow.close();
       toast.error(friendlyUploadError(err, t));
     }
   };
