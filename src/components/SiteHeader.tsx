@@ -70,6 +70,15 @@ export function SiteHeader() {
     setMenuOpen(false);
   }, [pathname]);
 
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [menuOpen]);
+
   const closeMenu = useCallback(() => setMenuOpen(false), []);
 
   async function signOut() {
@@ -238,7 +247,7 @@ export function SiteHeader() {
         <Button
           variant="ghost"
           size="icon"
-          className="md:hidden"
+          className="h-11 w-11 md:hidden"
           aria-label="Menu"
           aria-expanded={menuOpen}
           aria-controls="site-header-mobile-nav"
@@ -251,8 +260,8 @@ export function SiteHeader() {
       {menuOpen && (
         <div id="site-header-mobile-nav" className="border-t border-border/70 md:hidden">
           <div className="mx-auto flex max-w-6xl flex-col items-start gap-1 px-4 py-3">
-            <LanguageToggle className="mb-1" />
-            {renderNav("w-full justify-start")}
+            <LanguageToggle className="mb-1 [&_a]:inline-flex [&_a]:h-11 [&_a]:items-center" />
+            {renderNav("h-11 w-full justify-start")}
           </div>
         </div>
       )}
