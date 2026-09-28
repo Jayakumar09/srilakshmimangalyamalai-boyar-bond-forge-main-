@@ -66,6 +66,9 @@ export function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [docsLoading, setDocsLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  // Uploading is the document-side flag; photos track their own so an in-flight
+  // document upload can no longer disable the Add Photo tile, or vice versa.
+  const [photoUploading, setPhotoUploading] = useState(false);
   const [removing, setRemoving] = useState(false);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const registerHref = lang === "ta" ? "/ta/register" : "/register";
@@ -280,7 +283,7 @@ export function DashboardPage() {
       toast.error(t("msg_limit_photos"));
       return;
     }
-    setUploading(true);
+    setPhotoUploading(true);
     try {
       const up = await uploadToR2(file, "photo");
       const { error } = await supabase.from("documents").insert({
@@ -298,7 +301,7 @@ export function DashboardPage() {
     } catch (err) {
       toast.error(friendlyUploadError(err, t));
     } finally {
-      setUploading(false);
+      setPhotoUploading(false);
     }
   };
 
@@ -592,9 +595,9 @@ export function DashboardPage() {
                               type="button"
                               className="print:hidden flex aspect-[3/4] w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border text-sm text-muted-foreground hover:bg-secondary/40 sm:w-24"
                               onClick={() => photoInputRef.current?.click()}
-                              disabled={uploading}
+                              disabled={photoUploading}
                             >
-                              {uploading ? (
+                              {photoUploading ? (
                                 <span className="text-xs">{t("uploading_label")}</span>
                               ) : (
                                 <>
