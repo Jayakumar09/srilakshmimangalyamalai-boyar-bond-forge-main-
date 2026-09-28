@@ -511,11 +511,13 @@ export function DashboardPage() {
 
                 {docsLoading ? (
                   <p className="mt-4 text-sm text-muted-foreground">…</p>
-                ) : photos.length === 0 && docRows.length === 0 ? (
-                  <p className="mt-4 text-sm text-muted-foreground">{t("upl_no_docs")}</p>
                 ) : (
                   <div className="mt-4 space-y-6">
-                    {photos.length > 0 && (
+                    {/* Rendered even with zero photos: the Add Photo tile and its
+                        file input live inside this section, so hiding it would strand
+                        a client who deleted their only photo with no way to add one.
+                        Individual thumbnails stay conditional via the photos.map below. */}
+                    {(photos.length > 0 || photos.length < MAX_PHOTOS_PER_PROFILE) && (
                       <div className="break-inside-avoid">
                         <div className="flex items-baseline justify-between gap-2">
                           <h4 className="font-display text-sm font-semibold text-foreground sm:text-base">
@@ -653,6 +655,10 @@ export function DashboardPage() {
                           {formatBytes(MAX_PROFILE_STORAGE_BYTES)}
                         </p>
                       </div>
+                    )}
+
+                    {photos.length === 0 && docRows.length === 0 && (
+                      <p className="text-sm text-muted-foreground">{t("upl_no_docs")}</p>
                     )}
                   </div>
                 )}
