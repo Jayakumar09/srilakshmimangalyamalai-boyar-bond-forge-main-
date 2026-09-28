@@ -71,6 +71,12 @@ function syncRole() {
     return;
   }
   const gen = generation;
+  // The user this request was issued for. A reply only counts if that is still
+  // the signed-in user: the session can change (user A -> user B, or a sign-out)
+  // while the request is in flight, and the generation above does not change for
+  // that, so without this an admin's late reply would mark the next user - or a
+  // signed-out client - as an admin.
+  const reqUserId = userId;
   emit({ roleReady: false });
   void supabase
     .from("user_roles")
@@ -80,6 +86,7 @@ function syncRole() {
     .maybeSingle()
     .then(({ data }) => {
       if (gen !== generation) return;
+      if (state.session?.user?.id !== reqUserId) return;
       emit({ isAdmin: Boolean(data), roleReady: true });
     });
 }
