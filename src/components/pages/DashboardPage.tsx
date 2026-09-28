@@ -570,7 +570,7 @@ export function DashboardPage() {
                                 <button
                                   type="button"
                                   title={t("adm_view")}
-                                  className="rounded-full bg-black/60 p-1 text-white hover:bg-black/80"
+                                  className="rounded-full bg-black/60 p-1.5 text-white hover:bg-black/80"
                                   onClick={() => openFile(photo.storage_key)}
                                 >
                                   <ExternalLink className="size-3" />
@@ -578,7 +578,7 @@ export function DashboardPage() {
                                 <button
                                   type="button"
                                   title={t("delete")}
-                                  className="rounded-full bg-destructive/80 p-1 text-white hover:bg-destructive"
+                                  className="rounded-full bg-destructive/80 p-1.5 text-white hover:bg-destructive"
                                   disabled={removing}
                                   onClick={() => removeFile(photo)}
                                 >
