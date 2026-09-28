@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import {
   Clock,
   CheckCircle2,
@@ -116,7 +116,7 @@ export function DashboardPage() {
       // No authenticated user. The route guard normally redirects before this
       // page renders, so reaching here is a race (token expired or revoked while
       // the page was loading) rather than a real session. Clear loading so the
-      // page cannot sit on the "…" indicator forever waiting for a user that
+      // page cannot sit on the "ΓÇª" indicator forever waiting for a user that
       // is never going to arrive.
       if (!data.user) {
         setLoading(false);
@@ -231,7 +231,7 @@ export function DashboardPage() {
       label: t("pref_age"),
       value: (() => {
         const parts = [v("pref_age_min"), v("pref_age_max")].filter((x) => present(x));
-        return parts.length ? parts.join(" – ") : null;
+        return parts.length ? parts.join(" ΓÇô ") : null;
       })(),
     },
     { label: t("pref_height"), value: v("pref_height_min_cm") },
@@ -368,7 +368,7 @@ export function DashboardPage() {
             </div>
           </>
         ) : loading || !roleReady ? (
-          <p className="mt-8 text-sm text-muted-foreground">…</p>
+          <p className="mt-8 text-sm text-muted-foreground">ΓÇª</p>
         ) : !submitted && !hasSavedData ? (
           <div className="card-elevated mt-8 p-6">
             <h2 className="font-display text-xl font-semibold">{t("reg_title")}</h2>
@@ -536,7 +536,7 @@ export function DashboardPage() {
                 </div>
 
                 {docsLoading ? (
-                  <p className="mt-4 text-sm text-muted-foreground">…</p>
+                  <p className="mt-4 text-sm text-muted-foreground">ΓÇª</p>
                 ) : (
                   <div className="mt-4 space-y-6">
                     {/* Rendered even with zero photos: the Add Photo tile and its
@@ -648,21 +648,21 @@ export function DashboardPage() {
                               <div className="min-w-0">
                                 <button
                                   type="button"
-                                  className="block max-w-full truncate text-left font-medium text-primary hover:underline"
+                                  className="block max-w-full truncate py-3 text-left font-medium text-primary hover:underline"
                                   onClick={() => openFile(doc.storage_key)}
                                 >
                                   <FileText className="mr-1 inline size-4 align-[-2px]" />
                                   {doc.id_kind && (
                                     <span className="font-semibold text-foreground">
-                                      {docKindLabel(doc.id_kind)} ·{" "}
+                                      {docKindLabel(doc.id_kind)} ┬╖{" "}
                                     </span>
                                   )}
                                   {doc.file_name || t("docLabel")}
                                 </button>
                                 <p className="mt-0.5 text-xs text-muted-foreground">
-                                  {doc.mime_type ?? "—"} · {formatBytes(doc.size_bytes ?? 0)} ·{" "}
+                                  {doc.mime_type ?? "ΓÇö"} ┬╖ {formatBytes(doc.size_bytes ?? 0)} ┬╖{" "}
                                   {t("upl_uploaded_on")}{" "}
-                                  {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : "—"} ·{" "}
+                                  {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : "ΓÇö"} ┬╖{" "}
                                   {doc.verified ? t("yes") : t("unverified")}
                                 </p>
                               </div>
@@ -670,7 +670,7 @@ export function DashboardPage() {
                                 type="button"
                                 size="sm"
                                 variant="outline"
-                                className="print:hidden shrink-0"
+                                className="print:hidden min-h-11 shrink-0"
                                 disabled={removing}
                                 onClick={() => removeFile(doc)}
                               >
@@ -692,7 +692,48 @@ export function DashboardPage() {
                     )}
                   </div>
                 )}
-              </section>
+                  <div className="print:hidden mt-4 flex flex-wrap items-center gap-2">
+                                      <span className="text-xs text-muted-foreground">{t("id_kind")}:</span>
+                                      <select
+                                        className="min-h-11 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+                                        value={docKind}
+                                        aria-label={t("id_kind")}
+                                        onChange={(e) => setDocKind(e.target.value)}
+                                      >
+                                        {ID_KINDS.map((k) => (
+                                          <option key={k.v} value={k.v}>
+                                            {t(k.labelKey)}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <button
+                                        type="button"
+                                        className="flex min-h-11 items-center gap-1.5 rounded-md border border-dashed border-border px-3 py-1.5 text-sm text-muted-foreground hover:bg-secondary/40"
+                                        onClick={() => docInputRef.current?.click()}
+                                        disabled={uploading}
+                                      >
+                                        {uploading ? (
+                                          <span className="text-xs">{t("uploading_label")}</span>
+                                        ) : (
+                                          <>
+                                            <Plus className="size-4" />
+                                            <span>{t("upl_add_doc")}</span>
+                                          </>
+                                        )}
+                                      </button>
+                                      <input
+                                        ref={docInputRef}
+                                        type="file"
+                                        accept="image/jpeg,image/png,application/pdf"
+                                        className="hidden"
+                                        onChange={(e) => {
+                                          const f = e.target.files?.[0];
+                                          if (f) void addDocument(f);
+                                          e.target.value = "";
+                                        }}
+                                      />
+                                    </div>
+</section>
             </article>
           </>
         )}
