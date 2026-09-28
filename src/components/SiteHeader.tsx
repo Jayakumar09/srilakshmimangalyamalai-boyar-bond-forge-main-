@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
+import { Menu, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useI18n } from "@/lib/i18n";
 import { useSession } from "@/lib/session";
@@ -14,6 +15,7 @@ export function SiteHeader() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const [channelUnread, setChannelUnread] = useState<Record<string, number>>({});
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const { pathname } = location;
   const supportHref = lang === "ta" ? "/ta/support" : "/support";
@@ -64,6 +66,12 @@ export function SiteHeader() {
     };
   }, [loadUnread]);
 
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
+
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
+
   async function signOut() {
     await queryClient.cancelQueries();
     queryClient.clear();
@@ -71,105 +79,183 @@ export function SiteHeader() {
     navigate({ to: "/auth", replace: true });
   }
 
+  const unreadBadge = (count: number | undefined) =>
+    (count ?? 0) > 0 ? (
+      <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-primary">
+        {(count ?? 0) > 99 ? "99+" : count}
+      </span>
+    ) : null;
+
+  const renderNav = (itemClass?: string) => (
+    <>
+      {session ? (
+        <>
+          {isAdmin ? (
+            <>
+              <Button asChild variant="ghost" size="sm" className={itemClass}>
+                <a href={lang === "ta" ? "/tn/admin" : "/en/admin"} onClick={closeMenu}>
+                  {t("nav_admin")}
+                </a>
+              </Button>
+              <Button asChild variant="ghost" size="sm" className={itemClass}>
+                <Link to="/jathagam" onClick={closeMenu}>
+                  {t("jat_page_title")}
+                </Link>
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                asChild
+                variant={pathname === "/matches" ? "secondary" : "ghost"}
+                size="sm"
+                className={itemClass}
+              >
+                <Link to="/matches" onClick={closeMenu}>
+                  {t("nav_matches")}
+                </Link>
+              </Button>
+              <Button
+                asChild
+                variant={pathname === "/messages" ? "secondary" : "ghost"}
+                size="sm"
+                className={itemClass}
+              >
+                <Link to="/messages" search={{}} onClick={closeMenu}>
+                  {t("nav_member_messages")}
+                </Link>
+              </Button>
+              <Button
+                asChild
+                variant={pathname === "/checkout" ? "secondary" : "ghost"}
+                size="sm"
+                className={itemClass}
+              >
+                <Link to="/checkout" onClick={closeMenu}>
+                  {t("nav_payments")}
+                </Link>
+              </Button>
+              <Button
+                asChild
+                variant={isSupportActive ? "secondary" : "ghost"}
+                size="sm"
+                className={itemClass}
+              >
+                <a
+                  href={supportHref}
+                  className="inline-flex items-center gap-1.5"
+                  onClick={closeMenu}
+                >
+                  {t("sup_title")}
+                  {unreadBadge(channelUnread["support"])}
+                </a>
+              </Button>
+              <Button
+                asChild
+                variant={isOfficeActive ? "secondary" : "ghost"}
+                size="sm"
+                className={itemClass}
+              >
+                <a
+                  href={officeHref}
+                  className="inline-flex items-center gap-1.5"
+                  onClick={closeMenu}
+                >
+                  {t("nav_messages")}
+                  {unreadBadge(channelUnread["messages"])}
+                </a>
+              </Button>
+              <Button
+                asChild
+                variant={isCommunicationActive ? "secondary" : "ghost"}
+                size="sm"
+                className={itemClass}
+              >
+                <a
+                  href={communicationHref}
+                  className="inline-flex items-center gap-1.5"
+                  onClick={closeMenu}
+                >
+                  {t("nav_communication")}
+                  {unreadBadge(channelUnread["communication"])}
+                </a>
+              </Button>
+            </>
+          )}
+          <Button
+            asChild
+            variant={isDashboardActive ? "secondary" : "ghost"}
+            size="sm"
+            className={itemClass}
+          >
+            <Link to="/dashboard" onClick={closeMenu}>
+              {t("nav_dashboard")}
+            </Link>
+          </Button>
+          <Button variant="ghost" size="sm" className={itemClass} onClick={signOut}>
+            {t("nav_logout")}
+          </Button>
+        </>
+      ) : (
+        <>
+          <Button asChild variant="ghost" size="sm" className={itemClass}>
+            <Link to="/auth" onClick={closeMenu}>
+              {t("nav_login")}
+            </Link>
+          </Button>
+          <Button asChild size="sm" className={itemClass}>
+            <Link to="/auth" search={{ mode: "signup" }} onClick={closeMenu}>
+              {t("nav_register")}
+            </Link>
+          </Button>
+        </>
+      )}
+    </>
+  );
+
   return (
     <header className="sticky top-0 z-40 border-b border-border/70 bg-background/85 backdrop-blur">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2 px-4 py-3">
-        <Link to="/" className="mr-auto flex items-center gap-3">
-          <span className="grid size-9 place-items-center rounded-full bg-primary font-display text-lg text-primary-foreground">
+        <Link to="/" className="mr-auto flex min-w-0 items-center gap-3" onClick={closeMenu}>
+          <span className="grid size-9 shrink-0 place-items-center rounded-full bg-primary font-display text-lg text-primary-foreground">
             {t("brand_badge")}
           </span>
           <span className="leading-tight">
-            <span className="block font-display text-2xl font-semibold sm:text-3xl">
+            <span className="block font-display text-xl font-semibold sm:text-3xl">
               {t("brand")}
             </span>
-            <span className="block font-display text-xl font-semibold sm:text-2xl">
+            <span className="block font-display text-lg font-semibold sm:text-2xl">
               {t("brand_line2")}
             </span>
           </span>
         </Link>
-        <LanguageToggle className="hidden sm:inline-flex" />
-        {session ? (
-          <>
-            {isAdmin ? (
-              <>
-                <Button asChild variant="ghost" size="sm">
-                  <a href={lang === "ta" ? "/tn/admin" : "/en/admin"}>{t("nav_admin")}</a>
-                </Button>
-                <Button asChild variant="ghost" size="sm">
-                  <Link to="/jathagam">{t("jat_page_title")}</Link>
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button asChild variant={pathname === "/matches" ? "secondary" : "ghost"} size="sm">
-                  <Link to="/matches">{t("nav_matches")}</Link>
-                </Button>
-                <Button asChild variant={pathname === "/messages" ? "secondary" : "ghost"} size="sm">
-                  <Link to="/messages" search={{}}>
-                    {t("nav_member_messages")}
-                  </Link>
-                </Button>
-                <Button asChild variant={pathname === "/checkout" ? "secondary" : "ghost"} size="sm">
-                  <Link to="/checkout">{t("nav_payments")}</Link>
-                </Button>
-                <Button asChild variant={isSupportActive ? "secondary" : "ghost"} size="sm">
-                  <a href={supportHref} className="inline-flex items-center gap-1.5">
-                    {t("sup_title")}
-                    {(channelUnread["support"] ?? 0) > 0 && (
-                      <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-primary">
-                        {(channelUnread["support"] ?? 0) > 99
-                          ? "99+"
-                          : (channelUnread["support"] ?? 0)}
-                      </span>
-                    )}
-                  </a>
-                </Button>
-                <Button asChild variant={isOfficeActive ? "secondary" : "ghost"} size="sm">
-                  <a href={officeHref} className="inline-flex items-center gap-1.5">
-                    {t("nav_messages")}
-                    {(channelUnread["messages"] ?? 0) > 0 && (
-                      <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-primary">
-                        {(channelUnread["messages"] ?? 0) > 99
-                          ? "99+"
-                          : (channelUnread["messages"] ?? 0)}
-                      </span>
-                    )}
-                  </a>
-                </Button>
-                <Button asChild variant={isCommunicationActive ? "secondary" : "ghost"} size="sm">
-                  <a href={communicationHref} className="inline-flex items-center gap-1.5">
-                    {t("nav_communication")}
-                    {(channelUnread["communication"] ?? 0) > 0 && (
-                      <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-primary">
-                        {(channelUnread["communication"] ?? 0) > 99
-                          ? "99+"
-                          : (channelUnread["communication"] ?? 0)}
-                      </span>
-                    )}
-                  </a>
-                </Button>
-              </>
-            )}
-            <Button asChild variant={isDashboardActive ? "secondary" : "ghost"} size="sm">
-              <Link to="/dashboard">{t("nav_dashboard")}</Link>
-            </Button>
-            <Button variant="ghost" size="sm" onClick={signOut}>
-              {t("nav_logout")}
-            </Button>
-          </>
-        ) : (
-          <>
-            <Button asChild variant="ghost" size="sm">
-              <Link to="/auth">{t("nav_login")}</Link>
-            </Button>
-            <Button asChild size="sm">
-              <Link to="/auth" search={{ mode: "signup" }}>
-                {t("nav_register")}
-              </Link>
-            </Button>
-          </>
-        )}
+
+        <div className="hidden md:contents">
+          <LanguageToggle />
+          {renderNav()}
+        </div>
+
+        <Button
+          variant="ghost"
+          size="icon"
+          className="md:hidden"
+          aria-label="Menu"
+          aria-expanded={menuOpen}
+          aria-controls="site-header-mobile-nav"
+          onClick={() => setMenuOpen((open) => !open)}
+        >
+          {menuOpen ? <X /> : <Menu />}
+        </Button>
       </div>
+
+      {menuOpen && (
+        <div id="site-header-mobile-nav" className="border-t border-border/70 md:hidden">
+          <div className="mx-auto flex max-w-6xl flex-col items-start gap-1 px-4 py-3">
+            <LanguageToggle className="mb-1" />
+            {renderNav("w-full justify-start")}
+          </div>
+        </div>
+      )}
     </header>
   );
 }
