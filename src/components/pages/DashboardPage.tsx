@@ -101,8 +101,16 @@ export function DashboardPage() {
   };
 
   useEffect(() => {
-    supabase.auth.getUser().then(async ({ data }) => {
-      if (!data.user) return;
+    const load = supabase.auth.getUser().then(async ({ data }) => {
+      // No authenticated user. The route guard normally redirects before this
+      // page renders, so reaching here is a race (token expired or revoked while
+      // the page was loading) rather than a real session. Clear loading so the
+      // page cannot sit on the "…" indicator forever waiting for a user that
+      // is never going to arrive.
+      if (!data.user) {
+        setLoading(false);
+        return;
+      }
       setUserId(data.user.id);
       const { data: row } = await supabase
         .from("profiles")
@@ -123,6 +131,10 @@ export function DashboardPage() {
         }
       }
     });
+    // getUser() itself rejecting (network drop, aborted request) must not strand
+    // the page on the loading indicator, and catching it here also keeps it from
+    // surfacing as an unhandled rejection.
+    load.catch(() => setLoading(false));
   }, []);
 
   const status = profile?.status ?? "pending";
