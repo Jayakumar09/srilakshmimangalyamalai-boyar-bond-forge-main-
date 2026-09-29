@@ -45,7 +45,7 @@ export function AdminOverview() {
         <StatCard label={t("adm_active_alerts")} value={d.loading ? "…" : d.alerts.length} />
       </div>
 
-      <div className="mt-6 grid gap-5 lg:grid-cols-2">
+      <div className="mt-6 grid gap-5 lg:grid-cols-2 [&>*]:min-w-0">
         <SectionCard
           title={t("adm_nav_approvals")}
           action={
