@@ -33,7 +33,7 @@ export function SectionCard({
   return (
     <section className={cn("rounded-xl border border-border bg-card shadow-sm", className)}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
-        <h2 className="font-display text-lg font-semibold">{title}</h2>
+        <h2 className="min-w-0 break-words font-display text-lg font-semibold">{title}</h2>
         {action}
       </div>
       <div className="p-4">{children}</div>
