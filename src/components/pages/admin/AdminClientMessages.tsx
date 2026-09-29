@@ -194,7 +194,7 @@ export function AdminClientMessages({ channel = "messages" }: { channel?: Channe
       {rows.length === 0 && !q ? (
         <EmptyState title={t("adm_msg_empty")} description={t("adm_msg_empty_d")} />
       ) : (
-        <div className="grid gap-5 lg:grid-cols-[300px_1fr]">
+        <div className="grid gap-5 lg:grid-cols-[300px_1fr] [&>*]:min-w-0">
           <SectionCard title={t(headingKey)}>
             <Input
               placeholder={t("adm_msg_search")}
@@ -215,7 +215,7 @@ export function AdminClientMessages({ channel = "messages" }: { channel?: Channe
                   )}
                 >
                   <span className="flex items-center gap-2">
-                    <span className="truncate font-medium">
+                    <span className="min-w-0 truncate font-medium">
                       {memberName(d.profiles, th.user_id)}
                     </span>
                     {unread[th.id] ? (
@@ -261,7 +261,7 @@ export function AdminClientMessages({ channel = "messages" }: { channel?: Channe
                     <div
                       key={m.id}
                       className={cn(
-                        "max-w-[80%] rounded-lg px-3 py-2 text-sm",
+                        "max-w-[80%] break-words rounded-lg px-3 py-2 text-sm",
                         m.sender_type === "admin"
                           ? "ml-auto bg-primary text-primary-foreground"
                           : "bg-secondary",
