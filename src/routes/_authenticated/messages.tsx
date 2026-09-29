@@ -149,7 +149,7 @@ function Messages() {
           </p>
         )}
 
-        <div className="mt-6 grid gap-5 md:grid-cols-[260px_1fr]">
+        <div className="mt-6 grid gap-5 [&>*]:min-w-0 md:grid-cols-[260px_1fr]">
           <aside className="card-elevated max-h-[60vh] overflow-y-auto p-2">
             {conversations.length === 0 && (
               <p className="p-3 text-sm text-muted-foreground">{t("no_conversations")}</p>
@@ -178,7 +178,7 @@ function Messages() {
                 <div
                   key={m.id}
                   className={cn(
-                    "max-w-[80%] rounded-lg px-3 py-2 text-sm",
+                    "max-w-[80%] break-words rounded-lg px-3 py-2 text-sm",
                     m.sender_id === me
                       ? "ml-auto bg-primary text-primary-foreground"
                       : "bg-secondary",

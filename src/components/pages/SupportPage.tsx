@@ -164,7 +164,7 @@ export function SupportPage({ channel = "support" }: { channel?: Channel }) {
         <p className="mt-2 text-sm text-muted-foreground">{t("sup_sub")}</p>
         <div className="gold-rule mt-3 w-24" />
 
-        <div className="mt-6 grid gap-5 md:grid-cols-[260px_1fr]">
+        <div className="mt-6 grid gap-5 [&>*]:min-w-0 md:grid-cols-[260px_1fr]">
           <aside className="card-elevated space-y-3 p-3">
             <div className="space-y-2">
               <p className="text-sm font-medium">{t("sup_new")}</p>
@@ -206,7 +206,7 @@ export function SupportPage({ channel = "support" }: { channel?: Channel }) {
                 <div
                   key={m.id}
                   className={cn(
-                    "max-w-[80%] rounded-lg px-3 py-2 text-sm",
+                    "max-w-[80%] break-words rounded-lg px-3 py-2 text-sm",
                     m.sender_type === "member"
                       ? "ml-auto bg-primary text-primary-foreground"
                       : "bg-secondary",
