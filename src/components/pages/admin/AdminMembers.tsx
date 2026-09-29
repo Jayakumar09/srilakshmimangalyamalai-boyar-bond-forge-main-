@@ -49,7 +49,7 @@ export function AdminMembers() {
       <SectionCard
         title={t("adm_nav_members")}
         action={
-          <Button size="sm" onClick={() => setCreating(true)}>
+          <Button size="sm" className="h-auto min-h-8 whitespace-normal py-1.5" onClick={() => setCreating(true)}>
             {t("adm_create_profile")}
           </Button>
         }
