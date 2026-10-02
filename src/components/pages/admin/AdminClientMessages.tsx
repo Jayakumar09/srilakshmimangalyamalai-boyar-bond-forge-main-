@@ -252,7 +252,7 @@ export function AdminClientMessages({ channel = "messages" }: { channel?: Channe
               <p className="text-sm text-muted-foreground">{t("adm_msg_select")}</p>
             ) : (
               <div className="flex h-[55vh] flex-col">
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs text-muted-foreground break-words">
                   {t("adm_profile_id")}: {activeProfile?.client_profile_id ?? "-"}
                   {activeProfile?.email ? ` · ${activeProfile.email}` : ""}
                 </p>
