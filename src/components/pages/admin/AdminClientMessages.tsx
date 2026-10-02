@@ -237,7 +237,7 @@ export function AdminClientMessages({ channel = "messages" }: { channel?: Channe
             title={active ? memberName(d.profiles, active.user_id) : t("adm_msg_select")}
             action={
               active && (
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <StatusBadge tone={toneForStatus(active.status)}>
                     {statusLabel(t, active.status)}
                   </StatusBadge>
@@ -275,7 +275,7 @@ export function AdminClientMessages({ channel = "messages" }: { channel?: Channe
                           <button
                             type="button"
                             onClick={() => void openAttachment(m.attachment_key as string)}
-                            className="font-medium underline underline-offset-2"
+                            className="font-medium underline underline-offset-2 py-1"
                             aria-label={t("msg_attach_open")}
                           >
                             {t("msg_attach_view")}
