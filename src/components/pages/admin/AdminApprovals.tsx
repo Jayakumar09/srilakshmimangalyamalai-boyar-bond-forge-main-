@@ -47,7 +47,7 @@ export function AdminApprovals() {
                   </div>
                 }
               >
-                <div className="grid gap-2 text-sm sm:grid-cols-2">
+                <div className="grid gap-2 text-sm sm:grid-cols-2 [&>*]:min-w-0 break-words">
                   <p className="text-muted-foreground">
                     {[p.gender, p.date_of_birth, p.marital_status, p.caste, p.sub_caste].filter(Boolean).join(" · ")}
                   </p>
