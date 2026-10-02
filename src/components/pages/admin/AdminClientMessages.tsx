@@ -296,6 +296,7 @@ export function AdminClientMessages({ channel = "messages" }: { channel?: Channe
                     type="button"
                     size="icon"
                     variant="ghost"
+                    className="shrink-0"
                     onClick={() => fileRef.current?.click()}
                     disabled={uploading}
                     aria-label={t("msg_attach")}
