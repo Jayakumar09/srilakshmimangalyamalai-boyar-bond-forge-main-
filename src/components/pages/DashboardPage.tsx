@@ -408,7 +408,7 @@ export function DashboardPage() {
             </div>
           </>
         ) : loading || !roleReady ? (
-          <p className="mt-8 text-sm text-muted-foreground">ΓÇª</p>
+          <p className="mt-8 text-sm text-muted-foreground">{t("adm_loading")}</p>
         ) : !submitted && !hasSavedData ? (
           <div className="card-elevated mt-8 p-6">
             <h2 className="font-display text-xl font-semibold">{t("reg_title")}</h2>
@@ -576,7 +576,7 @@ export function DashboardPage() {
                 </div>
 
                 {docsLoading ? (
-                  <p className="mt-4 text-sm text-muted-foreground">ΓÇª</p>
+                  <p className="mt-4 text-sm text-muted-foreground">{t("adm_loading")}</p>
                 ) : (
                   <div className="mt-4 space-y-6">
                     {/* Rendered even with zero photos: the Add Photo tile and its
