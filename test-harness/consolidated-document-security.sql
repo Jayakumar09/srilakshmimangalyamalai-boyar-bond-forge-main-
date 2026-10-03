@@ -242,13 +242,21 @@ BEGIN
     v_count >= 2);
 END $$;
 
--- Owner can update their own document
+-- Owner can update their own document.
+-- M61-D1: this used to SET verified = false and so read as an assertion that a
+-- member may write the verification column. verified / ai_check_status /
+-- ai_check_notes / ai_face_match_score are now rejected for non-admin clients by
+-- documents_client_field_guard (20260926200000). The original statement only
+-- kept passing because it restated the fixture's existing false value. Updated
+-- to write an unprotected field, which is what this case is actually for.
+-- Forged-verification coverage lives in
+-- test-harness/document-client-verification-guard.sql.
 DO $$
 DECLARE
   v_updated int;
 BEGIN
   UPDATE public.documents
-  SET verified = false
+  SET file_name = 'aadhaar-renamed-by-owner.pdf'
   WHERE id = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
   
   GET DIAGNOSTICS v_updated = ROW_COUNT;
