@@ -360,7 +360,7 @@ export const uploadFile = createServerFn({ method: "POST" })
       await reserveProfileQuota(owner, folder, file.size);
     }
 
-    const key = `${owner}/${folder}/${Date.now()}-${sanitize(file.name || "file")}`;
+    const key = `${owner}/${folder}/${Date.now()}-${crypto.randomUUID()}-${sanitize(file.name || "file")}`;
     try {
       assertValidMagicBytes(contentType, body);
       const uploadUrl = await signR2(key, "PUT", contentType);
