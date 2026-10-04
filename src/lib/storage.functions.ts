@@ -107,6 +107,52 @@ async function signR2(key: string, method: "PUT" | "GET" | "DELETE", contentType
   return signed.url;
 }
 
+/**
+ * Bytes actually stored under an owner's R2 prefix.
+ *
+ * Quota must not be summed from `documents.size_bytes`: those rows are inserted
+ * by the client, so a member can report 0 for a real 15MB object and keep
+ * filling the bucket. R2 is the only party that knows how large an object
+ * really is, so we ask it directly instead of trusting the database. Listing by
+ * prefix also counts objects that have no row yet, which closes the same hole
+ * reached by simply skipping the insert.
+ *
+ * Fails closed: if the listing cannot be read we must not fall back to a
+ * client-supplied number, so a storage error rejects the upload instead.
+ */
+async function r2OwnerBytes(owner: string): Promise<number> {
+  const accountId = process.env["R2_ACCOUNT_ID"];
+  const accessKeyId = process.env["R2_ACCESS_KEY_ID"];
+  const secretAccessKey = process.env["R2_SECRET_ACCESS_KEY"];
+  const bucket = process.env["R2_BUCKET_NAME"];
+  if (!accountId || !accessKeyId || !secretAccessKey || !bucket) {
+    throw new Error("Cloud storage is not configured yet.");
+  }
+  const { AwsClient } = await import("aws4fetch");
+  const client = new AwsClient({ accessKeyId, secretAccessKey, service: "s3", region: "auto" });
+
+  let total = 0;
+  let token: string | undefined;
+  // Every page carries its own continuation token, so each one must be signed
+  // separately -- appending a token after signing would invalidate the signature.
+  for (;;) {
+    const url = new URL(`https://${accountId}.r2.cloudflarestorage.com/${bucket}`);
+    url.searchParams.set("list-type", "2");
+    url.searchParams.set("prefix", `${owner}/`);
+    url.searchParams.set("X-Amz-Expires", "900");
+    if (token) url.searchParams.set("continuation-token", token);
+    const signed = await client.sign(new Request(url, { method: "GET" }), {
+      aws: { signQuery: true },
+    });
+    const res = await fetch(signed.url, { method: "GET" });
+    if (!res.ok) throw new Error(`Storage listing failed (${res.status}).`);
+    const xml = await res.text();
+    for (const m of xml.matchAll(/<Size>(\d+)<\/Size>/g)) total += Number(m[1]);
+    token = /<NextContinuationToken>([^<]+)<\/NextContinuationToken>/.exec(xml)?.[1];
+    if (!token) return total;
+  }
+}
+
 const FOLDERS = [
   "photo",
   "govt_id",
@@ -157,16 +203,15 @@ export const uploadFile = createServerFn({ method: "POST" })
 
       const { data: rows } = await context.supabase
         .from("documents")
-        .select("doc_type, size_bytes")
+        .select("doc_type")
         .eq("user_id", owner);
       let photoCount = 0;
       let docCount = 0;
-      let totalBytes = 0;
       for (const row of rows ?? []) {
         if (row.doc_type === "photo") photoCount++;
         else docCount++;
-        totalBytes += row.size_bytes ?? 0;
       }
+      const totalBytes = await r2OwnerBytes(owner); // server-measured, not client-reported
 
       if (folder === "photo" && photoCount >= MAX_PHOTOS_PER_PROFILE) {
         throw new Error(UPLOAD_LIMIT_PHOTOS);
