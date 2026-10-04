@@ -31,6 +31,7 @@ const METHOD_KEYS: Record<string, string> = {
   razorpay: "method_online",
   manual: "method_manual",
   upi: "method_manual",
+  bank_transfer: "method_bank_transfer",
 };
 
 export function planLabel(t: T, item: string | null | undefined) {
