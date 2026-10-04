@@ -353,6 +353,7 @@ export const dict: Dict = {
   id_pan: { en: "PAN", ta: "பான்" },
   id_voter: { en: "Voter ID", ta: "வாக்காளர் அட்டை" },
   id_dl: { en: "Driving Licence", ta: "ஓட்டுநர் உரிமம்" },
+  id_passport: { en: "Passport", ta: "பாஸ்போர்ட்" },
   choose_file: { en: "Choose a file", ta: "கோப்பைத் தேர்ந்தெடுக்கவும்" },
   min_label: { en: "min", ta: "குறைந்தபட்சம்" },
   max_label: { en: "max", ta: "அதிகபட்சம்" },
@@ -380,8 +381,16 @@ export const dict: Dict = {
     ta: "விதிமுறைகள், தனியுரிமைக் கொள்கை மற்றும் பணம் திரும்பப் பெற முடியாத கொள்கையை ஏற்கவும்.",
   },
   msg_docs_required: {
-    en: "A government ID and a clear profile photo are mandatory.",
-    ta: "அரசு அடையாள அட்டை மற்றும் தெளிவான புகைப்படம் கட்டாயம்.",
+    en: "A clear profile photo is required for verification.",
+    ta: "சரிபார்ப்புக்கு தெளிவான சுயவிவர புகைப்படம் கட்டாயம்.",
+  },
+  msg_mandatory_aadhaar: {
+    en: "Aadhaar is required for verification.",
+    ta: "சரிபார்ப்புக்கு ஆதார் கட்டாயம்.",
+  },
+  msg_mandatory_passport: {
+    en: "Passport is required for verification.",
+    ta: "சரிபார்ப்புக்கு பாஸ்போர்ட் கட்டாயம்.",
   },
   msg_divorce_required: {
     en: "A court divorce certificate is mandatory for your marital status.",
@@ -517,12 +526,12 @@ export const dict: Dict = {
     ta: "நீங்கள் அதிகபட்சம் 6 புகைப்படங்களை வைத்திருக்கலாம். மற்றொன்றைச் சேர்க்க முன் ஒன்றை நீக்கவும்.",
   },
   msg_limit_docs: {
-    en: "You can keep up to 4 documents. Delete one before adding another.",
-    ta: "நீங்கள் அதிகபட்சம் 4 ஆவணங்களை வைத்திருக்கலாம். மற்றொன்றைச் சேர்க்க முன் ஒன்றை நீக்கவும்.",
+    en: "You can keep up to 5 documents. Delete one before adding another.",
+    ta: "நீங்கள் அதிகபட்சம் 5 ஆவணங்களை வைத்திருக்கலாம். மற்றொன்றைச் சேர்க்க முன் ஒன்றை நீக்கவும்.",
   },
   msg_limit_total_files: {
-    en: "You can keep up to 10 files in total. Delete one before adding another.",
-    ta: "மொத்தம் அதிகபட்சம் 10 கோப்புகளை மட்டுமே வைத்திருக்கலாம். மற்றொன்றைச் சேர்க்க முன் ஒன்றை நீக்கவும்.",
+    en: "You can keep up to 11 files in total. Delete one before adding another.",
+    ta: "மொத்தம் அதிகபட்சம் 11 கோப்புகளை மட்டுமே வைத்திருக்கலாம். மற்றொன்றைச் சேர்க்க முன் ஒன்றை நீக்கவும்.",
   },
   msg_limit_storage: {
     en: "You have used up the 20 MB storage allowance. Delete a file to free up space.",
@@ -545,8 +554,8 @@ export const dict: Dict = {
     ta: "JPG, PNG அல்லது PDF. ஆவணங்கள் பதிவேற்றியதுபோலவே இருக்கும்; உங்களுக்கும் நிர்வாகிக்கும் மட்டுமே தெரியும்.",
   },
   upl_storage_hint: {
-    en: "Profile storage: 20 MB. Photos are optimized; at most 6 photos, 4 documents and 10 files in total.",
-    ta: "சுயவிவர சேமிப்பு: 20 MB. புகைப்படங்கள் உகந்ததாக்கப்படும்; அதிகபட்சம் 6 புகைப்படங்கள், 4 ஆவணங்கள், மொத்தம் 10 கோப்புகள்.",
+    en: "Profile storage: 20 MB. Photos are optimized; at most 6 photos, 5 documents and 11 files in total.",
+    ta: "சுயவிவர சேமிப்பு: 20 MB. புகைப்படங்கள் உகந்ததாக்கப்படும்; அதிகபட்சம் 6 புகைப்படங்கள், 5 ஆவணங்கள், மொத்தம் 11 கோப்புகள்.",
   },
   upl_gallery_title: { en: "Photo Gallery", ta: "புகைப்பட கேலரி" },
   upl_gallery_sub: {
@@ -557,6 +566,7 @@ export const dict: Dict = {
   upl_set_main: { en: "Set as main", ta: "முக்கியமாக அமைக்க" },
   main_photo_set: { en: "Main photo updated", ta: "முக்கிய புகைப்படம் புதுப்பிக்கப்பட்டது" },
   upl_add_photo: { en: "Add photo", ta: "புகைப்படம் சேர்" },
+  upl_add_doc: { en: "Add verification document", ta: "சரிபார்ப்பு ஆவணத்தைச் சேர்க்க" },
   uploading_label: { en: "Uploading…", ta: "பதிவேற்றுகிறது…" },
   upl_docs_title: { en: "Documents & Verification", ta: "ஆவணங்கள் மற்றும் சரிபார்ப்பு" },
   upl_no_docs: { en: "No documents uploaded yet.", ta: "இன்னும் ஆவணங்கள் பதிவேற்றப்படவில்லை." },
@@ -646,6 +656,25 @@ export const dict: Dict = {
   method_upi: { en: "UPI", ta: "UPI" },
   method_card: { en: "Card", ta: "கார்டு" },
   method_bank: { en: "Bank transfer", ta: "வங்கி பரிமாற்றம்" },
+  method_bank_transfer: { en: "Direct Bank Transfer", ta: "நேரடி வங்கி பரிமாற்றம்" },
+  bank_beneficiary: { en: "Beneficiary", ta: "பெறுநர்" },
+  bank_account: { en: "Account Number", ta: "கணக்கு எண்" },
+  bank_ifsc: { en: "IFSC", ta: "IFSC" },
+  bank_micr: { en: "MICR", ta: "MICR" },
+  bank_mobile: { en: "Mobile", ta: "கைபேசி" },
+  payable_amount: { en: "Payable Amount", ta: "செலுத்த வேண்டிய தொகை" },
+  bank_details_unavailable: {
+    en: "Bank details are not available at the moment.",
+    ta: "வங்கி விவரங்கள் இப்போது கிடைக்கவில்லை.",
+  },
+  utr_duplicate: {
+    en: "This UTR has already been used.",
+    ta: "இந்த UTR ஏற்கனவே பயன்படுத்தப்பட்டுள்ளது.",
+  },
+  utr_invalid: {
+    en: "Invalid payment reference.",
+    ta: "தவறான கட்டண குறிப்பு.",
+  },
   profile_blocked: { en: "Profile blocked", ta: "சுயவிவரம் தடுக்கப்பட்டது" },
   report_prompt: {
     en: "Why are you reporting this profile?",

@@ -7,6 +7,31 @@ export type PayItem = keyof typeof PRICES;
 
 const ItemSchema = z.enum(["standard", "premium", "jathagam"]);
 
+/** Returns Direct Bank Transfer details for authenticated customers. */
+export const getBankTransferDetails = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({ item: ItemSchema }).parse(input))
+  .handler(async ({ data, context }) => {
+    const beneficiary = process.env["BANK_BENEFICIARY"];
+    const accountNumber = process.env["BANK_ACCOUNT_NUMBER"];
+    const ifsc = process.env["BANK_IFSC"];
+    const micr = process.env["BANK_MICR"];
+    const mobile = process.env["BANK_MOBILE"];
+
+    if (!beneficiary || !accountNumber || !ifsc) {
+      throw new Error("Bank transfer details are not configured.");
+    }
+
+    return {
+      beneficiary,
+      accountNumber,
+      ifsc,
+      micr: micr ?? null,
+      mobile: mobile ?? null,
+      amount: PRICES[data.item],
+    };
+  });
+
 // The outbox insert in reviewPayment is the one step whose loss is
 // unrecoverable, and the one step that can fail for reasons unrelated to a
 // rejected write. Bounded attempts keep a transient storage fault from
@@ -96,14 +121,19 @@ export const submitManualPayment = createServerFn({ method: "POST" })
     z
       .object({
         item: ItemSchema,
-        method: z.enum(["upi", "card", "bank"]),
+        method: z.enum(["upi", "bank_transfer"]),
         utrReference: z.string().min(1).max(120),
         proofKey: z.string().max(300).nullable(),
       })
+      .refine(
+        (v) => v.method !== "bank_transfer" || v.utrReference.trim().length > 0,
+        { message: "UTR_REQUIRED_BANK_TRANSFER", path: ["utrReference"] },
+      )
       .parse(input),
   )
   .handler(async ({ data, context }) => {
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const normalizedUtr = data.utrReference.trim().toUpperCase();
     const { data: inserted, error } = await supabaseAdmin
       .from("payments")
       .insert({
@@ -111,13 +141,21 @@ export const submitManualPayment = createServerFn({ method: "POST" })
         item: data.item,
         amount_inr: PRICES[data.item],
         method: data.method,
-        utr_reference: data.utrReference,
+        utr_reference: normalizedUtr,
         proof_key: data.proofKey ?? null,
         status: "submitted",
       })
       .select("id")
       .single();
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (error.code === "23505") {
+        throw new Error("UTR_DUPLICATE");
+      }
+      if (error.code === "23514") {
+        throw new Error("UTR_INVALID");
+      }
+      throw new Error(error.message);
+    }
     return { paymentId: inserted.id };
   });
 

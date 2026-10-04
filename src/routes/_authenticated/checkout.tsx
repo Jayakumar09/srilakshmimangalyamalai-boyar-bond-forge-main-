@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { uploadToR2 } from "@/lib/upload";
 import { friendlyUploadError } from "@/lib/compress";
 import { createViewUrl } from "@/lib/storage.functions";
-import { createPaymentOrder, confirmPaymentOrder, PRICES } from "@/lib/payments.functions";
+import { createPaymentOrder, confirmPaymentOrder, submitManualPayment, getBankTransferDetails, PRICES } from "@/lib/payments.functions";
 import { notifyPaymentSubmitted } from "@/lib/notify.functions";
 
 export const Route = createFileRoute("/_authenticated/checkout")({
@@ -22,7 +22,7 @@ export const Route = createFileRoute("/_authenticated/checkout")({
       {
         name: "description",
         content:
-          "Activate the Standard or Premium plan, or order the Jathagam report, by UPI, card or bank transfer.",
+          "Activate the Standard or Premium plan, or order the Jathagam report, by UPI or Direct Bank Transfer.",
       },
       { property: "og:title", content: "Payments — Sri Lakshmi Mangalya Malai" },
       { property: "og:description", content: "Activate your membership plan." },
@@ -54,7 +54,8 @@ type JathagamRow = {
 };
 
 // UPI details shown for the manual transfer route.
-const UPI_ID = "srilakshmimangalyamalai@upi";
+const UPI_ID = "7639150271@pnb";
+const UPI_QR_PATH = "/payment/pnb-upi-qr.jpeg";
 
 declare global {
   interface Window {
@@ -83,9 +84,18 @@ function Checkout() {
   const [busy, setBusy] = useState(false);
   const [manualFor, setManualFor] = useState<Item | null>(null);
   const [utr, setUtr] = useState("");
-  const [method, setMethod] = useState("upi");
+  const [method, setMethod] = useState<"upi" | "bank_transfer">("upi");
   const [proof, setProof] = useState<File | null>(null);
   const [birth, setBirth] = useState({ date: "", time: "", place: "" });
+  const [bankDetails, setBankDetails] = useState<{
+    beneficiary: string;
+    accountNumber: string;
+    ifsc: string;
+    micr: string | null;
+    mobile: string | null;
+    amount: number;
+  } | null>(null);
+  const [loadingBankDetails, setLoadingBankDetails] = useState(false);
 
   const load = useCallback(async (uid: string) => {
     const [{ data: pays }, { data: jats }, { data: profile }, evRows] = await Promise.all([
@@ -181,6 +191,19 @@ function Checkout() {
     }
   }
 
+  async function fetchBankDetails(item: Item) {
+    setLoadingBankDetails(true);
+    try {
+      const details = await getBankTransferDetails({ data: { item } });
+      setBankDetails(details);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to load bank details");
+      setBankDetails(null);
+    } finally {
+      setLoadingBankDetails(false);
+    }
+  }
+
   async function submitManual(item: Item) {
     if (!userId) return;
     if (!utr.trim()) {
@@ -198,25 +221,14 @@ function Checkout() {
         const up = await uploadToR2(proof, "payment_proof");
         proofKey = up.key;
       }
-      const { data: inserted, error } = await supabase
-        .from("payments")
-        .insert({
-          user_id: userId,
-          item,
-          amount_inr: PRICES[item],
-          method,
-          utr_reference: utr.trim(),
-          proof_key: proofKey,
-          status: "submitted",
-        })
-        .select("id")
-        .single();
-      if (error) throw new Error(error.message);
+      const { paymentId } = await submitManualPayment({
+        data: { item, method, utrReference: utr.trim(), proofKey },
+      });
 
       if (item === "jathagam") {
         await supabase.from("jathagam_requests").insert({
           user_id: userId,
-          payment_id: inserted.id,
+          payment_id: paymentId,
           birth_date: birth.date,
           birth_time: birth.time,
           birth_place: birth.place,
@@ -231,6 +243,7 @@ function Checkout() {
       setManualFor(null);
       setUtr("");
       setProof(null);
+      setBankDetails(null);
       await load(userId);
     } catch (err) {
       toast.error(friendlyUploadError(err, t));
@@ -313,7 +326,14 @@ function Checkout() {
                 <Button
                   variant="secondary"
                   disabled={busy}
-                  onClick={() => setManualFor(manualFor === p.item ? null : p.item)}
+                  onClick={() => {
+                    const next = manualFor === p.item ? null : p.item;
+                    setManualFor(next);
+                    if (next) {
+                      setMethod("upi");
+                      setBankDetails(null);
+                    }
+                  }}
                 >
                   {t("pay_manual")}
                 </Button>
@@ -321,10 +341,60 @@ function Checkout() {
 
               {manualFor === p.item && (
                 <div className="mt-4 space-y-3 rounded-lg border border-border bg-secondary/40 p-4">
-                  <p className="text-sm">
-                    UPI: <span className="font-semibold">{UPI_ID}</span> — ₹
-                    {p.price.toLocaleString("en-IN")}
-                  </p>
+                  {method === "upi" ? (
+                    <>
+                      <p className="text-sm">
+                        UPI: <span className="font-semibold">{UPI_ID}</span> — ₹
+                        {p.price.toLocaleString("en-IN")}
+                      </p>
+                      <div className="text-center">
+                        <img
+                          src={UPI_QR_PATH}
+                          alt="UPI QR Code"
+                          className="mx-auto max-w-xs h-auto border border-border rounded"
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {loadingBankDetails ? (
+                        <p className="text-sm text-muted-foreground">Loading bank details…</p>
+                      ) : bankDetails ? (
+                        <div className="space-y-2 text-sm">
+                          <p>
+                            <span className="font-semibold">{t("bank_beneficiary")}:</span>{" "}
+                            {bankDetails.beneficiary}
+                          </p>
+                          <p>
+                            <span className="font-semibold">{t("bank_account")}:</span>{" "}
+                            {bankDetails.accountNumber}
+                          </p>
+                          <p>
+                            <span className="font-semibold">{t("bank_ifsc")}:</span> {bankDetails.ifsc}
+                          </p>
+                          {bankDetails.micr && (
+                            <p>
+                              <span className="font-semibold">{t("bank_micr")}:</span>{" "}
+                              {bankDetails.micr}
+                            </p>
+                          )}
+                          {bankDetails.mobile && (
+                            <p>
+                              <span className="font-semibold">{t("bank_mobile")}:</span>{" "}
+                              {bankDetails.mobile}
+                            </p>
+                          )}
+                          <p className="font-semibold">
+                            {t("payable_amount")}: ₹{bankDetails.amount.toLocaleString("en-IN")}
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-destructive">
+                          {t("bank_details_unavailable")}
+                        </p>
+                      )}
+                    </>
+                  )}
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div>
                       <Label htmlFor="utr">{t("utr")}</Label>
@@ -336,11 +406,16 @@ function Checkout() {
                         id="method"
                         className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                         value={method}
-                        onChange={(e) => setMethod(e.target.value)}
+                        onChange={(e) => {
+                          const newMethod = e.target.value as "upi" | "bank_transfer";
+                          setMethod(newMethod);
+                          if (newMethod === "bank_transfer") {
+                            fetchBankDetails(p.item);
+                          }
+                        }}
                       >
                         <option value="upi">{t("method_upi")}</option>
-                        <option value="card">{t("method_card")}</option>
-                        <option value="bank">{t("method_bank")}</option>
+                        <option value="bank_transfer">{t("method_bank_transfer")}</option>
                       </select>
                     </div>
                   </div>

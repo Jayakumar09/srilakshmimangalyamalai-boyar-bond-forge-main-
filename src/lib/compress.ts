@@ -54,11 +54,14 @@ export const UPLOAD_LIMIT_TOTAL = "UPLOAD_LIMIT_TOTAL";
 export const UPLOAD_LIMIT_STORAGE = "UPLOAD_LIMIT_STORAGE";
 export const FILE_TOO_LARGE_PHOTO = "FILE_TOO_LARGE_PHOTO";
 export const FILE_TOO_LARGE_DOC = "FILE_TOO_LARGE_DOC";
+export const UTR_DUPLICATE = "UTR_DUPLICATE";
+export const UTR_INVALID = "UTR_INVALID";
+export const UTR_REQUIRED_BANK_TRANSFER = "UTR_REQUIRED_BANK_TRANSFER";
 
 /** Maximum bytes actually stored for a member's profile files (counts + bytes). */
 export const MAX_PHOTOS_PER_PROFILE = 6;
-export const MAX_DOCS_PER_PROFILE = 4;
-export const MAX_TOTAL_FILES_PER_PROFILE = 10;
+export const MAX_DOCS_PER_PROFILE = 5;
+export const MAX_TOTAL_FILES_PER_PROFILE = 11;
 export const MAX_PROFILE_STORAGE_BYTES = 20 * 1024 * 1024;
 export const MAX_PHOTO_INPUT_BYTES = 3 * 1024 * 1024;
 export const MAX_DOC_INPUT_BYTES = 5 * 1024 * 1024;
@@ -85,6 +88,12 @@ export function friendlyUploadError(err: unknown, t: (k: string) => string): str
       return t("msg_photo_too_large");
     case FILE_TOO_LARGE_DOC:
       return t("msg_doc_too_large");
+    case UTR_DUPLICATE:
+      return t("utr_duplicate");
+    case UTR_INVALID:
+      return t("utr_invalid");
+    case UTR_REQUIRED_BANK_TRANSFER:
+      return t("utr_required");
     default:
       return msg;
   }
