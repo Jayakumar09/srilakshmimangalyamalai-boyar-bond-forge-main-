@@ -296,8 +296,9 @@ export function DashboardPage() {
       return;
     }
     setPhotoUploading(true);
+    let up: Awaited<ReturnType<typeof uploadToR2>> | undefined;
     try {
-      const up = await uploadToR2(file, "photo");
+      up = await uploadToR2(file, "photo");
       const { error } = await supabase.from("documents").insert({
         user_id: userId ?? (profile?.["id"] as string),
         doc_type: "photo",
@@ -311,6 +312,15 @@ export function DashboardPage() {
       toast.success(t("adm_uploaded"));
       if (userId) await loadDocs(userId);
     } catch (err) {
+      // If upload succeeded but DB insert failed, clean up the orphaned object.
+      if (up?.key) {
+        try {
+          await deleteUpload({ data: { key: up.key } });
+        } catch (cleanupErr) {
+          // Report cleanup failure for diagnostics, but do not hide original DB error.
+          console.warn("Failed to cleanup orphaned upload after DB insert failure:", cleanupErr);
+        }
+      }
       toast.error(friendlyUploadError(err, t));
     } finally {
       setPhotoUploading(false);
@@ -331,8 +341,9 @@ export function DashboardPage() {
       return;
     }
     setUploading(true);
+    let up: Awaited<ReturnType<typeof uploadToR2>> | undefined;
     try {
-      const up = await uploadToR2(file, "govt_id");
+      up = await uploadToR2(file, "govt_id");
       const { error } = await supabase.from("documents").insert({
         user_id: userId ?? (profile?.["id"] as string),
         doc_type: "govt_id",
@@ -347,6 +358,15 @@ export function DashboardPage() {
       toast.success(t("adm_uploaded"));
       if (userId) await loadDocs(userId);
     } catch (err) {
+      // If upload succeeded but DB insert failed, clean up the orphaned object.
+      if (up?.key) {
+        try {
+          await deleteUpload({ data: { key: up.key } });
+        } catch (cleanupErr) {
+          // Report cleanup failure for diagnostics, but do not hide original DB error.
+          console.warn("Failed to cleanup orphaned upload after DB insert failure:", cleanupErr);
+        }
+      }
       toast.error(friendlyUploadError(err, t));
     } finally {
       setUploading(false);
@@ -621,17 +641,19 @@ export function DashboardPage() {
                                 <button
                                   type="button"
                                   title={t("adm_view")}
-                                  className="rounded-full bg-black/60 p-1.5 text-white hover:bg-black/80"
+                                  className="flex h-11 w-11 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                                   onClick={() => openFile(photo.storage_key)}
+                                  aria-label={t("adm_view")}
                                 >
                                   <ExternalLink className="size-3" />
                                 </button>
                                 <button
                                   type="button"
                                   title={t("delete")}
-                                  className="rounded-full bg-destructive/80 p-1.5 text-white hover:bg-destructive"
+                                  className="flex h-11 w-11 items-center justify-center rounded-full bg-destructive/80 text-white hover:bg-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                                   disabled={removing}
                                   onClick={() => removeFile(photo)}
+                                  aria-label={t("delete")}
                                 >
                                   <Trash2 className="size-3" />
                                 </button>
