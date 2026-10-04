@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { createViewUrl, deleteUpload } from "@/lib/storage.functions";
+import { createViewUrl, createViewUrls, deleteUpload } from "@/lib/storage.functions";
 import { useI18n } from "@/lib/i18n";
 import { useSession } from "@/lib/session";
 import { uploadToR2 } from "@/lib/upload";
@@ -99,12 +99,21 @@ export function DashboardPage() {
       // freeze the whole "Documents & verification" section at the loading
       // state; thumbnails pop in as their URLs arrive.
       setDocs(rows);
-      for (const r of rows) {
-        void createViewUrl({ data: { key: r.storage_key } })
-          .then(({ url }) => {
-            setViewUrls((prev) =>
-              prev[r.storage_key] === url ? prev : { ...prev, [r.storage_key]: url },
-            );
+      const keys = rows.map((r) => r.storage_key);
+      if (keys.length > 0) {
+        void createViewUrls({ data: { keys } })
+          .then((urls) => {
+            setViewUrls((prev) => {
+              let changed = false;
+              const next = { ...prev };
+              for (const [k, u] of Object.entries(urls)) {
+                if (next[k] !== u) {
+                  next[k] = u;
+                  changed = true;
+                }
+              }
+              return changed ? next : prev;
+            });
           })
           .catch(() => {
             /* individual file URLs resolve lazily on demand */

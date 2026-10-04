@@ -1,4 +1,4 @@
-import { createServerFn } from "@tanstack/react-start";
+﻿import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
@@ -140,8 +140,8 @@ const PROFILE_FOLDERS = new Set(["photo", "govt_id", "divorce_doc"]);
  * Used instead of a direct browser PUT so the bucket needs no CORS rules.
  *
  * Files tied to a member's profile (photos / identity / divorce documents)
- * are enforced against the profile limits: at most 6 photos, 4 documents,
- * 10 total files and 20MB of stored bytes. Payment proofs and horoscope
+ * are enforced against the profile limits: at most 6 photos, 5 documents,
+ * 11 total files and 20MB of stored bytes. Payment proofs and horoscope
  * reports keep the generic 15MB cap since they are not part of the profile.
  */
 export const uploadFile = createServerFn({ method: "POST" })
@@ -301,4 +301,44 @@ export const createViewUrl = createServerFn({ method: "POST" })
       if (!isAdmin) throw new Error("Not allowed");
     }
     return { url: await signR2(data.key, "GET") };
+  });
+
+export const createViewUrls = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => {
+    const parsed = z
+      .object({ keys: z.array(z.string().min(1)).min(1).max(100) })
+      .parse(input);
+    return parsed;
+  })
+  .handler(async ({ data, context }) => {
+    const results: Record<string, string> = {};
+    const userId = context.userId;
+    const { data: isAdminCheck } = await context.supabase.rpc("has_role", {
+      _user_id: userId,
+      _role: "admin",
+    });
+    const admin = !!isAdminCheck;
+
+    for (const key of data.keys) {
+      let ownsFile = key.startsWith(userId + "/");
+      if (!ownsFile) {
+        const { data: report } = await context.supabase
+          .from("jathagam_requests")
+          .select("id")
+          .eq("report_key", key)
+          .eq("user_id", userId)
+          .maybeSingle();
+        if (report) ownsFile = true;
+      }
+      if (!ownsFile && !admin) {
+        continue;
+      }
+      try {
+        results[key] = await signR2(key, "GET");
+      } catch {
+        // skip failing keys to keep batch resilient
+      }
+    }
+    return results;
   });
