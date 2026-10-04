@@ -339,6 +339,14 @@ export function DashboardPage() {
       toast.error(t("msg_limit_photos"));
       return;
     }
+    if (photos.length + docRows.length >= MAX_TOTAL_FILES_PER_PROFILE) {
+      toast.error(t("msg_limit_total_files"));
+      return;
+    }
+    if (usedBytes + file.size > MAX_PROFILE_STORAGE_BYTES) {
+      toast.error(t("msg_limit_storage"));
+      return;
+    }
     setPhotoUploading(true);
     let up: Awaited<ReturnType<typeof uploadToR2>> | undefined;
     try {
