@@ -633,6 +633,17 @@ export function DashboardPage() {
                                   <img
                                     src={viewUrls[photo.storage_key]}
                                     alt={t("photo")}
+                                    onError={() =>
+                                      setViewUrls((prev) => {
+                                        if (
+                                          !(photo.storage_key in prev)
+                                        )
+                                          return prev;
+                                        const next = { ...prev };
+                                        delete next[photo.storage_key];
+                                        return next;
+                                      })
+                                    }
                                     className="size-full object-cover"
                                   />
                                 ) : (
