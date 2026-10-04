@@ -114,17 +114,6 @@ async function signR2(key: string, method: "PUT" | "GET" | "DELETE", contentType
   return signed.url;
 }
 
-/** Returns a short-lived direct upload URL for Cloudflare R2. */
-export const createUploadUrl = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => UploadInput.parse(input))
-  .handler(async ({ data, context }) => {
-    assertAllowedType(data.contentType);
-    const key = `${await resolveOwnerPrefix(context, data.ownerId)}/${data.folder}/${Date.now()}-${sanitize(data.fileName)}`;
-    const uploadUrl = await signR2(key, "PUT", data.contentType);
-    return { key, uploadUrl };
-  });
-
 const FOLDERS = [
   "photo",
   "govt_id",
