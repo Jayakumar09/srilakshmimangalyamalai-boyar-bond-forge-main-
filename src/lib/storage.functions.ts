@@ -108,19 +108,31 @@ async function signR2(key: string, method: "PUT" | "GET" | "DELETE", contentType
 }
 
 /**
- * Bytes actually stored under an owner's R2 prefix.
+ * Authoritative storage usage for an owner prefix, read from R2 itself.
  *
- * Quota must not be summed from `documents.size_bytes`: those rows are inserted
- * by the client, so a member can report 0 for a real 15MB object and keep
- * filling the bucket. R2 is the only party that knows how large an object
- * really is, so we ask it directly instead of trusting the database. Listing by
- * prefix also counts objects that have no row yet, which closes the same hole
- * reached by simply skipping the insert.
+ * Quota must not be summed from `documents.size_bytes` or counted from
+ * `documents` rows: those rows are inserted by the client, so a member can
+ * report 0 bytes for a real object, or skip the insert entirely, and keep
+ * filling the bucket while every cap still reads low. R2 is the only party that
+ * knows how many objects exist and how large they really are, so we ask it
+ * directly instead of trusting the database.
+ *
+ * Counts every object under the prefix, including any that has no row yet.
+ * Folder comes from the key layout `${owner}/${folder}/${date}...`, and the
+ * tally mirrors the old row-based one: only `photo` counts as a photo, anything
+ * else counts as a document.
  *
  * Fails closed: if the listing cannot be read we must not fall back to a
  * client-supplied number, so a storage error rejects the upload instead.
+ *
+ * Note this is a read-then-act check, so two concurrent uploads can both pass
+ * the caps at the boundary. Closing that needs a lock, not a recount.
  */
-async function r2OwnerBytes(owner: string): Promise<number> {
+async function r2OwnerUsage(owner: string): Promise<{
+  totalBytes: number;
+  photoCount: number;
+  docCount: number;
+}> {
   const accountId = process.env["R2_ACCOUNT_ID"];
   const accessKeyId = process.env["R2_ACCESS_KEY_ID"];
   const secretAccessKey = process.env["R2_SECRET_ACCESS_KEY"];
@@ -131,7 +143,9 @@ async function r2OwnerBytes(owner: string): Promise<number> {
   const { AwsClient } = await import("aws4fetch");
   const client = new AwsClient({ accessKeyId, secretAccessKey, service: "s3", region: "auto" });
 
-  let total = 0;
+  let totalBytes = 0;
+  let photoCount = 0;
+  let docCount = 0;
   let token: string | undefined;
   // Every page carries its own continuation token, so each one must be signed
   // separately -- appending a token after signing would invalidate the signature.
@@ -147,9 +161,23 @@ async function r2OwnerBytes(owner: string): Promise<number> {
     const res = await fetch(signed.url, { method: "GET" });
     if (!res.ok) throw new Error(`Storage listing failed (${res.status}).`);
     const xml = await res.text();
-    for (const m of xml.matchAll(/<Size>(\d+)<\/Size>/g)) total += Number(m[1]);
+    // Parsed per <Contents> so each size is paired with its own key; matching
+    // <Size> on its own would work but could not attribute it to a folder.
+    for (const entry of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
+      const body = entry[1] ?? "";
+      const size = /<Size>(\d+)<\/Size>/.exec(body);
+      if (size) totalBytes += Number(size[1]);
+      const key = /<Key>([\s\S]*?)<\/Key>/.exec(body)?.[1];
+      if (!key) continue;
+      // Keys are `${owner}/${folder}/...`; anything outside that shape is not
+      // counted rather than guessed at.
+      if (!key.startsWith(`${owner}/`)) continue;
+      const folder = key.slice(owner.length + 1).split("/")[0] ?? "";
+      if (folder === "photo") photoCount++;
+      else docCount++;
+    }
     token = /<NextContinuationToken>([^<]+)<\/NextContinuationToken>/.exec(xml)?.[1];
-    if (!token) return total;
+    if (!token) return { totalBytes, photoCount, docCount };
   }
 }
 
@@ -201,17 +229,7 @@ export const uploadFile = createServerFn({ method: "POST" })
         throw new Error(folder === "photo" ? FILE_TOO_LARGE_PHOTO : FILE_TOO_LARGE_DOC);
       }
 
-      const { data: rows } = await context.supabase
-        .from("documents")
-        .select("doc_type")
-        .eq("user_id", owner);
-      let photoCount = 0;
-      let docCount = 0;
-      for (const row of rows ?? []) {
-        if (row.doc_type === "photo") photoCount++;
-        else docCount++;
-      }
-      const totalBytes = await r2OwnerBytes(owner); // server-measured, not client-reported
+      const { totalBytes, photoCount, docCount } = await r2OwnerUsage(owner);
 
       if (folder === "photo" && photoCount >= MAX_PHOTOS_PER_PROFILE) {
         throw new Error(UPLOAD_LIMIT_PHOTOS);
