@@ -554,6 +554,8 @@ export const dict: Dict = {
     ta: "உங்கள் சுயவிவரத்தில் புகைப்படங்களைச் சேர்க்கவும். முதல் புகைப்படம் உங்கள் முக்கிய புகைப்படம்.",
   },
   upl_primary: { en: "Main", ta: "முக்கியம்" },
+  upl_set_main: { en: "Set as main", ta: "முக்கியமாக அமைக்க" },
+  main_photo_set: { en: "Main photo updated", ta: "முக்கிய புகைப்படம் புதுப்பிக்கப்பட்டது" },
   upl_add_photo: { en: "Add photo", ta: "புகைப்படம் சேர்" },
   uploading_label: { en: "Uploading…", ta: "பதிவேற்றுகிறது…" },
   upl_docs_title: { en: "Documents & Verification", ta: "ஆவணங்கள் மற்றும் சரிபார்ப்பு" },

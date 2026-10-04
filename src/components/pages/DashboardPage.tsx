@@ -7,6 +7,7 @@ import {
   Images,
   FileText,
   Plus,
+  Star,
   Trash2,
   ExternalLink,
   Upload,
@@ -14,7 +15,12 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { createViewUrl, createViewUrls, deleteUpload } from "@/lib/storage.functions";
+import {
+  createViewUrl,
+  createViewUrls,
+  deleteUpload,
+  setPrimaryPhoto,
+} from "@/lib/storage.functions";
 import { useI18n } from "@/lib/i18n";
 import { useSession } from "@/lib/session";
 import { uploadToR2 } from "@/lib/upload";
@@ -73,6 +79,8 @@ export function DashboardPage() {
   // document upload can no longer disable the Add Photo tile, or vice versa.
   const [photoUploading, setPhotoUploading] = useState(false);
   const [removing, setRemoving] = useState(false);
+  // Which photo is mid-promotion, so only that tile's control is disabled.
+  const [settingMain, setSettingMain] = useState<string | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const docInputRef = useRef<HTMLInputElement | null>(null);
   const [docKind, setDocKind] = useState("Aadhaar");
@@ -296,6 +304,33 @@ export function DashboardPage() {
     } catch (err) {
       viewWindow.close();
       toast.error(friendlyUploadError(err, t));
+    }
+  };
+
+  const setPrimary = async (photo: GalleryDoc) => {
+    setSettingMain(photo.storage_key);
+    try {
+      await setPrimaryPhoto({ data: { key: photo.storage_key } });
+      setProfile((prev) =>
+        prev ? { ...prev, photo_url: photo.storage_key } : prev,
+      );
+      // The header avatar is driven by its own signed-URL state, so reuse the
+      // gallery URL we already hold for this key and only mint a new one when
+      // the gallery has not resolved it yet.
+      const cached = viewUrls[photo.storage_key];
+      if (cached) {
+        setPhotoUrl(cached);
+      } else {
+        const { url } = await createViewUrl({
+          data: { key: photo.storage_key },
+        });
+        setPhotoUrl(url);
+      }
+      toast.success(t("main_photo_set"));
+    } catch (err) {
+      toast.error(friendlyUploadError(err, t));
+    } finally {
+      setSettingMain(null);
     }
   };
 
@@ -667,6 +702,18 @@ export function DashboardPage() {
                                 >
                                   <ExternalLink className="size-3" />
                                 </button>
+                                {profile?.photo_url !== photo.storage_key && (
+                                  <button
+                                    type="button"
+                                    title={t("upl_set_main")}
+                                    className="flex h-11 w-11 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                                    disabled={settingMain !== null}
+                                    onClick={() => void setPrimary(photo)}
+                                    aria-label={t("upl_set_main")}
+                                  >
+                                    <Star className="size-3" />
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   title={t("delete")}

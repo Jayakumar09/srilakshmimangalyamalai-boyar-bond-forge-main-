@@ -342,3 +342,42 @@ export const createViewUrls = createServerFn({ method: "POST" })
     }
     return results;
   });
+
+/**
+ * Promotes an already-uploaded gallery photo to be the profile's main photo.
+ * The key must resolve to a real `documents` row of type `photo`, which is what
+ * stops a client from pointing `photo_url` at an arbitrary string or at another
+ * member's key: `photo_url` is a client-writable column, so without this check
+ * the profile would advertise a photo that does not exist or is not theirs.
+ */
+export const setPrimaryPhoto = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({ key: z.string().min(1).max(300) }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { data: rows } = await context.supabase
+      .from("documents")
+      .select("user_id, doc_type")
+      .eq("storage_key", data.key)
+      .limit(1);
+    const row = rows?.[0];
+
+    // Reuse the same message as the other key-authorised helpers so a probe
+    // cannot distinguish "no such photo" from "not yours".
+    if (!row || row.doc_type !== "photo") throw new Error("Not allowed");
+
+    if (row.user_id !== context.userId) {
+      const { data: isAdmin } = await context.supabase.rpc("has_role", {
+        _user_id: context.userId,
+        _role: "admin",
+      });
+      if (!isAdmin) throw new Error("Not allowed");
+    }
+
+    const { error } = await context.supabase
+      .from("profiles")
+      .update({ photo_url: data.key })
+      .eq("id", row.user_id);
+    if (error) throw error;
+
+    return { ok: true };
+  });
