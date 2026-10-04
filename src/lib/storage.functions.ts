@@ -18,13 +18,6 @@ import {
   UPLOAD_LIMIT_STORAGE,
 } from "@/lib/compress";
 
-const UploadInput = z.object({
-  fileName: z.string().min(1).max(200),
-  contentType: z.string().min(1).max(120),
-  folder: z.enum(["photo", "govt_id", "divorce_doc", "payment_proof", "jathagam", "attachment"]),
-  ownerId: z.string().uuid().optional(),
-});
-
 /**
  * Files belong to whoever owns them so the member can always open their own
  * documents later. When an admin uploads on behalf of a client they pass
