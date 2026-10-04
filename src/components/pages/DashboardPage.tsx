@@ -818,14 +818,14 @@ export function DashboardPage() {
                               </li>
                             ))}
                           </ul>
-                          <p className="print:hidden mt-3 text-xs text-muted-foreground">
-                            {t("upl_storage_used_pre")}: {formatBytes(usedBytes)} /{" "}
-                            {formatBytes(MAX_PROFILE_STORAGE_BYTES)}
-                          </p>
                         </>
                       ) : (
                         <p className="text-sm text-muted-foreground">{t("upl_no_docs")}</p>
                       )}
+                      <p className="print:hidden mt-3 text-xs text-muted-foreground">
+                        {t("upl_storage_used_pre")}: {formatBytes(usedBytes)} /{" "}
+                        {formatBytes(MAX_PROFILE_STORAGE_BYTES)}
+                      </p>
 
                       {/* Controls - moved inside documents section */}
                       <div className="print:hidden mt-4 flex flex-wrap items-center gap-2">
