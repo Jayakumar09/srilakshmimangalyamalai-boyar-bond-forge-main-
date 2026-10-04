@@ -5,11 +5,7 @@ import type { Database } from "@/integrations/supabase/types";
 import { z } from "zod";
 import {
   MAX_DOC_INPUT_BYTES,
-  MAX_DOCS_PER_PROFILE,
   MAX_PHOTO_INPUT_BYTES,
-  MAX_PHOTOS_PER_PROFILE,
-  MAX_PROFILE_STORAGE_BYTES,
-  MAX_TOTAL_FILES_PER_PROFILE,
   FILE_TOO_LARGE_PHOTO,
   FILE_TOO_LARGE_DOC,
   UPLOAD_LIMIT_PHOTOS,
@@ -125,8 +121,10 @@ async function signR2(key: string, method: "PUT" | "GET" | "DELETE", contentType
  * Fails closed: if the listing cannot be read we must not fall back to a
  * client-supplied number, so a storage error rejects the upload instead.
  *
- * Note this is a read-then-act check, so two concurrent uploads can both pass
- * the caps at the boundary. Closing that needs a lock, not a recount.
+ * Note this listing is no longer the quota check. It only seeds an owner's
+ * counters the first time they upload; the caps themselves are enforced by
+ * `reserveProfileQuota`, which can be made atomic because it writes to Postgres
+ * rather than to R2.
  */
 async function r2OwnerUsage(owner: string): Promise<{
   totalBytes: number;
@@ -181,6 +179,127 @@ async function r2OwnerUsage(owner: string): Promise<{
   }
 }
 
+const UPLOAD_LIMIT_CODES = [
+  UPLOAD_LIMIT_PHOTOS,
+  UPLOAD_LIMIT_DOCS,
+  UPLOAD_LIMIT_TOTAL,
+  UPLOAD_LIMIT_STORAGE,
+] as const;
+
+/**
+ * Re-raise a quota rejection carrying only the bare code.
+ *
+ * The caps are enforced inside `reserve_upload_quota`, and PostgREST wraps a
+ * raised exception in its own envelope. Re-throwing the bare code keeps
+ * `friendlyUploadError()` on the client matching it exactly as it did when the
+ * check lived here.
+ */
+function throwQuotaError(error: unknown): never {
+  const message = error instanceof Error ? error.message : String(error);
+  for (const code of UPLOAD_LIMIT_CODES) {
+    if (message.includes(code)) throw new Error(code);
+  }
+  throw error;
+}
+
+/**
+ * Service-role client used only for the quota RPCs.
+ *
+ * The counters must not be reachable with a member's JWT: their seed values are
+ * the server's own measured R2 totals, and a member able to call
+ * `reserve_upload_quota` directly could seed them low and launder a bypass. The
+ * upload itself is still authorised in `resolveOwnerPrefix`, before any of this
+ * runs, so the service role is only widening which *verified* owner may be
+ * charged. Imported lazily so this module can never reach a client bundle.
+ */
+async function quotaAdminClient(): Promise<SupabaseClient<Database>> {
+  const url = process.env["SUPABASE_URL"];
+  const key = process.env["SUPABASE_SERVICE_ROLE_KEY"];
+  if (!url || !key) throw new Error("Server is not configured yet.");
+  const { createClient } = await import("@supabase/supabase-js");
+  return createClient<Database>(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
+/**
+ * Atomically claim one upload's worth of profile quota, before anything is
+ * stored.
+ *
+ * `reserve_upload_quota` takes a per-owner advisory lock inside Postgres, so
+ * concurrent reservations for the same owner are serialised: the second one
+ * observes the first one's increment and is rejected at the boundary. That is
+ * what the previous read-then-act check could never guarantee, and it needs no
+ * in-process mutex -- Cloudflare runs several isolates, so a module-level lock
+ * would not be shared by the requests that actually race.
+ *
+ * The measured counts are only a seed, used once to initialise an owner that has
+ * no counter row yet so that pre-existing objects are counted. Once the row
+ * exists Postgres ignores the seed, so the listing is skipped entirely: without
+ * the existence probe below every upload would re-list the whole prefix.
+ */
+async function reserveProfileQuota(
+  owner: string,
+  folder: string,
+  sizeBytes: number,
+): Promise<void> {
+  const admin = await quotaAdminClient();
+  const { data: existing } = await admin
+    .from("document_upload_counters")
+    .select("user_id")
+    .eq("user_id", owner)
+    .maybeSingle();
+
+  // Only measured when the row is absent. If it appears between this probe and
+  // the reserve call, the RPC's ON CONFLICT path drops the seed anyway.
+  const usage = existing ? null : await r2OwnerUsage(owner);
+
+  const { error } = await admin.rpc("reserve_upload_quota", {
+    p_user_id: owner,
+    p_folder: folder,
+    p_size_bytes: sizeBytes,
+    p_seed_photo: usage?.photoCount ?? 0,
+    p_seed_doc: usage?.docCount ?? 0,
+    p_seed_bytes: usage?.totalBytes ?? 0,
+  });
+  if (error) throwQuotaError(error);
+}
+
+/** Hand a reservation back when the upload it was taken for never completed. */
+async function releaseProfileQuota(
+  owner: string,
+  folder: string,
+  sizeBytes: number,
+): Promise<void> {
+  const admin = await quotaAdminClient();
+  const { error } = await admin.rpc("release_upload_quota", {
+    p_user_id: owner,
+    p_folder: folder,
+    p_size_bytes: sizeBytes,
+  });
+  if (error) throwQuotaError(error);
+}
+
+/**
+ * Re-stamp the counters from a fresh R2 listing, after a delete freed storage.
+ *
+ * Measuring R2 again is preferred over decrementing by a known amount: the
+ * stored size in `documents` is written by the client, so a decrement would have
+ * to trust a number the member controls. Re-measuring also repairs drift, and
+ * the delete path stays correct even for an object with no `documents` row.
+ */
+async function resyncProfileQuota(owner: string): Promise<void> {
+  const admin = await quotaAdminClient();
+  const usage = await r2OwnerUsage(owner);
+  const { error } = await admin.rpc("resync_upload_quota", {
+    p_user_id: owner,
+    p_photo: usage.photoCount,
+    p_doc: usage.docCount,
+    p_bytes: usage.totalBytes,
+  });
+  if (error) throwQuotaError(error);
+}
+
 const FOLDERS = [
   "photo",
   "govt_id",
@@ -223,39 +342,48 @@ export const uploadFile = createServerFn({ method: "POST" })
     const originalSize = Number(data.get("originalSize") ?? file.size);
     const originalName = String(data.get("originalName") ?? file.name ?? "file").slice(0, 200);
 
-    if (PROFILE_FOLDERS.has(folder)) {
+    const isProfileFolder = PROFILE_FOLDERS.has(folder);
+    if (isProfileFolder) {
       const inputLimit = folder === "photo" ? MAX_PHOTO_INPUT_BYTES : MAX_DOC_INPUT_BYTES;
       if (originalSize > inputLimit) {
         throw new Error(folder === "photo" ? FILE_TOO_LARGE_PHOTO : FILE_TOO_LARGE_DOC);
-      }
-
-      const { totalBytes, photoCount, docCount } = await r2OwnerUsage(owner);
-
-      if (folder === "photo" && photoCount >= MAX_PHOTOS_PER_PROFILE) {
-        throw new Error(UPLOAD_LIMIT_PHOTOS);
-      }
-      if (folder !== "photo" && docCount >= MAX_DOCS_PER_PROFILE) {
-        throw new Error(UPLOAD_LIMIT_DOCS);
-      }
-      if (photoCount + docCount >= MAX_TOTAL_FILES_PER_PROFILE) {
-        throw new Error(UPLOAD_LIMIT_TOTAL);
-      }
-      if (totalBytes + file.size > MAX_PROFILE_STORAGE_BYTES) {
-        throw new Error(UPLOAD_LIMIT_STORAGE);
       }
     }
     if (file.size > 15 * 1024 * 1024) throw new Error("File is too large (max 15 MB).");
 
     const body = new Uint8Array(await file.arrayBuffer());
-    assertValidMagicBytes(contentType, body);
+
+    // Taken after the stateless checks above and before the PUT, so a rejected
+    // upload never leaves a reservation behind and a parallel one cannot slip
+    // past the boundary. Same limits, same codes, same order of rejection.
+    if (isProfileFolder) {
+      await reserveProfileQuota(owner, folder, file.size);
+    }
+
     const key = `${owner}/${folder}/${Date.now()}-${sanitize(file.name || "file")}`;
-    const uploadUrl = await signR2(key, "PUT", contentType);
-    const res = await fetch(uploadUrl, {
-      method: "PUT",
-      headers: { "content-type": contentType },
-      body,
-    });
-    if (!res.ok) throw new Error(`Upload failed (${res.status}).`);
+    try {
+      assertValidMagicBytes(contentType, body);
+      const uploadUrl = await signR2(key, "PUT", contentType);
+      const res = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: { "content-type": contentType },
+        body,
+      });
+      if (!res.ok) throw new Error(`Upload failed (${res.status}).`);
+    } catch (err) {
+      // Nothing reached the bucket, so give the quota back. Otherwise a
+      // transient R2 or validation failure would permanently burn a slot.
+      // Best-effort: a failed release must not replace the error the member
+      // actually needs to see, and the slot is recovered by the next resync.
+      if (isProfileFolder) {
+        try {
+          await releaseProfileQuota(owner, folder, file.size);
+        } catch {
+          // Reservation stays held; drifts high, never low.
+        }
+      }
+      throw err;
+    }
     return {
       key,
       fileName: originalName,
@@ -317,6 +445,19 @@ export const deleteUpload = createServerFn({ method: "POST" })
       await fetch(delUrl, { method: "DELETE" });
     } catch {
       // The metadata row is already gone; R2 cleanup is retried on next delete.
+    }
+
+    // The counters are a cache of what is in the bucket, so a delete has to
+    // refresh them or the freed slot stays consumed forever. Best-effort: the
+    // object is already gone at this point, and failing the delete would be
+    // worse than drifting high, which the next delete or upload repairs.
+    const owner = data.key.split("/")[0] ?? "";
+    if (owner) {
+      try {
+        await resyncProfileQuota(owner);
+      } catch {
+        // Quota stays conservative until the next successful resync.
+      }
     }
 
     return { ok: true };

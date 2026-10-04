@@ -59,6 +59,30 @@ export type Database = {
         }
         Relationships: []
       }
+      document_upload_counters: {
+        Row: {
+          byte_count: number
+          doc_count: number
+          photo_count: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          byte_count?: number
+          doc_count?: number
+          photo_count?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          byte_count?: number
+          doc_count?: number
+          photo_count?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       documents: {
         Row: {
           ai_check_notes: string | null
@@ -700,6 +724,34 @@ export type Database = {
         Returns: boolean
       }
       is_approved: { Args: { _user_id: string }; Returns: boolean }
+      release_upload_quota: {
+        Args: {
+          p_folder: string
+          p_size_bytes: number
+          p_user_id: string
+        }
+        Returns: undefined
+      }
+      resync_upload_quota: {
+        Args: {
+          p_bytes: number
+          p_doc: number
+          p_photo: number
+          p_user_id: string
+        }
+        Returns: undefined
+      }
+      reserve_upload_quota: {
+        Args: {
+          p_folder: string
+          p_seed_bytes: number
+          p_seed_doc: number
+          p_seed_photo: number
+          p_size_bytes: number
+          p_user_id: string
+        }
+        Returns: undefined
+      }
     }
     Enums: {
       app_role: "admin" | "client"
