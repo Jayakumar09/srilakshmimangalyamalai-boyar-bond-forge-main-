@@ -604,9 +604,9 @@ export function DashboardPage() {
                   <div className="gold-rule h-px min-w-8 flex-1 opacity-70" />
                 </div>
 
-                {docsLoading ? (
+                {docsLoading && (
                   <p className="mt-4 text-sm text-muted-foreground">{t("adm_loading")}</p>
-                ) : (
+                )}
                   <div className="mt-4 space-y-6">
                     {/* Rendered even with zero photos: the Add Photo tile and its
                         file input live inside this section, so hiding it would strand
@@ -816,7 +816,6 @@ export function DashboardPage() {
                       </div>
 </div>
                   </div>
-                )}
 </section>
             </article>
           </>
