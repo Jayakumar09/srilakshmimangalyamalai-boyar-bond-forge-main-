@@ -623,7 +623,7 @@ export function DashboardPage() {
                                 {viewUrls[photo.storage_key] ? (
                                   <img
                                     src={viewUrls[photo.storage_key]}
-                                    alt={photo.file_name ?? t("photo")}
+                                    alt={t("photo")}
                                     className="size-full object-cover"
                                   />
                                 ) : (
