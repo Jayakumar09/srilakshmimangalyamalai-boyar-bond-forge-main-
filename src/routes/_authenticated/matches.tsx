@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { Heart, Ban, Flag, MessageSquare } from "lucide-react";
+import { Heart, Ban, Flag, MessageSquare, UserCheck } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useI18n } from "@/lib/i18n";
 import { SiteHeader } from "@/components/SiteHeader";
@@ -58,6 +58,7 @@ function Matches() {
   const [rows, setRows] = useState<Row[]>([]);
   const [shortlisted, setShortlisted] = useState<Set<string>>(new Set());
   const [blocked, setBlocked] = useState<Set<string>>(new Set());
+  const [unblocking, setUnblocking] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({
     ageMin: "",
@@ -148,6 +149,32 @@ function Matches() {
     await supabase.from("blocks").insert({ user_id: me.id, target_id: targetId });
     setBlocked((b) => new Set(b).add(targetId));
     toast.success(t("profile_blocked"));
+  }
+
+  async function unblockUser(targetId: string) {
+    if (!me) return;
+    if (unblocking.has(targetId)) return;
+    setUnblocking((u) => new Set(u).add(targetId));
+    const { error } = await supabase
+      .from("blocks")
+      .delete()
+      .eq("user_id", me.id)
+      .eq("target_id", targetId);
+    setUnblocking((u) => {
+      const n = new Set(u);
+      n.delete(targetId);
+      return n;
+    });
+    if (error) {
+      toast.error(error.message);
+    } else {
+      setBlocked((b) => {
+        const n = new Set(b);
+        n.delete(targetId);
+        return n;
+      });
+      toast.success(t("profile_unblocked"));
+    }
   }
 
   async function reportUser(targetId: string) {
@@ -313,10 +340,26 @@ function Matches() {
                   />
                   {shortlisted.has(r.id) ? t("shortlisted") : t("shortlist")}
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => blockUser(r.id)}>
-                  <Ban className="mr-1 size-4" />
-                  {t("block")}
-                </Button>
+                {blocked.has(r.id) ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => unblockUser(r.id)}
+                    disabled={unblocking.has(r.id)}
+                  >
+                    <UserCheck className="mr-1 size-4" />
+                    {t("unblock")}
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => blockUser(r.id)}
+                  >
+                    <Ban className="mr-1 size-4" />
+                    {t("block")}
+                  </Button>
+                )}
                 <Button size="sm" variant="ghost" onClick={() => reportUser(r.id)}>
                   <Flag className="mr-1 size-4" />
                   {t("report")}

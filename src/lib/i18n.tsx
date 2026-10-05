@@ -676,6 +676,8 @@ export const dict: Dict = {
     ta: "தவறான கட்டண குறிப்பு.",
   },
   profile_blocked: { en: "Profile blocked", ta: "சுயவிவரம் தடுக்கப்பட்டது" },
+  unblock: { en: "Unblock", ta: "தடை நீக்கு" },
+  profile_unblocked: { en: "Profile unblocked", ta: "சுயவிவரம் தடை நீக்கப்பட்டது" },
   report_prompt: {
     en: "Why are you reporting this profile?",
     ta: "இந்த சுயவிவரத்தை ஏன் புகார் செய்கிறீர்கள்?",
