@@ -21,6 +21,7 @@ import { CountryCodePhoneField } from "@/components/CountryCodePhoneField";
 import { TimeInput } from "@/components/TimeInput";
 import { normalizeInternationalPhone, splitInternationalPhone } from "@/lib/phone";
 import { DEFAULT_COUNTRY_ISO } from "@/lib/country-codes";
+import { MANDATORY_DOCUMENT, residencyFromPhone } from "@/lib/residency";
 import { isValidBirthTimeStrict } from "@/lib/format";
 import {
   CASTE_OPTIONS,
@@ -83,6 +84,10 @@ export function RegisterWizard() {
   const [ai, setAi] = useState<PreScreenResult | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [existingPhotoKey, setExistingPhotoKey] = useState<string | null>(null);
+  const [persistedDocs, setPersistedDocs] = useState<
+    { doc_type: string; id_kind: string | null }[]
+  >([]);
+  const [docsLoadFailed, setDocsLoadFailed] = useState(false);
   const [phoneIso, setPhoneIso] = useState<Record<string, string>>({});
   const [birthError, setBirthError] = useState("");
   const [phoneErrors, setPhoneErrors] = useState<Record<string, string>>({});
@@ -123,6 +128,19 @@ export function RegisterWizard() {
       setPhoneIso(isoNext);
       setExistingPhotoKey(profile.photo_url ?? null);
       if (profile.consent_accepted_at) setConsent(true);
+      const { data: docRows, error: docErr } = await supabase
+        .from("documents")
+        .select("doc_type, id_kind")
+        .eq("user_id", data.user.id);
+      if (docErr) {
+        // A failed read must never be mistaken for "the user has no documents":
+        // keep any already-loaded rows and flag the state as unavailable. The
+        // user is told when it matters, at submit time (see submitAll).
+        setDocsLoadFailed(true);
+      } else {
+        setDocsLoadFailed(false);
+        setPersistedDocs((docRows ?? []) as { doc_type: string; id_kind: string | null }[]);
+      }
     }
   }
 
@@ -137,6 +155,18 @@ export function RegisterWizard() {
       setCourseOther(true);
     }
   }, [form["education_level"], form["education_detail"]]);
+
+  /**
+   * Residency comes from the PRIMARY phone country only (never WhatsApp,
+   * IP or geolocation). "unknown" until the phone country is determinable.
+   */
+  const residency = residencyFromPhone(form["phone"]?.trim(), phoneIso["phone"]);
+
+  /** idKind must never contradict the residency-mandated document. */
+  useEffect(() => {
+    if (residency === "india" && idKind === "Passport") setIdKind("Aadhaar");
+    else if (residency === "abroad" && idKind === "Aadhaar") setIdKind("Passport");
+  }, [residency, idKind]);
 
   /** Persist the typed fields without touching documents, consent or approval status. */
   function profileFields(userId: string, email: string | null) {
@@ -350,12 +380,34 @@ export function RegisterWizard() {
         return;
       }
     }
-    const firstSubmission = !existingPhotoKey;
-    if (firstSubmission && (!photo || !idFile)) {
+    if (docsLoadFailed) {
+      toast.error(t("msg_something_wrong"));
+      return;
+    }
+    const hasPersistedPhoto =
+      Boolean(existingPhotoKey) || persistedDocs.some((d) => d.doc_type === "photo");
+    if (!hasPersistedPhoto && !photo) {
       toast.error(t("msg_docs_required"));
       return;
     }
-    if (firstSubmission && needsDivorceDoc && !divorceFile) {
+    const hasPersistedDoc = (kind: string) =>
+      persistedDocs.some((d) => d.doc_type !== "photo" && d.id_kind === kind);
+    const mandatoryDoc = MANDATORY_DOCUMENT[residency];
+    if (residency === "unknown" || !mandatoryDoc) {
+      toast.error(t("msg_phone_country_unknown"));
+      return;
+    }
+    const mandatorySatisfied =
+      hasPersistedDoc(mandatoryDoc) || (idKind === mandatoryDoc && Boolean(idFile));
+    if (!mandatorySatisfied) {
+      toast.error(t(residency === "abroad" ? "msg_mandatory_passport" : "msg_mandatory_aadhaar"));
+      return;
+    }
+    if (
+      needsDivorceDoc &&
+      !persistedDocs.some((d) => d.doc_type === "divorce_doc") &&
+      !divorceFile
+    ) {
       toast.error(t("msg_divorce_required"));
       return;
     }

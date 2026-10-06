@@ -39,6 +39,7 @@ export const ID_KINDS: ProfileOption[] = [
   { v: "PAN", labelKey: "id_pan" },
   { v: "Voter ID", labelKey: "id_voter" },
   { v: "Driving Licence", labelKey: "id_dl" },
+  { v: "Passport", labelKey: "id_passport" },
 ];
 
 /** Course options shown per education level. English labels (standard degree names). */

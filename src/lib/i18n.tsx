@@ -384,6 +384,10 @@ export const dict: Dict = {
     en: "A clear profile photo is required for verification.",
     ta: "சரிபார்ப்புக்கு தெளிவான சுயவிவர புகைப்படம் கட்டாயம்.",
   },
+  msg_phone_country_unknown: {
+    en: "Select your phone country and enter a valid mobile number.",
+    ta: "கைபேசி நாட்டைத் தேர்ந்தெடுத்து, சரியான கைபேசி எண்ணை உள்ளிடவும்.",
+  },
   msg_mandatory_aadhaar: {
     en: "Aadhaar is required for verification.",
     ta: "சரிபார்ப்புக்கு ஆதார் கட்டாயம்.",
