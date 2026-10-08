@@ -358,7 +358,6 @@ export function DashboardPage() {
         file_name: up.fileName,
         mime_type: up.mimeType,
         size_bytes: up.sizeBytes,
-        ai_check_status: "not_run",
       });
       if (error) throw error;
       toast.success(t("adm_uploaded"));
@@ -404,7 +403,6 @@ export function DashboardPage() {
         file_name: up.fileName,
         mime_type: up.mimeType,
         size_bytes: up.sizeBytes,
-        ai_check_status: "not_run",
       });
       if (error) throw error;
       toast.success(t("adm_uploaded"));
