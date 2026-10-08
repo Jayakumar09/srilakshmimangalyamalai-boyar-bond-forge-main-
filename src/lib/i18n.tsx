@@ -188,12 +188,18 @@ export const dict: Dict = {
   pref_height: { en: "Minimum height (cm)", ta: "குறைந்தபட்ச உயரம் (செ.மீ)" },
   pref_notes: { en: "Other expectations", ta: "பிற எதிர்பார்ப்புகள்" },
   birth_time: { en: "Birth time", ta: "பிறந்த நேரம்" },
-  time_invalid: { en: "Enter a valid time (e.g. 06:30 AM)", ta: "சரியான நேரத்தை உள்ளிடவும் (எ.கா. 06:30 AM)" },
+  time_invalid: {
+    en: "Enter a valid time (e.g. 06:30 AM)",
+    ta: "சரியான நேரத்தை உள்ளிடவும் (எ.கா. 06:30 AM)",
+  },
   hour: { en: "Hour", ta: "மணி" },
   minute: { en: "Minute", ta: "நிமிடம்" },
   time_period: { en: "AM/PM", ta: "AM/PM" },
   other: { en: "Other", ta: "மற்றவை" },
-  other_pick_from_list: { en: "← Choose from the list", ta: "← பட்டியலிலிருந்து தேர்ந்தெடுக்கவும்" },
+  other_pick_from_list: {
+    en: "← Choose from the list",
+    ta: "← பட்டியலிலிருந்து தேர்ந்தெடுக்கவும்",
+  },
   msg_img_decode_failed: {
     en: "This image could not be read. Please upload a valid JPG or PNG image.",
     ta: "இந்தப் படத்தைப் படிக்க முடியவில்லை. சரியான JPG அல்லது PNG படத்தைப் பதிவேற்றவும்.",
@@ -561,6 +567,10 @@ export const dict: Dict = {
     en: "Profile storage: 20 MB. Photos are optimized; at most 6 photos, 5 documents and 11 files in total.",
     ta: "சுயவிவர சேமிப்பு: 20 MB. புகைப்படங்கள் உகந்ததாக்கப்படும்; அதிகபட்சம் 6 புகைப்படங்கள், 5 ஆவணங்கள், மொத்தம் 11 கோப்புகள்.",
   },
+  upl_image_optimized: {
+    en: "Image optimized for faster upload.",
+    ta: "பதிவேற்றத்திற்காக படம் தானாகவே சுருக்கப்பட்டது.",
+  },
   upl_gallery_title: { en: "Photo Gallery", ta: "புகைப்பட கேலரி" },
   upl_gallery_sub: {
     en: "Add photos to your profile. The first photo is your main display photo.",
@@ -926,7 +936,7 @@ function updateDocumentLang(l: Lang) {
  */
 let currentLang: Lang =
   typeof window !== "undefined"
-    ? langFromPathname(window.location.pathname) ?? readStoredLang()
+    ? (langFromPathname(window.location.pathname) ?? readStoredLang())
     : "en";
 const localeListeners = new Set<() => void>();
 

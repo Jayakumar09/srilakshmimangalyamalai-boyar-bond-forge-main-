@@ -265,6 +265,215 @@ async function renderWebp(
   return new Promise((resolve) => canvas.toBlob(resolve, "image/webp", quality));
 }
 
+const IMAGE_OPTIMIZE_TARGET_BYTES = 1 * 1024 * 1024;
+const IMAGE_OPTIMIZE_QUALITIES = [0.92, 0.88, 0.84, 0.8, 0.76, 0.72, 0.68, 0.64, 0.6];
+const IMAGE_OPTIMIZE_MIN_EDGE = 640;
+const IMAGE_OPTIMIZE_SCALES = [1, 0.9, 0.8, 0.7, 0.6, 0.5];
+
+type OptimizeRenderer = "image/jpeg" | "image/png";
+
+type LadderResult = {
+  /** First candidate that fits the 1 MB target and shrinks the input. */
+  fit: Blob | null;
+  /** First candidate in ladder order (size, then quality) that clears 3 MB. */
+  best: Blob | null;
+};
+
+/**
+ * Pre-upload optimization for oversized images (>1 MB) so the hard per-folder
+ * safety gates (3 MB photos / 5 MB documents) always review a fitting input.
+ *
+ * Quality-first and dimension-conservative: candidates are encoded at the
+ * ORIGINAL dimensions at high quality first and only drop in quality step by
+ * step; the resolution is reduced proportionally (aspect ratio kept, never
+ * stretched) only after the quality floor is reached and the image is still
+ * over target. JPEG and photographic PNG input go straight to the
+ * high-quality JPEG ladder. Transparent PNGs are never flattened; opaque
+ * non-photographic PNGs (flat art, screenshots, scans) first try a lossless
+ * PNG ladder so they stay PNG whenever that meets the target, with JPEG only
+ * as a last resort. WebP input is optimized into the JPEG this app's
+ * validation accepts. The first result that fits ~1 MB is returned as-is.
+ * If 1 MB cannot be reached without severe loss, the least-reduced candidate
+ * that still clears the existing 3 MB gate (full resolution first, quality
+ * next) is kept and that gate decides. PDFs and non-images pass untouched.
+ */
+export async function optimizeLargeImage(file: File): Promise<File> {
+  const header = await readHeaderBytes(file);
+  const kind = detectFileKind(header);
+  const isWebp = kind === null && isWebpBytes(header);
+  if ((kind !== "jpeg" && kind !== "png" && !isWebp) || file.size <= IMAGE_OPTIMIZE_TARGET_BYTES) {
+    return file;
+  }
+
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    return file;
+  }
+
+  try {
+    if (!bitmap.width || !bitmap.height) return file;
+
+    let pngFallback: Blob | null = null;
+    if (kind === "png") {
+      const transparent = hasTransparency(bitmap);
+      // Alpha must never be flattened, and flat art/text stays lossless for as
+      // long as it can meet the target — only photographic content skips this.
+      if (transparent || !looksPhotographic(bitmap)) {
+        const png = await runOptimizeLadder(bitmap, file, "image/png");
+        if (png.fit) return toOptimizedFile(png.fit, file, "image/png");
+        if (transparent) {
+          return png.best ? toOptimizedFile(png.best, file, "image/png") : file;
+        }
+        // Opaque and still over target: try JPEG below before giving up.
+        pngFallback = png.best;
+      }
+    }
+
+    const jpeg = await runOptimizeLadder(bitmap, file, "image/jpeg");
+    if (jpeg.fit) return toOptimizedFile(jpeg.fit, file, "image/jpeg");
+    if (jpeg.best) return toOptimizedFile(jpeg.best, file, "image/jpeg");
+    return pngFallback ? toOptimizedFile(pngFallback, file, "image/png") : file;
+  } finally {
+    bitmap.close?.();
+  }
+}
+
+/**
+ * Walks the quality ladder at each sensible scale (largest first) and stops at
+ * the first candidate that fits the 1 MB target. When nothing fits, `best`
+ * holds the first candidate the existing 3 MB gate would still accept — the
+ * ladder enumerates full size before smaller sizes and high quality before
+ * low quality, so the fallback is the least-reduced version that can still be
+ * uploaded. Scales only shrink while both edges stay >= 640 px and the full
+ * size is always tried first. PNG is lossless, so it renders once per scale.
+ */
+async function runOptimizeLadder(
+  bitmap: ImageBitmap,
+  source: File,
+  mimeType: OptimizeRenderer,
+): Promise<LadderResult> {
+  const qualities: (number | null)[] = mimeType === "image/png" ? [null] : IMAGE_OPTIMIZE_QUALITIES;
+  let best: Blob | null = null;
+
+  for (const scale of IMAGE_OPTIMIZE_SCALES) {
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    if (scale < 1 && Math.min(width, height) < IMAGE_OPTIMIZE_MIN_EDGE) break;
+
+    for (const quality of qualities) {
+      const blob = await renderBlob(bitmap, width, height, mimeType, quality ?? undefined);
+      if (!blob) continue;
+      if (blob.size <= IMAGE_OPTIMIZE_TARGET_BYTES && blob.size < source.size) {
+        return { fit: blob, best: null };
+      }
+      if (!best && blob.size < source.size && blob.size <= MAX_PHOTO_INPUT_BYTES) {
+        best = blob;
+      }
+    }
+  }
+  return { fit: null, best };
+}
+
+function toOptimizedFile(blob: Blob, original: File, type: OptimizeRenderer): File {
+  return new File([blob], original.name, { type });
+}
+
+/** Detects WebP by its RIFF/WEBP magic bytes, never by the extension. */
+function isWebpBytes(bytes: Uint8Array): boolean {
+  return (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 && // R
+    bytes[1] === 0x49 && // I
+    bytes[2] === 0x46 && // F
+    bytes[3] === 0x46 && // F
+    bytes[8] === 0x57 && // W
+    bytes[9] === 0x45 && // E
+    bytes[10] === 0x42 && // B
+    bytes[11] === 0x50 // P
+  );
+}
+
+/**
+ * Cheap content heuristic on a 128 px sample: photos keep producing new
+ * colours as they are sampled down, while flat art, screenshots and scanned
+ * text saturate long before half of the sampled pixels are unique colours.
+ * Anything ambiguous counts as photographic (the JPEG-only behaviour).
+ */
+function looksPhotographic(bitmap: ImageBitmap): boolean {
+  const sampleEdge = 128;
+  const scale = Math.min(1, sampleEdge / Math.max(bitmap.width, bitmap.height));
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return true;
+  ctx.imageSmoothingQuality = "high";
+  try {
+    ctx.drawImage(bitmap, 0, 0, width, height);
+  } catch {
+    return true;
+  }
+  try {
+    const { data } = ctx.getImageData(0, 0, width, height);
+    const seen = new Set<number>();
+    for (let i = 0; i + 3 < data.length; i += 4) {
+      const r = data[i] ?? 255;
+      const g = data[i + 1] ?? 255;
+      const b = data[i + 2] ?? 255;
+      seen.add(((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3));
+    }
+    const sampled = width * height;
+    return seen.size >= 1024 && seen.size * 2 >= sampled;
+  } catch {
+    return true;
+  }
+}
+
+/** True when any pixel is fully or partially transparent. */
+function hasTransparency(bitmap: ImageBitmap): boolean {
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx || !bitmap.width || !bitmap.height) return false;
+  ctx.drawImage(bitmap, 0, 0);
+  try {
+    const { data } = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+    for (let i = 3; i < data.length; i += 16) {
+      if ((data[i] ?? 255) < 255) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+async function renderBlob(
+  bitmap: ImageBitmap,
+  width: number,
+  height: number,
+  mimeType: OptimizeRenderer,
+  quality?: number,
+): Promise<Blob | null> {
+  if (width > 16384 || height > 16384) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  try {
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(bitmap, 0, 0, width, height);
+  } catch {
+    return null;
+  }
+  return new Promise((resolve) => canvas.toBlob(resolve, mimeType, quality));
+}
+
 export async function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
