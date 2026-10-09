@@ -685,10 +685,32 @@ export function DashboardPage() {
                                         return next;
                                       })
                                     }
-                                    className="size-full object-cover"
+                                    className="size-full cursor-pointer object-cover"
+                                    onClick={() => openFile(photo.storage_key)}
+                                    role="button"
+                                    tabIndex={0}
+                                    aria-label={t("adm_view")}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter" || e.key === " ") {
+                                        e.preventDefault();
+                                        openFile(photo.storage_key);
+                                      }
+                                    }}
                                   />
                                 ) : (
-                                  <div className="flex size-full items-center justify-center bg-secondary/40 text-muted-foreground">
+                                  <div
+                                    className="flex size-full cursor-pointer items-center justify-center bg-secondary/40 text-muted-foreground"
+                                    onClick={() => openFile(photo.storage_key)}
+                                    role="button"
+                                    tabIndex={0}
+                                    aria-label={t("adm_view")}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter" || e.key === " ") {
+                                        e.preventDefault();
+                                        openFile(photo.storage_key);
+                                      }
+                                    }}
+                                  >
                                     <Images className="size-5" />
                                   </div>
                                 )}
