@@ -20,6 +20,17 @@ export const MAX_DELIVERY_ATTEMPTS = 5;
 // status, so a crashed run is always reclaimable (status stays 'pending').
 const LEASE_MINUTES = 5;
 
+// Persistence failures (a returned PostgREST `error`) are logged through the
+// shared console.error convention instead of being silently discarded. They are
+// deliberately NOT written back to receipt_error/notification_error: those
+// columns describe the delivery outcome, and a failed status write cannot
+// record itself. The delivery state is left recoverable (pending) so a later
+// pass can repair it without resending anything.
+function reportDbError(where: string, error: { message?: string } | null | undefined): void {
+  if (!error) return;
+  console.error(`[payment-delivery] ${where}: ${error.message ?? "unknown database error"}`);
+}
+
 type DeliveryRow = {
   payment_id: string;
   user_id: string;
@@ -192,12 +203,16 @@ async function sendPaymentVerifiedNotification(
   if (!member.email) return { sent: false, reason: "no email on profile" };
   const memberEmail = member.email;
 
-  const { data: existing } = await supabaseAdmin
+  const { data: existing, error: existingError } = await supabaseAdmin
     .from("notifications")
     .select("id, emailed")
     .eq("kind", "payment_verified_member")
     .eq("related_user_id", event.user_id)
     .maybeSingle();
+  // A read failure falls back to sending (the deterministic provider
+  // idempotency key still prevents a duplicate email), but it must not be
+  // silently discarded.
+  reportDbError("reading existing payment_verified notification", existingError);
   if (existing?.emailed) return { sent: true };
   const rowId = existing?.id ?? null;
 
@@ -207,9 +222,15 @@ async function sendPaymentVerifiedNotification(
 
   const recordFailure = async (reason: string) => {
     if (rowId) {
-      await supabaseAdmin.from("notifications").update({ emailed: false, email_error: reason }).eq("id", rowId);
+      const { error } = await supabaseAdmin
+        .from("notifications")
+        .update({ emailed: false, email_error: reason })
+        .eq("id", rowId);
+      // The payment_events notification_status write below still records the
+      // failed delivery; this only surfaces a failed notification-row write.
+      reportDbError("recording notification failure (update)", error);
     } else {
-      await supabaseAdmin.from("notifications").insert({
+      const { error } = await supabaseAdmin.from("notifications").insert({
         kind: "payment_verified_member",
         subject,
         body,
@@ -218,6 +239,7 @@ async function sendPaymentVerifiedNotification(
         emailed: false,
         email_error: reason,
       });
+      reportDbError("recording notification failure (insert)", error);
     }
   };
 
@@ -234,9 +256,13 @@ async function sendPaymentVerifiedNotification(
     });
     if (result.sent) {
       if (rowId) {
-        await supabaseAdmin.from("notifications").update({ emailed: true, email_error: null }).eq("id", rowId);
+        const { error } = await supabaseAdmin
+          .from("notifications")
+          .update({ emailed: true, email_error: null })
+          .eq("id", rowId);
+        reportDbError("recording notification success (update)", error);
       } else {
-        await supabaseAdmin.from("notifications").insert({
+        const { error } = await supabaseAdmin.from("notifications").insert({
           kind: "payment_verified_member",
           subject,
           body,
@@ -244,7 +270,10 @@ async function sendPaymentVerifiedNotification(
           related_user_id: event.user_id,
           emailed: true,
         });
+        reportDbError("recording notification success (insert)", error);
       }
+      // The email was accepted by the provider. A failed status write is a
+      // persistence problem and must not be reported as a failed delivery.
       return { sent: true };
     }
     await recordFailure(result.reason);
@@ -272,7 +301,8 @@ export async function processPendingPaymentDeliveries(opts?: {
     from(table: string): EventsBuilder;
   }).from("payment_events");
 
-  const { data } = await events.select("*").order("verified_at", { ascending: true });
+  const { data, error: loadError } = await events.select("*").order("verified_at", { ascending: true });
+  reportDbError("loading pending payment_events", loadError);
   const nowIso = new Date().toISOString();
   const ALL = ((data as DeliveryRow[]) ?? []).filter((r) =>
     opts?.paymentId ? r.payment_id === opts.paymentId : true,
@@ -288,7 +318,7 @@ export async function processPendingPaymentDeliveries(opts?: {
       !row.receipt_key;
 
     if (needsReceipt) {
-      const { data: claimed } = await events
+      const { data: claimed, error: claimError } = await events
         .update({
           receipt_attempts: (row.receipt_attempts ?? 0) + 1,
           receipt_lease_until: new Date(Date.now() + LEASE_MINUTES * 60_000).toISOString(),
@@ -300,23 +330,29 @@ export async function processPendingPaymentDeliveries(opts?: {
         .is("receipt_key", null)
         .select("payment_id,user_id,item,amount_inr,gateway_order_id,gateway_payment_id,verified_at")
         .maybeSingle();
+      // A claim error and a concurrent claim miss both leave the row
+      // reclaimable; they are logged but processed identically (skip this pass).
+      reportDbError(`claiming receipt for ${row.payment_id}`, claimError);
       if (!claimed) continue;
 
       try {
-        const { data: payment } = await supabaseAdmin
+        const { data: payment, error: paymentError } = await supabaseAdmin
           .from("payments")
           .select("method, utr_reference")
           .eq("id", claimed.payment_id)
           .maybeSingle();
-        const { data: member } = await supabaseAdmin
+        reportDbError(`loading payment source for ${claimed.payment_id}`, paymentError);
+        const { data: member, error: memberError } = await supabaseAdmin
           .from("profiles")
           .select("full_name, email")
           .eq("id", claimed.user_id)
           .maybeSingle();
+        reportDbError(`loading receipt member for ${claimed.payment_id}`, memberError);
         const taxClient = (supabaseAdmin as unknown as {
       from(table: string): EventsBuilder;
     }).from("payment_tax_config");
-        const { data: tax } = await taxClient.select("*").eq("item", claimed.item).maybeSingle();
+        const { data: tax, error: taxError } = await taxClient.select("*").eq("item", claimed.item).maybeSingle();
+        reportDbError(`loading tax config for ${claimed.payment_id}`, taxError);
 
         const html = buildReceiptHtml({
           event: claimed,
@@ -326,7 +362,7 @@ export async function processPendingPaymentDeliveries(opts?: {
         });
         const key = await storeReceipt(claimed, html);
 
-        const { data: committed } = await events
+        const { data: committed, error: commitError } = await events
           .update({
             receipt_status: "generated",
             receipt_key: key,
@@ -337,12 +373,17 @@ export async function processPendingPaymentDeliveries(opts?: {
           .is("receipt_key", null)
           .select("payment_id")
           .maybeSingle();
+        // The receipt object is already in R2 under its deterministic key, so a
+        // failed status write is a persistence problem, not a delivery failure:
+        // the row stays pending (never "failed") and the next pass commits it.
+        reportDbError(`committing receipt for ${claimed.payment_id}`, commitError);
         if (committed) receipts++;
       } catch (err) {
         const message = err instanceof Error ? err.message : "receipt generation failed";
-        await events
+        const { error: failError } = await events
           .update({ receipt_status: "failed", receipt_error: message, receipt_lease_until: null })
           .eq("payment_id", claimed.payment_id);
+        reportDbError(`recording receipt failure for ${claimed.payment_id}`, failError);
       }
     }
 
@@ -351,7 +392,7 @@ export async function processPendingPaymentDeliveries(opts?: {
       (row.notification_attempts ?? 0) < MAX_DELIVERY_ATTEMPTS;
 
     if (needsNotification) {
-      const { data: claimed } = await events
+      const { data: claimed, error: claimError } = await events
         .update({
           notification_attempts: (row.notification_attempts ?? 0) + 1,
         })
@@ -360,26 +401,33 @@ export async function processPendingPaymentDeliveries(opts?: {
         .eq("notification_attempts", row.notification_attempts ?? 0)
         .select("payment_id,user_id,item,amount_inr,verified_at")
         .maybeSingle();
+      reportDbError(`claiming notification for ${row.payment_id}`, claimError);
       if (!claimed) continue;
 
-      const { data: member } = await supabaseAdmin
+      const { data: member, error: memberError } = await supabaseAdmin
         .from("profiles")
         .select("full_name, email")
         .eq("id", claimed.user_id)
         .maybeSingle();
+      reportDbError(`loading notification member for ${claimed.payment_id}`, memberError);
       const result = await sendPaymentVerifiedNotification(
         claimed,
         (member ?? { full_name: null, email: null }) as MemberContact,
       );
       if (result.sent) {
-        await events
+        const { error: sentError } = await events
           .update({ notification_status: "sent", notification_sent_at: nowIso, notification_error: null })
           .eq("payment_id", claimed.payment_id);
+        // Delivery succeeded (email accepted; deterministic provider
+        // idempotency key preserved). A failed status write leaves the row
+        // pending so the next pass reconciles it WITHOUT resending the email.
+        reportDbError(`recording notification sent for ${claimed.payment_id}`, sentError);
         notifications++;
       } else {
-        await events
+        const { error: failedError } = await events
           .update({ notification_status: "failed", notification_error: result.reason ?? "send failed" })
           .eq("payment_id", claimed.payment_id);
+        reportDbError(`recording notification failure for ${claimed.payment_id}`, failedError);
       }
     }
   }
@@ -419,7 +467,8 @@ export const retryPaymentDeliveries = createServerFn({ method: "POST" })
           .update({ receipt_status: "pending", receipt_error: null, receipt_lease_until: null, receipt_attempts: 0 })
           .in("receipt_status", ["pending", "failed"])
           .is("receipt_key", null);
-    await q1;
+    const { error: resetReceiptError } = await q1;
+    reportDbError("resetting receipt state for admin retry", resetReceiptError);
 
     const q2 = data.paymentId
       ? events
@@ -429,7 +478,8 @@ export const retryPaymentDeliveries = createServerFn({ method: "POST" })
       : events
           .update({ notification_status: "pending", notification_error: null, notification_attempts: 0 })
           .in("notification_status", ["pending", "failed"]);
-    await q2;
+    const { error: resetNotificationError } = await q2;
+    reportDbError("resetting notification state for admin retry", resetNotificationError);
 
     const summary = await processPendingPaymentDeliveries(
       data.paymentId ? { paymentId: data.paymentId } : undefined,

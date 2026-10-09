@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { runBackgroundTask } from "@/lib/background-task";
 
 export const PRICES = { standard: 2000, premium: 5000, jathagam: 500 } as const;
 export type PayItem = keyof typeof PRICES;
@@ -217,14 +218,13 @@ export const confirmPaymentOrder = createServerFn({ method: "POST" })
       return { ok: true, item: row.item, alreadyProcessed: true };
     }
     // Receipt + client notification delivery is downstream, best-effort and
-    // never blocks or reverses the completed verification.
-    void import("@/lib/receipts.functions").then((m) =>
-      m
-        .processPendingPaymentDeliveries({ paymentId: paidPaymentId })
-        .catch((err) => {
-          console.error("[payment-delivery] processPendingPaymentDeliveries failed", err);
-        }),
-    );
+    // never reverses the completed verification. It is attached to the Worker
+    // lifecycle (waitUntil) so the response can return while delivery finishes,
+    // instead of a detached promise the runtime may drop.
+    await runBackgroundTask(async () => {
+      const m = await import("@/lib/receipts.functions");
+      await m.processPendingPaymentDeliveries({ paymentId: paidPaymentId });
+    });
     return { ok: true, item: row.item };
   });
 
@@ -346,14 +346,13 @@ export const reviewPayment = createServerFn({ method: "POST" })
       }
 
       // Receipt + notification delivery is downstream, best-effort and never
-      // blocks or reverses the completed verification.
-      void import("@/lib/receipts.functions").then((m) =>
-        m
-          .processPendingPaymentDeliveries({ paymentId: data.paymentId })
-          .catch((err) => {
-            console.error("[payment-delivery] processPendingPaymentDeliveries failed", err);
-          }),
-      );
+      // reverses the completed verification. It is attached to the Worker
+      // lifecycle (waitUntil) so the response can return while delivery
+      // finishes, instead of a detached promise the runtime may drop.
+      await runBackgroundTask(async () => {
+        const m = await import("@/lib/receipts.functions");
+        await m.processPendingPaymentDeliveries({ paymentId: data.paymentId });
+      });
     }
 
     return { ok: true };
