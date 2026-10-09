@@ -219,7 +219,11 @@ export const confirmPaymentOrder = createServerFn({ method: "POST" })
     // Receipt + client notification delivery is downstream, best-effort and
     // never blocks or reverses the completed verification.
     void import("@/lib/receipts.functions").then((m) =>
-      m.processPendingPaymentDeliveries({ paymentId: paidPaymentId }).catch(() => {}),
+      m
+        .processPendingPaymentDeliveries({ paymentId: paidPaymentId })
+        .catch((err) => {
+          console.error("[payment-delivery] processPendingPaymentDeliveries failed", err);
+        }),
     );
     return { ok: true, item: row.item };
   });
@@ -344,7 +348,11 @@ export const reviewPayment = createServerFn({ method: "POST" })
       // Receipt + notification delivery is downstream, best-effort and never
       // blocks or reverses the completed verification.
       void import("@/lib/receipts.functions").then((m) =>
-        m.processPendingPaymentDeliveries({ paymentId: data.paymentId }).catch(() => {}),
+        m
+          .processPendingPaymentDeliveries({ paymentId: data.paymentId })
+          .catch((err) => {
+            console.error("[payment-delivery] processPendingPaymentDeliveries failed", err);
+          }),
       );
     }
 
