@@ -6,6 +6,33 @@ import { AdminShell } from "@/components/admin/AdminShell";
 import { DataTable, EmptyState, SectionCard, StatusBadge, toneForStatus } from "@/components/admin/AdminUI";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { MAX_DELIVERY_ATTEMPTS } from "@/lib/receipts.functions";
+
+function DeliveryStatus({
+  label,
+  status,
+  attempts,
+  error,
+}: {
+  label: string;
+  status: string | null;
+  attempts: number | null;
+  error: string | null;
+}) {
+  return (
+    <span className="inline-flex flex-col">
+      <span>
+        {label}: {status ?? "\u2014"}
+        {typeof attempts === "number" ? ` (${attempts}/${MAX_DELIVERY_ATTEMPTS})` : ""}
+      </span>
+      {error ? (
+        <span className="max-w-[16rem] truncate text-destructive" title={error}>
+          {error}
+        </span>
+      ) : null}
+    </span>
+  );
+}
 
 export function AdminPayments() {
   const { t } = useI18n();
@@ -88,10 +115,19 @@ export function AdminPayments() {
                               {t("adm_retry_delivery")}
                             </Button>
                           )}
-                          <span className="text-xs text-muted-foreground">
-                            {t("adm_receipt_status")}: {d.deliveries[p.id]?.receipt_status ?? "\u2014"}
-                            {", "}
-                            {t("adm_notif_status")}: {d.deliveries[p.id]?.notification_status ?? "\u2014"}
+                          <span className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+                            <DeliveryStatus
+                              label={t("adm_receipt_status")}
+                              status={d.deliveries[p.id]?.receipt_status ?? null}
+                              attempts={d.deliveries[p.id]?.receipt_attempts ?? null}
+                              error={d.deliveries[p.id]?.receipt_error ?? null}
+                            />
+                            <DeliveryStatus
+                              label={t("adm_notif_status")}
+                              status={d.deliveries[p.id]?.notification_status ?? null}
+                              attempts={d.deliveries[p.id]?.notification_attempts ?? null}
+                              error={d.deliveries[p.id]?.notification_error ?? null}
+                            />
                           </span>
                         </>
                       )}

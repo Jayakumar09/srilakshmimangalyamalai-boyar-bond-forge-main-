@@ -163,6 +163,10 @@ export type AdminDelivery = {
   payment_id: string;
   receipt_status: string | null;
   notification_status: string | null;
+  receipt_error: string | null;
+  notification_error: string | null;
+  receipt_attempts: number | null;
+  notification_attempts: number | null;
 };
 
 export const R2_QUOTA_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB free tier
@@ -230,9 +234,11 @@ export function useAdminData() {
         select(
           cols: string,
         ): Promise<{
-          data: Array<{ payment_id: string; receipt_status: string | null; notification_status: string | null }> | null;
+          data: Array<AdminDelivery> | null;
         }>;
-      }).select("payment_id, receipt_status, notification_status"),
+      }).select(
+        "payment_id, receipt_status, notification_status, receipt_error, notification_error, receipt_attempts, notification_attempts",
+      ),
     ]);
     setProfiles((profileRows ?? []) as AdminProfile[]);
     setDocs((documents ?? []) as AdminDoc[]);
