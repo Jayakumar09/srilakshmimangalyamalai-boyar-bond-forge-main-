@@ -119,6 +119,7 @@ export type AdminPayment = {
   proof_key: string | null;
   status: "submitted" | "verified" | "rejected";
   created_at: string;
+  verified_at: string | null;
 };
 
 export type AdminJathagam = {
@@ -208,7 +209,7 @@ export function useAdminData() {
       supabase
         .from("payments")
         .select(
-          "id, user_id, item, amount_inr, method, utr_reference, proof_key, status, created_at",
+          "id, user_id, item, amount_inr, method, utr_reference, proof_key, status, created_at, verified_at",
         )
         .order("created_at", { ascending: false }),
       supabase

@@ -474,6 +474,11 @@ export const dict: Dict = {
   adm_receipt_status: { en: "Receipt", ta: "ரசீது" },
   adm_notif_status: { en: "Notif", ta: "அறிவிப்பு" },
   adm_retry_delivery: { en: "Retry delivery", ta: "மீண்டும் முயற்சி" },
+  adm_verified_on: { en: "Verified", ta: "சரிபார்க்கப்பட்டது" },
+  adm_no_delivery_event: {
+    en: "No delivery event recorded",
+    ta: "டெலிவரி நிகழ்வு பதிவு செய்யப்படவில்லை",
+  },
   adm_jat_requests: { en: "Jathagam requests", ta: "ஜாதக கோரிக்கைகள்" },
   adm_active_alerts: { en: "Recent alerts", ta: "சமீபத்திய அறிவிப்புகள்" },
   adm_system_usage: { en: "System usage", ta: "அமைப்பு பயன்பாடு" },

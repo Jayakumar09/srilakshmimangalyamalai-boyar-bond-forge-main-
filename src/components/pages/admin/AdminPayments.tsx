@@ -91,6 +91,11 @@ export function AdminPayments() {
                   </td>
                   <td className="py-2 pr-4 text-muted-foreground">
                     {new Date(p.created_at).toLocaleDateString()}
+                    {p.verified_at && (
+                      <span className="block text-xs">
+                        {t("adm_verified_on")} {new Date(p.verified_at).toLocaleDateString()}
+                      </span>
+                    )}
                   </td>
                   <td className="py-2 pr-4">
                     <StatusBadge tone={toneForStatus(p.status)}>{statusLabel(t, p.status)}</StatusBadge>
@@ -130,6 +135,11 @@ export function AdminPayments() {
                             />
                           </span>
                         </>
+                      )}
+                      {p.status === "verified" && !d.deliveries[p.id] && (
+                        <span className="text-xs text-muted-foreground">
+                          {t("adm_no_delivery_event")}
+                        </span>
                       )}
                       {p.status === "submitted" && (
                         <>
