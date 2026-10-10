@@ -34,6 +34,12 @@ export const FAMILY_STATUSES: ProfileOption[] = [
   { v: "Affluent", labelKey: "fam_affluent" },
 ];
 
+export const FAMILY_VALUES: ProfileOption[] = [
+  { v: "below_5cr", labelKey: "fam_value_below_5cr" },
+  { v: "5_10cr", labelKey: "fam_value_5_10cr" },
+  { v: "above_10cr", labelKey: "fam_value_above_10cr" },
+];
+
 export const ID_KINDS: ProfileOption[] = [
   { v: "Aadhaar", labelKey: "id_aadhaar" },
   { v: "PAN", labelKey: "id_pan" },

@@ -9,6 +9,7 @@ const PLAN_KEYS: Record<string, string> = {
   community_starter: "plan_item_free",
   standard: "plan_item_standard",
   premium: "plan_item_premium",
+  elite: "plan_item_elite",
   jathagam: "plan_item_jathagam",
   horoscope_report: "plan_item_jathagam",
 };

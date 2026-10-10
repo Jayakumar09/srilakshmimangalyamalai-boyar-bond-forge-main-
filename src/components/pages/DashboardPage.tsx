@@ -43,7 +43,7 @@ type Profile = Record<string, string | number | null> & {
   client_profile_id: string | null;
   full_name: string | null;
   status: "pending" | "approved" | "rejected";
-  membership_plan: "free" | "standard" | "premium";
+  membership_plan: "free" | "standard" | "premium" | "elite";
   plan_valid_until: string | null;
   admin_notes: string | null;
   submitted_at: string | null;

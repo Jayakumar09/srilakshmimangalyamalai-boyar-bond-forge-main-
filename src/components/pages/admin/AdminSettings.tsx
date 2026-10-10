@@ -45,8 +45,9 @@ export function AdminSettings() {
         <SectionCard title={t("plans_title")}>
           <ul className="space-y-1 text-sm">
             <li>{t("plan_free")} — ₹0</li>
-            <li>{t("plan_std")} — ₹2,000</li>
+            <li>{t("plan_std")} — ₹3,000</li>
             <li>{t("plan_prem")} — ₹5,000</li>
+            <li>{t("plan_elite")} — ₹10,000</li>
             <li>{t("jat_page_title")} — ₹500</li>
           </ul>
         </SectionCard>

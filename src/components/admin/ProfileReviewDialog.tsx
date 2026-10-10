@@ -21,6 +21,7 @@ import {
   EDUCATION_LEVELS,
   FAMILY_STATUSES,
   FAMILY_TYPES,
+  FAMILY_VALUES,
   GENDERS,
   ID_KINDS,
   MARITAL_STATUSES,
@@ -103,6 +104,7 @@ const EDIT_FIELDS: Record<string, EditField> = {
   about: { key: "about", labelKey: "adm_f_about", kind: "textarea", maxLength: 800, full: true },
   family_type: { key: "family_type", labelKey: "family_type", kind: "choice", options: FAMILY_TYPES },
   family_status: { key: "family_status", labelKey: "family_status", kind: "choice", options: FAMILY_STATUSES },
+  family_value: { key: "family_value", labelKey: "family_value", kind: "choice", options: FAMILY_VALUES },
   father_name: { key: "father_name", labelKey: "father_name", kind: "text", maxLength: 100 },
   father_occupation: { key: "father_occupation", labelKey: "father_occ", kind: "lookup", category: "occupation", includeOther: true },
   mother_name: { key: "mother_name", labelKey: "mother_name", kind: "text", maxLength: 100 },
@@ -195,6 +197,7 @@ const DISPLAY_SECTIONS: { titleKey: string; fields: { key: string; labelKey: str
     fields: [
       { key: "family_type", labelKey: "family_type" },
       { key: "family_status", labelKey: "family_status" },
+      { key: "family_value", labelKey: "family_value" },
       { key: "father_name", labelKey: "father_name" },
       { key: "father_occupation", labelKey: "father_occ" },
       { key: "mother_name", labelKey: "mother_name" },
@@ -234,7 +237,7 @@ const EDIT_SECTION_FIELDS: { titleKey: string; keys: string[] }[] = [
   },
   {
     titleKey: "adm_family",
-    keys: ["family_type", "family_status", "father_name", "father_occupation", "mother_name", "mother_occupation", "brothers", "sisters", "family_details"],
+    keys: ["family_type", "family_status", "family_value", "father_name", "father_occupation", "mother_name", "mother_occupation", "brothers", "sisters", "family_details"],
   },
   {
     titleKey: "adm_prefs",

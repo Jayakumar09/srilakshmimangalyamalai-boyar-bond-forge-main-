@@ -81,6 +81,11 @@ export const dict: Dict = {
     en: "For professional degree holders — Engineering, Medical, Post-graduates.",
     ta: "தொழில்முறை பட்டதாரிகளுக்கு — பொறியியல், மருத்துவம், முதுநிலை.",
   },
+  plan_elite: { en: "Elite Plan", ta: "எலைட் திட்டம்" },
+  plan_elite_d: {
+    en: "For families with a stated family value above ₹10 crore — all Premium benefits with priority support.",
+    ta: "₹10 கோடிக்கு மேல் குடும்ப மதிப்பு அறிவித்த குடும்பங்களுக்கு — அனைத்து பிரீமியம் சலுகைகளுடன் முன்னுரிமை உதவி.",
+  },
   jathagam: { en: "Jathagam (horoscope) report", ta: "ஜாதகம் அறிக்கை" },
   jathagam_d: {
     en: "Add-on service prepared by our astrologer and delivered as a PDF.",
@@ -183,6 +188,11 @@ export const dict: Dict = {
   sisters: { en: "Sisters", ta: "சகோதரிகள்" },
   family_type: { en: "Family type", ta: "குடும்ப வகை" },
   family_status: { en: "Family status", ta: "குடும்ப நிலை" },
+  family_value: { en: "Family value (stated)", ta: "குடும்ப மதிப்பு (அறிவித்தது)" },
+  fam_value_below_5cr: { en: "Below ₹5 crore", ta: "₹5 கோடிக்கு கீழ்" },
+  fam_value_5_10cr: { en: "₹5 crore – ₹10 crore", ta: "₹5 கோடி – ₹10 கோடி" },
+  fam_value_above_10cr: { en: "Above ₹10 crore", ta: "₹10 கோடிக்கு மேல்" },
+  fam_value_not_stated: { en: "Not stated", ta: "அறிவிக்கப்படவில்லை" },
   family_details: { en: "Other family details", ta: "பிற குடும்ப விவரங்கள்" },
   pref_age: { en: "Preferred age range", ta: "விரும்பும் வயது வரம்பு" },
   pref_height: { en: "Minimum height (cm)", ta: "குறைந்தபட்ச உயரம் (செ.மீ)" },
@@ -296,6 +306,10 @@ export const dict: Dict = {
     ta: "UPI அல்லது நேரடி வங்கி பரிமாற்றம் மூலம் செலுத்தி, UTR குறிப்பு எண்ணை நிர்வாக சரிபார்ப்புக்கு சமர்ப்பியுங்கள்.",
   },
   pay_manual: { en: "Pay by UPI / Bank transfer", ta: "UPI / வங்கி மூலம் செலுத்துங்கள்" },
+  elite_eligibility_note: {
+    en: "The Elite plan (₹10,000) is available only to families with a stated family value above ₹10 crore. This can be set under Family in your profile.",
+    ta: "எலைட் திட்டம் (₹10,000) ₹10 கோடிக்கு மேல் குடும்ப மதிப்பு அறிவித்த குடும்பங்களுக்கு மட்டுமே. இதை உங்கள் சுயவிவரத்தின் குடும்ப பிரிவில் அமைக்கலாம்.",
+  },
   utr: { en: "UTR / reference number", ta: "UTR / குறிப்பு எண்" },
   payment_proof: { en: "Payment screenshot", ta: "கட்டண திரைப்பிடிப்பு" },
   submit_payment: { en: "Submit for verification", ta: "சரிபார்ப்புக்கு சமர்ப்பி" },
@@ -626,6 +640,7 @@ export const dict: Dict = {
   plan_item_free: { en: "Community Starter", ta: "சமூக தொடக்கம்" },
   plan_item_standard: { en: "Standard", ta: "ஸ்டாண்டர்ட்" },
   plan_item_premium: { en: "Premium", ta: "பிரீமியம்" },
+  plan_item_elite: { en: "Elite", ta: "எலைட்" },
   plan_item_jathagam: { en: "Horoscope Report", ta: "ஜாதக அறிக்கை" },
   // Status labels
   st_pending: { en: "Pending", ta: "நிலுவையில்" },

@@ -73,6 +73,7 @@ export function AdminMembers() {
             <option value="free">{t("plan_item_free")}</option>
             <option value="standard">{t("plan_item_standard")}</option>
             <option value="premium">{t("plan_item_premium")}</option>
+            <option value="elite">{t("plan_item_elite")}</option>
           </select>
           <select className={selectClass} value={origin} onChange={(e) => setOrigin(e.target.value)}>
             <option value="all">{t("adm_all")}</option>

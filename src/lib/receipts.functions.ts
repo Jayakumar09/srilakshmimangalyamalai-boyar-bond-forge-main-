@@ -34,7 +34,7 @@ function reportDbError(where: string, error: { message?: string } | null | undef
 type DeliveryRow = {
   payment_id: string;
   user_id: string;
-  item: "standard" | "premium" | "jathagam";
+  item: "standard" | "premium" | "elite" | "jathagam";
   amount_inr: number;
   gateway_order_id: string | null;
   gateway_payment_id: string | null;

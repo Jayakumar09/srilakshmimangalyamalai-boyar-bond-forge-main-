@@ -30,6 +30,7 @@ import {
   EDUCATION_LEVELS,
   FAMILY_STATUSES,
   FAMILY_TYPES,
+  FAMILY_VALUES,
   GENDERS,
   ID_KINDS,
   MARITAL_STATUSES,
@@ -211,6 +212,7 @@ export function RegisterWizard() {
       sisters: num("sisters"),
       family_type: form["family_type"] ?? null,
       family_status: form["family_status"] ?? null,
+      family_value: form["family_value"] ?? null,
       family_details: form["family_details"] ?? null,
       pref_age_min: num("pref_age_min"),
       pref_age_max: num("pref_age_max"),
@@ -770,6 +772,13 @@ export function RegisterWizard() {
                   value={form["family_status"] ?? ""}
                   onChange={set("family_status")}
                   options={choice(FAMILY_STATUSES)(t)}
+                />
+              </Labeled>
+              <Labeled label={t("family_value")}>
+                <Choice
+                  value={form["family_value"] ?? ""}
+                  onChange={set("family_value")}
+                  options={choice(FAMILY_VALUES)(t)}
                 />
               </Labeled>
               <Labeled label={t("family_details")} full>

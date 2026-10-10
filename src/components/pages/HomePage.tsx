@@ -34,6 +34,20 @@ const points = {
       "ஒரு வருட செல்லுபடி",
     ],
   },
+  elite: {
+    en: [
+      "Everything in Premium",
+      "For families with a stated family value above ₹10 crore",
+      "Dedicated account manager",
+      "Priority matchmaking",
+    ],
+    ta: [
+      "பிரீமியம் திட்டத்தில் உள்ள அனைத்தும்",
+      "₹10 கோடிக்கு மேல் குடும்ப மதிப்பு அறிவித்த குடும்பங்களுக்கு",
+      "அர்ப்பணிப்பு கணக்கு மேலாளர்",
+      "முன்னுரிமை திருமண பொருத்தம்",
+    ],
+  },
 };
 
 export function HomePage() {
@@ -49,12 +63,13 @@ export function HomePage() {
     { name: t("plan_free"), price: "₹0", body: t("plan_free_d"), points: points.free[lang] },
     {
       name: t("plan_std"),
-      price: "₹2,000",
+      price: "₹3,000",
       body: t("plan_std_d"),
       points: points.std[lang],
       featured: true,
     },
     { name: t("plan_prem"), price: "₹5,000", body: t("plan_prem_d"), points: points.prem[lang] },
+    { name: t("plan_elite"), price: "₹10,000", body: t("plan_elite_d"), points: points.elite[lang] },
   ];
 
   return (

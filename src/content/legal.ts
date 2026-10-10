@@ -16,8 +16,8 @@ export const termsSections: LegalSection[] = [
           heading: { en: "2. Strict No-Refund Policy", ta: "2. கடுமையான பணத்திரும்ப மறுப்புக் கொள்கை" },
           body: [
             {
-              en: "All subscription fees — Standard ₹2,000 and Premium ₹5,000 — and the Jathagam add-on fee of ₹500, paid by UPI or card, are strictly non-refundable under any circumstances once the payment is processed and the account or service is activated.",
-              ta: "அனைத்து சந்தா கட்டணங்களும் — சாதாரணம் ₹2,000 மற்றும் பிரீமியம் ₹5,000 — மற்றும் ஜாதக சேவைக்கான ₹500 கட்டணமும், UPI அல்லது கார்டு மூலம் செலுத்தப்பட்ட பிறகு கணக்கு அல்லது சேவை செயல்படுத்தப்பட்டவுடன், எந்தச் சூழ்நிலையிலும் திரும்பத் தரப்படாது.",
+              en: "All subscription fees — Standard ₹3,000, Premium ₹5,000 and Elite ₹10,000 — and the Jathagam add-on fee of ₹500, paid by UPI or card, are strictly non-refundable under any circumstances once the payment is processed and the account or service is activated.",
+              ta: "அனைத்து சந்தா கட்டணங்களும் — சாதாரணம் ₹3,000, பிரீமியம் ₹5,000 மற்றும் எலைட் ₹10,000 — மற்றும் ஜாதக சேவைக்கான ₹500 கட்டணமும், UPI அல்லது கார்டு மூலம் செலுத்தப்பட்ட பிறகு கணக்கு அல்லது சேவை செயல்படுத்தப்பட்டவுடன், எந்தச் சூழ்நிலையிலும் திரும்பத் தரப்படாது.",
             },
             {
               en: "These fees cover administrative expenses, identity verification work, and secure database maintenance, all of which are incurred immediately and cannot be reversed.",
@@ -171,8 +171,8 @@ export const refundSections: LegalSection[] = [
           heading: { en: "No refunds", ta: "பணம் திரும்பத் தரப்படாது" },
           body: [
             {
-              en: "All payments made to Sri Lakshmi Mangalya Malai are final. Standard Plan (₹2,000), Premium Plan (₹5,000) and the Jathagam add-on (₹500), whether paid by UPI or by card, are strictly non-refundable once processed and once the account or service has been activated.",
-              ta: "ஸ்ரீ லட்சுமி மங்கல்ய மாலைக்கு செலுத்தப்படும் அனைத்துக் கட்டணங்களும் இறுதியானவை. சாதாரண திட்டம் (₹2,000), பிரீமியம் திட்டம் (₹5,000) மற்றும் ஜாதக சேவை (₹500) — UPI அல்லது கார்டு எதுவாயினும் — கணக்கு அல்லது சேவை செயல்படுத்தப்பட்ட பிறகு திரும்பத் தரப்படாது.",
+              en: "All payments made to Sri Lakshmi Mangalya Malai are final. Standard Plan (₹3,000), Premium Plan (₹5,000), Elite Plan (₹10,000) and the Jathagam add-on (₹500), whether paid by UPI or by card, are strictly non-refundable once processed and once the account or service has been activated.",
+              ta: "ஸ்ரீ லட்சுமி மங்கல்ய மாலைக்கு செலுத்தப்படும் அனைத்துக் கட்டணங்களும் இறுதியானவை. சாதாரண திட்டம் (₹3,000), பிரீமியம் திட்டம் (₹5,000), எலைட் திட்டம் (₹10,000) மற்றும் ஜாதக சேவை (₹500) — UPI அல்லது கார்டு எதுவாயினும் — கணக்கு அல்லது சேவை செயல்படுத்தப்பட்ட பிறகு திரும்பத் தரப்படாது.",
             },
             {
               en: "This applies equally if you find a match elsewhere, stop using the service, delete your profile, or if your profile is terminated for breach of the Terms & Conditions.",

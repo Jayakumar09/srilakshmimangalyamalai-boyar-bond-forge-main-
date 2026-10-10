@@ -16,6 +16,7 @@ import {
   EDUCATION_LEVELS,
   FAMILY_STATUSES,
   FAMILY_TYPES,
+  FAMILY_VALUES,
   GENDERS,
   ID_KINDS,
   MARITAL_STATUSES,
@@ -96,6 +97,7 @@ const SECTIONS: { titleKey: string; fields: FieldDef[] }[] = [
     fields: [
       { kind: "choice", key: "family_type", labelKey: "family_type", options: FAMILY_TYPES },
       { kind: "choice", key: "family_status", labelKey: "family_status", options: FAMILY_STATUSES },
+      { kind: "choice", key: "family_value", labelKey: "family_value", options: FAMILY_VALUES },
       { kind: "input", key: "father_name", labelKey: "father_name" },
       { kind: "lookup", key: "father_occupation", labelKey: "father_occ", category: "occupation", includeOther: true },
       { kind: "input", key: "mother_name", labelKey: "mother_name" },

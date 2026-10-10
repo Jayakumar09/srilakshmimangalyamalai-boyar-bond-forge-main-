@@ -42,6 +42,7 @@ export type AdminProfile = {
   sisters?: number | null;
   family_type?: string | null;
   family_status?: string | null;
+  family_value?: "below_5cr" | "5_10cr" | "above_10cr" | null;
   family_details?: string | null;
   pref_notes?: string | null;
   pref_age_min?: number | null;
@@ -58,7 +59,7 @@ export type AdminProfile = {
   admin_notes?: string | null;
   client_profile_id?: string | null;
   photo_url: string | null;
-  membership_plan: "free" | "standard" | "premium";
+  membership_plan: "free" | "standard" | "premium" | "elite";
   status: "pending" | "approved" | "rejected";
   submitted_at: string | null;
   created_at: string | null;

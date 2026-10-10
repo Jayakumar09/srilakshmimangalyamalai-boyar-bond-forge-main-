@@ -3,16 +3,39 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { runBackgroundTask } from "@/lib/background-task";
 
-export const PRICES = { standard: 2000, premium: 5000, jathagam: 500 } as const;
+export const PRICES = { standard: 3000, premium: 5000, elite: 10000, jathagam: 500 } as const;
 export type PayItem = keyof typeof PRICES;
 
-const ItemSchema = z.enum(["standard", "premium", "jathagam"]);
+const ItemSchema = z.enum(["standard", "premium", "elite", "jathagam"]);
+
+/** Stated family value bucket required to purchase the Elite plan. */
+const ELITE_FAMILY_VALUE = "above_10cr";
+
+/**
+ * The Elite plan is reserved for families whose stated family value is above
+ * ₹10 crore. The gate is enforced server-side: the checkout UI only surfaces
+ * the Elite option to eligible members, but an ineligible client can never
+ * record an Elite payment because this handler rejects before any insert.
+ */
+async function assertEliteEligible(userId: string, item: PayItem) {
+  if (item !== "elite") return;
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const { data: profile } = await supabaseAdmin
+    .from("profiles")
+    .select("family_value")
+    .eq("id", userId)
+    .maybeSingle();
+  if (profile?.family_value !== ELITE_FAMILY_VALUE) {
+    throw new Error("ELITE_ELIGIBILITY_REQUIRED");
+  }
+}
 
 /** Returns Direct Bank Transfer details for authenticated customers. */
 export const getBankTransferDetails = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({ item: ItemSchema }).parse(input))
   .handler(async ({ data, context }) => {
+    await assertEliteEligible(context.userId, data.item);
     const beneficiary = process.env["BANK_BENEFICIARY"];
     const accountNumber = process.env["BANK_ACCOUNT_NUMBER"];
     const ifsc = process.env["BANK_IFSC"];
@@ -75,6 +98,7 @@ export const submitManualPayment = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data, context }) => {
+    await assertEliteEligible(context.userId, data.item);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const normalizedUtr = data.utrReference.trim().toUpperCase();
     const { data: inserted, error } = await supabaseAdmin
@@ -211,7 +235,7 @@ export const reviewPayment = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     if (!payment) throw new Error("Payment is not awaiting review");
 
-    if (data.decision === "verified" && (payment.item === "standard" || payment.item === "premium")) {
+    if (data.decision === "verified" && (payment.item === "standard" || payment.item === "premium" || payment.item === "elite")) {
       const validUntil = new Date();
       validUntil.setFullYear(validUntil.getFullYear() + 1);
       await context.supabase

@@ -32,6 +32,7 @@ const fieldSchema = z.object({
   annual_income: z.string().optional().nullable(),
   family_type: z.string().optional().nullable(),
   family_status: z.string().optional().nullable(),
+  family_value: z.enum(["below_5cr", "5_10cr", "above_10cr"]).optional().nullable(),
   father_name: z.string().optional().nullable(),
   father_occupation: z.string().optional().nullable(),
   mother_name: z.string().optional().nullable(),

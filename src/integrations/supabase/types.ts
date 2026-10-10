@@ -383,6 +383,7 @@ export type Database = {
           family_details: string | null
           family_status: string | null
           family_type: string | null
+          family_value: string | null
           father_name: string | null
           father_occupation: string | null
           full_name: string | null
@@ -446,6 +447,7 @@ export type Database = {
           family_details?: string | null
           family_status?: string | null
           family_type?: string | null
+          family_value?: string | null
           father_name?: string | null
           father_occupation?: string | null
           full_name?: string | null
@@ -509,6 +511,7 @@ export type Database = {
           family_details?: string | null
           family_status?: string | null
           family_type?: string | null
+          family_value?: string | null
           father_name?: string | null
           father_occupation?: string | null
           full_name?: string | null
@@ -756,8 +759,8 @@ export type Database = {
     Enums: {
       app_role: "admin" | "client"
       approval_status: "pending" | "approved" | "rejected"
-      membership_plan: "free" | "standard" | "premium"
-      payment_item: "standard" | "premium" | "jathagam"
+      membership_plan: "free" | "standard" | "premium" | "elite"
+      payment_item: "standard" | "premium" | "elite" | "jathagam"
       payment_status: "submitted" | "verified" | "rejected"
     }
     CompositeTypes: {

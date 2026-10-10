@@ -18,7 +18,7 @@ export const Route = createFileRoute("/_authenticated/messages")({
       { title: "Messages — Sri Lakshmi Mangalya Malai" },
       {
         name: "description",
-        content: "Private conversations between approved members on Standard and Premium plans.",
+        content: "Private conversations between approved members on Standard, Premium and Elite plans.",
       },
       { property: "og:title", content: "Messages — Sri Lakshmi Mangalya Malai" },
       { property: "og:description", content: "Private member conversations." },

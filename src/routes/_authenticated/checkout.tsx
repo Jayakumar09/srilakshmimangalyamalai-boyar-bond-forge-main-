@@ -22,7 +22,7 @@ export const Route = createFileRoute("/_authenticated/checkout")({
       {
         name: "description",
         content:
-          "Activate the Standard or Premium plan, or order the Jathagam report, by UPI or Direct Bank Transfer.",
+          "Activate the Standard, Premium or Elite plan, or order the Jathagam report, by UPI or Direct Bank Transfer.",
       },
       { property: "og:title", content: "Payments — Sri Lakshmi Mangalya Malai" },
       { property: "og:description", content: "Activate your membership plan." },
@@ -31,7 +31,7 @@ export const Route = createFileRoute("/_authenticated/checkout")({
   component: Checkout,
 });
 
-type Item = "standard" | "premium" | "jathagam";
+type Item = "standard" | "premium" | "elite" | "jathagam";
 
 type PaymentRow = {
   id: string;
@@ -79,6 +79,7 @@ function Checkout() {
     amount: number;
   } | null>(null);
   const [loadingBankDetails, setLoadingBankDetails] = useState(false);
+  const [familyValue, setFamilyValue] = useState<string | null>(null);
 
   const load = useCallback(async (uid: string) => {
     const [{ data: pays }, { data: jats }, { data: profile }, evRows] = await Promise.all([
@@ -90,7 +91,11 @@ function Checkout() {
         .from("jathagam_requests")
         .select("id, birth_date, birth_time, birth_place, status, report_key")
         .order("created_at", { ascending: false }),
-      supabase.from("profiles").select("full_name").eq("id", uid).maybeSingle(),
+      supabase
+        .from("profiles")
+        .select("full_name, family_value")
+        .eq("id", uid)
+        .maybeSingle(),
       ((supabase as unknown as {
         from(table: string): unknown;
       }).from("payment_events") as unknown as {
@@ -105,6 +110,7 @@ function Checkout() {
     setJathagam((jats ?? []) as JathagamRow[]);
     setDelivery(new Map((evRows?.data ?? []).map((e) => [e.payment_id, e])));
     if (profile?.full_name) setFullName(profile.full_name);
+    setFamilyValue(profile?.family_value ?? null);
   }, []);
 
   useEffect(() => {
@@ -185,9 +191,12 @@ function Checkout() {
     }
   }
 
+  const eliteEligible = familyValue === "above_10cr";
+
   const items: { item: Item; name: string; price: number; note: string }[] = [
     { item: "standard", name: t("plan_std"), price: PRICES.standard, note: t("plan_std_d") },
     { item: "premium", name: t("plan_prem"), price: PRICES.premium, note: t("plan_prem_d") },
+    { item: "elite", name: t("plan_elite"), price: PRICES.elite, note: t("plan_elite_d") },
     { item: "jathagam", name: t("jathagam"), price: PRICES.jathagam, note: t("jathagam_d") },
   ];
 
@@ -243,115 +252,125 @@ function Checkout() {
                 </div>
               )}
 
-              <div className="mt-4">
-                <Button
-                  disabled={busy}
-                  onClick={() => {
-                    const next = manualFor === p.item ? null : p.item;
-                    setManualFor(next);
-                    if (next) {
-                      setMethod("upi");
-                      setBankDetails(null);
-                    }
-                  }}
-                >
-                  {t("pay_manual")}
-                </Button>
-              </div>
+              {p.item === "elite" && !eliteEligible && (
+                <div className="mt-4 rounded-lg border border-border bg-secondary/40 p-3 text-sm text-muted-foreground">
+                  {t("elite_eligibility_note")}
+                </div>
+              )}
 
-              {manualFor === p.item && (
-                <div className="mt-4 space-y-3 rounded-lg border border-border bg-secondary/40 p-4">
-                  {method === "upi" ? (
-                    <>
-                      <p className="text-sm">
-                        UPI: <span className="font-semibold">{UPI_ID}</span> — ₹
-                        {p.price.toLocaleString("en-IN")}
-                      </p>
-                      <div className="text-center">
-                        <img
-                          src={UPI_QR_PATH}
-                          alt="UPI QR Code"
-                          className="mx-auto max-w-xs h-auto border border-border rounded"
+              {!(p.item === "elite" && !eliteEligible) && (
+                <>
+                  <div className="mt-4">
+                    <Button
+                      disabled={busy}
+                      onClick={() => {
+                        const next = manualFor === p.item ? null : p.item;
+                        setManualFor(next);
+                        if (next) {
+                          setMethod("upi");
+                          setBankDetails(null);
+                        }
+                      }}
+                    >
+                      {t("pay_manual")}
+                    </Button>
+                  </div>
+
+                  {manualFor === p.item && (
+                    <div className="mt-4 space-y-3 rounded-lg border border-border bg-secondary/40 p-4">
+                      {method === "upi" ? (
+                        <>
+                          <p className="text-sm">
+                            UPI: <span className="font-semibold">{UPI_ID}</span> — ₹
+                            {p.price.toLocaleString("en-IN")}
+                          </p>
+                          <div className="text-center">
+                            <img
+                              src={UPI_QR_PATH}
+                              alt="UPI QR Code"
+                              className="mx-auto max-w-xs h-auto border border-border rounded"
+                            />
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          {loadingBankDetails ? (
+                            <p className="text-sm text-muted-foreground">Loading bank details…</p>
+                          ) : bankDetails ? (
+                            <div className="space-y-2 text-sm">
+                              <p>
+                                <span className="font-semibold">{t("bank_beneficiary")}:</span>{" "}
+                                {bankDetails.beneficiary}
+                              </p>
+                              <p>
+                                <span className="font-semibold">{t("bank_account")}:</span>{" "}
+                                {bankDetails.accountNumber}
+                              </p>
+                              <p>
+                                <span className="font-semibold">{t("bank_ifsc")}:</span> {bankDetails.ifsc}
+                              </p>
+                              {bankDetails.micr && (
+                                <p>
+                                  <span className="font-semibold">{t("bank_micr")}:</span>{" "}
+                                  {bankDetails.micr}
+                                </p>
+                              )}
+                              {bankDetails.mobile && (
+                                <p>
+                                  <span className="font-semibold">{t("bank_mobile")}:</span>{" "}
+                                  {bankDetails.mobile}
+                                </p>
+                              )}
+                              <p className="font-semibold">
+                                {t("payable_amount")}: ₹{bankDetails.amount.toLocaleString("en-IN")}
+                              </p>
+                            </div>
+                          ) : (
+                            <p className="text-sm text-destructive">
+                              {t("bank_details_unavailable")}
+                            </p>
+                          )}
+                        </>
+                      )}
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div>
+                          <Label htmlFor="utr">{t("utr")}</Label>
+                          <Input id="utr" value={utr} onChange={(e) => setUtr(e.target.value)} />
+                        </div>
+                        <div>
+                          <Label htmlFor="method">{t("payment_method")}</Label>
+                          <select
+                            id="method"
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                            value={method}
+                            onChange={(e) => {
+                              const newMethod = e.target.value as "upi" | "bank_transfer";
+                              setMethod(newMethod);
+                              if (newMethod === "bank_transfer") {
+                                fetchBankDetails(p.item);
+                              }
+                            }}
+                          >
+                            <option value="upi">{t("method_upi")}</option>
+                            <option value="bank_transfer">{t("method_bank_transfer")}</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div>
+                        <Label htmlFor="proof">{t("payment_proof")}</Label>
+                        <Input
+                          id="proof"
+                          type="file"
+                          accept="image/jpeg,image/png,application/pdf"
+                          onChange={(e) => setProof(e.target.files?.[0] ?? null)}
                         />
                       </div>
-                    </>
-                  ) : (
-                    <>
-                      {loadingBankDetails ? (
-                        <p className="text-sm text-muted-foreground">Loading bank details…</p>
-                      ) : bankDetails ? (
-                        <div className="space-y-2 text-sm">
-                          <p>
-                            <span className="font-semibold">{t("bank_beneficiary")}:</span>{" "}
-                            {bankDetails.beneficiary}
-                          </p>
-                          <p>
-                            <span className="font-semibold">{t("bank_account")}:</span>{" "}
-                            {bankDetails.accountNumber}
-                          </p>
-                          <p>
-                            <span className="font-semibold">{t("bank_ifsc")}:</span> {bankDetails.ifsc}
-                          </p>
-                          {bankDetails.micr && (
-                            <p>
-                              <span className="font-semibold">{t("bank_micr")}:</span>{" "}
-                              {bankDetails.micr}
-                            </p>
-                          )}
-                          {bankDetails.mobile && (
-                            <p>
-                              <span className="font-semibold">{t("bank_mobile")}:</span>{" "}
-                              {bankDetails.mobile}
-                            </p>
-                          )}
-                          <p className="font-semibold">
-                            {t("payable_amount")}: ₹{bankDetails.amount.toLocaleString("en-IN")}
-                          </p>
-                        </div>
-                      ) : (
-                        <p className="text-sm text-destructive">
-                          {t("bank_details_unavailable")}
-                        </p>
-                      )}
-                    </>
+                      <Button disabled={busy} onClick={() => submitManual(p.item)}>
+                        {t("submit_payment")}
+                      </Button>
+                    </div>
                   )}
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div>
-                      <Label htmlFor="utr">{t("utr")}</Label>
-                      <Input id="utr" value={utr} onChange={(e) => setUtr(e.target.value)} />
-                    </div>
-                    <div>
-                      <Label htmlFor="method">{t("payment_method")}</Label>
-                      <select
-                        id="method"
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                        value={method}
-                        onChange={(e) => {
-                          const newMethod = e.target.value as "upi" | "bank_transfer";
-                          setMethod(newMethod);
-                          if (newMethod === "bank_transfer") {
-                            fetchBankDetails(p.item);
-                          }
-                        }}
-                      >
-                        <option value="upi">{t("method_upi")}</option>
-                        <option value="bank_transfer">{t("method_bank_transfer")}</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div>
-                    <Label htmlFor="proof">{t("payment_proof")}</Label>
-                    <Input
-                      id="proof"
-                      type="file"
-                      accept="image/jpeg,image/png,application/pdf"
-                      onChange={(e) => setProof(e.target.files?.[0] ?? null)}
-                    />
-                  </div>
-                  <Button disabled={busy} onClick={() => submitManual(p.item)}>
-                    {t("submit_payment")}
-                  </Button>
-                </div>
+                </>
               )}
             </div>
           ))}
