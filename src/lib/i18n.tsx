@@ -292,11 +292,10 @@ export const dict: Dict = {
   // checkout
   checkout_title: { en: "Activate your plan", ta: "உங்கள் திட்டத்தை செயல்படுத்துங்கள்" },
   checkout_sub: {
-    en: "Pay online for instant activation, or transfer by UPI and submit the UTR reference for admin verification.",
-    ta: "உடனடி செயல்பாட்டிற்கு ஆன்லைனில் செலுத்துங்கள், அல்லது UPI மூலம் அனுப்பி UTR குறிப்பு எண்ணை நிர்வாக சரிபார்ப்புக்கு சமர்ப்பியுங்கள்.",
+    en: "Pay by UPI or direct bank transfer and submit the UTR reference for admin verification.",
+    ta: "UPI அல்லது நேரடி வங்கி பரிமாற்றம் மூலம் செலுத்தி, UTR குறிப்பு எண்ணை நிர்வாக சரிபார்ப்புக்கு சமர்ப்பியுங்கள்.",
   },
-  pay_online: { en: "Pay online (UPI / card)", ta: "ஆன்லைனில் செலுத்து (UPI / கார்டு)" },
-  pay_manual: { en: "I paid by UPI / bank transfer", ta: "UPI / வங்கி மூலம் செலுத்திவிட்டேன்" },
+  pay_manual: { en: "Pay by UPI / Bank transfer", ta: "UPI / வங்கி மூலம் செலுத்துங்கள்" },
   utr: { en: "UTR / reference number", ta: "UTR / குறிப்பு எண்" },
   payment_proof: { en: "Payment screenshot", ta: "கட்டண திரைப்பிடிப்பு" },
   submit_payment: { en: "Submit for verification", ta: "சரிபார்ப்புக்கு சமர்ப்பி" },
@@ -672,6 +671,7 @@ export const dict: Dict = {
     ta: "ஆன்லைன் கட்டணம் இன்னும் இயக்கப்படவில்லை. கீழே உள்ள UPI / வங்கி பரிமாற்ற விருப்பத்தைப் பயன்படுத்தவும்.",
   },
   msg_open_report_fail: { en: "Could not open the report", ta: "அறிக்கையைத் திறக்க முடியவில்லை" },
+  payment_method: { en: "Payment method", ta: "கட்டண முறை" },
   method_upi: { en: "UPI", ta: "UPI" },
   method_card: { en: "Card", ta: "கார்டு" },
   method_bank: { en: "Bank transfer", ta: "வங்கி பரிமாற்றம்" },

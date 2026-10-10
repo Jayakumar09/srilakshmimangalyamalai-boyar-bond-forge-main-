@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { uploadToR2 } from "@/lib/upload";
 import { friendlyUploadError } from "@/lib/compress";
 import { createViewUrl } from "@/lib/storage.functions";
-import { createPaymentOrder, confirmPaymentOrder, submitManualPayment, getBankTransferDetails, PRICES } from "@/lib/payments.functions";
+import { submitManualPayment, getBankTransferDetails, PRICES } from "@/lib/payments.functions";
 import { notifyPaymentSubmitted } from "@/lib/notify.functions";
 
 export const Route = createFileRoute("/_authenticated/checkout")({
@@ -57,23 +57,6 @@ type JathagamRow = {
 const UPI_ID = "7639150271@pnb";
 const UPI_QR_PATH = "/payment/pnb-upi-qr.jpeg";
 
-declare global {
-  interface Window {
-    Razorpay?: new (options: Record<string, unknown>) => { open: () => void };
-  }
-}
-
-function loadRazorpay(): Promise<boolean> {
-  return new Promise((resolve) => {
-    if (window.Razorpay) return resolve(true);
-    const s = document.createElement("script");
-    s.src = "https://checkout.razorpay.com/v1/checkout.js";
-    s.onload = () => resolve(true);
-    s.onerror = () => resolve(false);
-    document.body.appendChild(s);
-  });
-}
-
 function Checkout() {
   const { t } = useI18n();
   const [userId, setUserId] = useState<string | null>(null);
@@ -82,7 +65,7 @@ function Checkout() {
   const [delivery, setDelivery] = useState<Map<string, { receipt_key: string | null; receipt_status: string | null }>>(new Map());
   const [jathagam, setJathagam] = useState<JathagamRow[]>([]);
   const [busy, setBusy] = useState(false);
-  const [manualFor, setManualFor] = useState<Item | null>(null);
+  const [manualFor, setManualFor] = useState<Item | null>("standard");
   const [utr, setUtr] = useState("");
   const [method, setMethod] = useState<"upi" | "bank_transfer">("upi");
   const [proof, setProof] = useState<File | null>(null);
@@ -131,65 +114,6 @@ function Checkout() {
       void load(data.user.id);
     });
   }, [load]);
-
-  async function payOnline(item: Item) {
-    if (item === "jathagam" && (!birth.date || !birth.time || !birth.place)) {
-      toast.error(t("checkout_birth_required"));
-      return;
-    }
-    setBusy(true);
-    try {
-      const order = await createPaymentOrder({ data: { item } });
-      const ok = await loadRazorpay();
-      if (!ok) throw new Error(t("pay_window_load_fail"));
-
-      const rz = new window.Razorpay!({
-        key: order.keyId,
-        amount: order.amount * 100,
-        currency: "INR",
-        name: "Sri Lakshmi Mangalya Malai",
-        description: `${item} — ₹${order.amount}`,
-        order_id: order.orderId,
-        prefill: { name: fullName },
-        theme: { color: "#5d1a1d" },
-        handler: async (response: {
-          razorpay_order_id: string;
-          razorpay_payment_id: string;
-          razorpay_signature: string;
-        }) => {
-          try {
-            await confirmPaymentOrder({
-              data: {
-                orderId: response.razorpay_order_id,
-                paymentId: response.razorpay_payment_id,
-                signature: response.razorpay_signature,
-              },
-            });
-            if (item === "jathagam" && userId) {
-              await supabase.from("jathagam_requests").insert({
-                user_id: userId,
-                birth_date: birth.date,
-                birth_time: birth.time,
-                birth_place: birth.place,
-              });
-            }
-            toast.success(t("payment_success"));
-            if (userId) await load(userId);
-          } catch (err) {
-            toast.error(err instanceof Error ? err.message : t("confirm_payment_fail"));
-          }
-        },
-      });
-      rz.open();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : t("pay_start_fail");
-      toast.error(
-        msg.includes("ONLINE_PAYMENTS_UNAVAILABLE") ? t("pay_unavailable") : msg,
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function fetchBankDetails(item: Item) {
     setLoadingBankDetails(true);
@@ -319,12 +243,8 @@ function Checkout() {
                 </div>
               )}
 
-              <div className="mt-4 flex flex-wrap gap-2">
-                <Button disabled={busy} onClick={() => payOnline(p.item)}>
-                  {t("pay_online")}
-                </Button>
+              <div className="mt-4">
                 <Button
-                  variant="secondary"
                   disabled={busy}
                   onClick={() => {
                     const next = manualFor === p.item ? null : p.item;
@@ -401,7 +321,7 @@ function Checkout() {
                       <Input id="utr" value={utr} onChange={(e) => setUtr(e.target.value)} />
                     </div>
                     <div>
-                      <Label htmlFor="method">{t("pay_manual")}</Label>
+                      <Label htmlFor="method">{t("payment_method")}</Label>
                       <select
                         id="method"
                         className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"

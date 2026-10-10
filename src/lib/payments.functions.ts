@@ -40,75 +40,17 @@ export const getBankTransferDetails = createServerFn({ method: "POST" })
 const OUTBOX_INSERT_ATTEMPTS = 3;
 const OUTBOX_RETRY_DELAY_MS = 250;
 
-/** Creates a Razorpay order and a matching pending payment row. */
+/**
+ * Online (Razorpay) checkout is not an approved payment method for the current
+ * release, so this handler fails closed: no Razorpay order is requested and no
+ * 'online' payment row is ever inserted. The manual UPI / direct bank transfer
+ * path (submitManualPayment) and getBankTransferDetails are unaffected.
+ */
 export const createPaymentOrder = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({ item: ItemSchema }).parse(input))
-  .handler(async ({ data, context }) => {
-    const keyId = process.env["RAZORPAY_KEY_ID"];
-    const keySecret = process.env["RAZORPAY_KEY_SECRET"];
-    if (!keyId || !keySecret) {
-      throw new Error("ONLINE_PAYMENTS_UNAVAILABLE");
-    }
-
-    const amount = PRICES[data.item];
-
-    // Already-purchased and still-active plans must not be bought again:
-    // a fresh verification would overwrite (not extend) the current validity
-    // window, and repeated orders would pile up pending payment rows.
-    if (data.item === "standard" || data.item === "premium") {
-      const { data: profile } = await context.supabase
-        .from("profiles")
-        .select("membership_plan, plan_valid_until")
-        .eq("id", context.userId)
-        .maybeSingle();
-      if (profile?.membership_plan === data.item && profile.plan_valid_until) {
-        const expiry = new Date(`${profile.plan_valid_until}T00:00:00`);
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        if (expiry.getTime() >= today.getTime()) {
-          throw new Error("This plan is already active on your account.");
-        }
-      }
-    }
-
-    const res = await fetch("https://api.razorpay.com/v1/orders", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Basic ${btoa(`${keyId}:${keySecret}`)}`,
-      },
-      body: JSON.stringify({
-        amount: amount * 100,
-        currency: "INR",
-        receipt: `${data.item}-${context.userId.slice(0, 8)}-${Date.now()}`,
-        notes: { item: data.item, user_id: context.userId },
-      }),
-    });
-    if (!res.ok) {
-      throw new Error(`Payment gateway error (${res.status})`);
-    }
-    const order = (await res.json()) as { id: string };
-
-    // Payment rows are created with the service role (never with the session
-    // client, whose INSERT privilege is revoked): amount, method and status
-    // are therefore always server-authored.
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: inserted, error } = await supabaseAdmin
-      .from("payments")
-      .insert({
-        user_id: context.userId,
-        item: data.item,
-        amount_inr: amount,
-        method: "online",
-        gateway_order_id: order.id,
-        status: "submitted",
-      })
-      .select("id")
-      .single();
-    if (error) throw new Error(error.message);
-
-    return { orderId: order.id, paymentId: inserted.id, amount, keyId };
+  .handler(() => {
+    throw new Error("ONLINE_PAYMENTS_UNAVAILABLE");
   });
 
 /**
