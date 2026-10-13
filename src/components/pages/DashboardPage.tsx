@@ -518,6 +518,11 @@ export function DashboardPage() {
 
             <article className="profile-sheet relative mx-auto max-w-[840px] rounded-lg border border-border bg-white p-6 shadow-soft sm:p-10 print:max-w-full print:p-0">
               <header className="break-inside-avoid border-b border-border/80 pb-6 text-center">
+                <img
+                  src="/icons/boyar-logo-transparent.png"
+                  alt=""
+                  className="mx-auto mb-3 h-20 w-auto object-contain sm:h-24"
+                />
                 <h1 className="font-display text-2xl font-semibold text-primary sm:text-3xl">
                   {t("brand")}
                 </h1>
