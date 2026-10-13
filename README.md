@@ -55,15 +55,14 @@ Mandatory User Consent:
 
 Require every user to check a mandatory consent checkbox agreeing to these Terms & Conditions, Privacy Policy, and No-Refund Policy prior to final registration and payment checkout.
 
-This project was built with [Lovable](https://lovable.dev).
+## Deployment
 
-## Build with Lovable
+This repository is self-hosted on Cloudflare Workers and is **not** connected to
+Lovable. Use the established Cloudflare workflow for this project.
 
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/2e53e0c9-286d-4afc-9a4e-105cc6b3730b).
-
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
+> Deployment targets and exact commands are **pending verification**. Do not
+> invent Worker names, account IDs, or deploy commands; confirm the Cloudflare
+> TEST and PRODUCTION targets before deploying.
 
 ## Development
 

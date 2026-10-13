@@ -58,7 +58,6 @@ import { Route as AuthenticatedTnAdminPaymentsRouteImport } from './routes/_auth
 import { Route as AuthenticatedTnAdminReportsRouteImport } from './routes/_authenticated/tn.admin.reports'
 import { Route as AuthenticatedTnAdminSettingsRouteImport } from './routes/_authenticated/tn.admin.settings'
 import { Route as AuthenticatedTnAdminSupportRouteImport } from './routes/_authenticated/tn.admin.support'
-import { Route as LovableEmailTransactionalPreviewRouteImport } from './routes/lovable/email/transactional/preview'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -331,12 +330,6 @@ const AuthenticatedTnAdminSupportRoute =
     path: '/tn/admin/support',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
-const LovableEmailTransactionalPreviewRoute =
-  LovableEmailTransactionalPreviewRouteImport.update({
-    id: '/lovable/email/transactional/preview',
-    path: '/lovable/email/transactional/preview',
-    getParentRoute: () => rootRouteImport,
-  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -385,7 +378,6 @@ export interface FileRoutesByFullPath {
   '/tn/admin/reports': typeof AuthenticatedTnAdminReportsRoute
   '/tn/admin/settings': typeof AuthenticatedTnAdminSettingsRoute
   '/tn/admin/support': typeof AuthenticatedTnAdminSupportRoute
-  '/lovable/email/transactional/preview': typeof LovableEmailTransactionalPreviewRoute
   '/en/admin/': typeof AuthenticatedEnAdminIndexRoute
   '/tn/admin/': typeof AuthenticatedTnAdminIndexRoute
 }
@@ -436,7 +428,6 @@ export interface FileRoutesByTo {
   '/tn/admin/reports': typeof AuthenticatedTnAdminReportsRoute
   '/tn/admin/settings': typeof AuthenticatedTnAdminSettingsRoute
   '/tn/admin/support': typeof AuthenticatedTnAdminSupportRoute
-  '/lovable/email/transactional/preview': typeof LovableEmailTransactionalPreviewRoute
   '/en/admin': typeof AuthenticatedEnAdminIndexRoute
   '/tn/admin': typeof AuthenticatedTnAdminIndexRoute
 }
@@ -489,7 +480,6 @@ export interface FileRoutesById {
   '/_authenticated/tn/admin/reports': typeof AuthenticatedTnAdminReportsRoute
   '/_authenticated/tn/admin/settings': typeof AuthenticatedTnAdminSettingsRoute
   '/_authenticated/tn/admin/support': typeof AuthenticatedTnAdminSupportRoute
-  '/lovable/email/transactional/preview': typeof LovableEmailTransactionalPreviewRoute
   '/_authenticated/en/admin/': typeof AuthenticatedEnAdminIndexRoute
   '/_authenticated/tn/admin/': typeof AuthenticatedTnAdminIndexRoute
 }
@@ -542,7 +532,6 @@ export interface FileRouteTypes {
     | '/tn/admin/reports'
     | '/tn/admin/settings'
     | '/tn/admin/support'
-    | '/lovable/email/transactional/preview'
     | '/en/admin/'
     | '/tn/admin/'
   fileRoutesByTo: FileRoutesByTo
@@ -593,7 +582,6 @@ export interface FileRouteTypes {
     | '/tn/admin/reports'
     | '/tn/admin/settings'
     | '/tn/admin/support'
-    | '/lovable/email/transactional/preview'
     | '/en/admin'
     | '/tn/admin'
   id:
@@ -645,7 +633,6 @@ export interface FileRouteTypes {
     | '/_authenticated/tn/admin/reports'
     | '/_authenticated/tn/admin/settings'
     | '/_authenticated/tn/admin/support'
-    | '/lovable/email/transactional/preview'
     | '/_authenticated/en/admin/'
     | '/_authenticated/tn/admin/'
   fileRoutesById: FileRoutesById
@@ -662,7 +649,6 @@ export interface RootRouteChildren {
   TaRefundPolicyRoute: typeof TaRefundPolicyRoute
   TaTermsRoute: typeof TaTermsRoute
   TaIndexRoute: typeof TaIndexRoute
-  LovableEmailTransactionalPreviewRoute: typeof LovableEmailTransactionalPreviewRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -1010,13 +996,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedTnAdminSupportRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/lovable/email/transactional/preview': {
-      id: '/lovable/email/transactional/preview'
-      path: '/lovable/email/transactional/preview'
-      fullPath: '/lovable/email/transactional/preview'
-      preLoaderRoute: typeof LovableEmailTransactionalPreviewRouteImport
-      parentRoute: typeof rootRouteImport
-    }
   }
 }
 
@@ -1119,7 +1098,6 @@ const rootRouteChildren: RootRouteChildren = {
   TaRefundPolicyRoute: TaRefundPolicyRoute,
   TaTermsRoute: TaTermsRoute,
   TaIndexRoute: TaIndexRoute,
-  LovableEmailTransactionalPreviewRoute: LovableEmailTransactionalPreviewRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

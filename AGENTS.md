@@ -1,10 +1,12 @@
-<!-- LOVABLE:BEGIN -->
-> [!IMPORTANT]
-> This project is connected to [Lovable](https://lovable.dev). Avoid rewriting
-> published git history — force pushing, or rebasing/amending/squashing commits
-> that are already pushed — as it rewrites history on Lovable's side and the
-> user will likely lose their project history.
->
-> Commits you push to the connected branch sync back to Lovable and show up in
-> the editor, so keep the branch in a working state.
-<!-- LOVABLE:END -->
+# Repository Guidelines
+
+This project is self-hosted and is **not** connected to Lovable. Do not reconnect
+Lovable, and do not use Lovable for builds, previews, publishing, or deployment.
+
+- **Build:** `npm run build` (Vite + TanStack Start; Cloudflare Workers output).
+- **Typecheck:** `npx tsc --noEmit`.
+- **Deployment:** Cloudflare Workers. Deployment targets, Worker names, account
+  IDs, and exact deploy commands are **pending verification** — do not invent or
+  assume them.
+- Preserve published git history: do not force-push, rebase, amend, or squash
+  commits that are already pushed.
