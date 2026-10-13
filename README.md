@@ -10,7 +10,7 @@ Implement dynamic database-backed dropdowns for Sub-caste, Profession, and Nativ
 3. Strict Verification & Onboarding Workflow:
 Require mandatory Government ID upload (Aadhaar/PAN/Voter ID/DL) and a clear profile photo during registration.
 Integrate AI pre-screening to verify face match between the ID and photo, and check format validity.
-If Marital Status is 'Divorced' or 'Widowed', make a court divorce certificate file upload mandatory.
+If Marital Status is 'Divorced', make a court divorce certificate file upload mandatory.
 Route all registrations through a mandatory manual admin approval queue. No profile goes live or can browse matches without explicit admin green light.
 4. Pricing Tiers & Membership (1-Year Validity Subject to Admin Approval):
 Free / Community Starter Tier (₹0): Profile creation, ID upload, browsing, and receiving interests.
@@ -75,3 +75,12 @@ cd <repository-name>
 npm i
 npm run dev
 ```
+
+## Approved Brand Logo
+
+- Original approved source: `public/icons/boyar-logo.png` (user-approved artwork; must remain preserved unchanged).
+- Application display asset: `public/icons/boyar-logo-transparent.png` (transparent-background copy derived from the approved source).
+- Both the public header (`src/components/SiteHeader.tsx`) and the admin header (`src/components/admin/AdminShell.tsx`) must reference `/icons/boyar-logo-transparent.png`.
+- The approved logo is the single permitted logo artwork for these application headers. Do not substitute the pendant artwork, the Canva logo, or the circular text badge.
+- Both testing and production builds must use the same version-controlled asset and source-code references.
+- Production deployment is a separate, explicitly approved action.

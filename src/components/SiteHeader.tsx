@@ -223,12 +223,14 @@ export function SiteHeader() {
   );
 
   return (
-    <header className="sticky top-0 z-40 border-b border-border/70 bg-background/85 backdrop-blur">
+    <header className="sticky top-0 z-40 shrink-0 border-b border-border/70 bg-background">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2 px-4 py-3">
         <Link to="/" className="mr-auto flex min-w-0 items-center gap-3" onClick={closeMenu}>
-          <span className="grid size-9 shrink-0 place-items-center rounded-full bg-primary font-display text-lg text-primary-foreground">
-            {t("brand_badge")}
-          </span>
+          <img
+            src="/icons/boyar-logo-transparent.png"
+            alt=""
+            className="h-11 w-auto shrink-0 object-contain sm:h-12"
+          />
           <span className="leading-tight">
             <span className="block font-display text-xl font-semibold sm:text-3xl">
               {t("brand")}
@@ -258,7 +260,10 @@ export function SiteHeader() {
       </div>
 
       {menuOpen && (
-        <div id="site-header-mobile-nav" className="border-t border-border/70 md:hidden">
+        <div
+          id="site-header-mobile-nav"
+          className="max-h-[40dvh] overflow-y-auto border-t border-border/70 md:hidden"
+        >
           <div className="mx-auto flex max-w-6xl flex-col items-start gap-1 px-4 py-3">
             <LanguageToggle className="mb-1 [&_a]:inline-flex [&_a]:h-11 [&_a]:items-center" />
             {renderNav("h-11 w-full justify-start")}

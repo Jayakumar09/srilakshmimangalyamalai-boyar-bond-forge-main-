@@ -161,10 +161,12 @@ export function AdminShell({
             {open ? <X className="size-5" /> : <Menu className="size-5" />}
           </Button>
           <a href={base} className="mr-auto flex items-center gap-3">
-            <span className="grid size-9 place-items-center rounded-full bg-primary font-display text-lg text-primary-foreground">
-            {t("brand_badge")}
-          </span>
-          <span className="leading-tight">
+            <img
+              src="/icons/boyar-logo-transparent.png"
+              alt=""
+              className="size-9 shrink-0 object-contain"
+            />
+            <span className="leading-tight">
             <span className="block font-display text-xl font-semibold sm:text-3xl">
               {t("brand")}
             </span>
