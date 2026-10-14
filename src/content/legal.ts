@@ -8,7 +8,7 @@ export const termsSections: LegalSection[] = [
           body: [
             {
               en: "srilakshmimangalyamalai.com (Sri Lakshmi Mangalya Malai) is a matrimonial introduction service for the Boyar community. By registering, submitting documents, or making any payment, you agree to these Terms & Conditions, the Privacy Policy and the Cancellation & Refund Policy in full.",
-              ta: "srilakshmimangalyamalai.com (ஸ்ரீ லட்சுமி மங்கல்ய மாலை) என்பது பொயர் சமுதாயத்திற்கான திருமணத் தகவல் சேவை. பதிவு செய்தல், ஆவணங்களை சமர்ப்பித்தல் அல்லது கட்டணம் செலுத்துதல் மூலம், இந்த விதிமுறைகள், தனியுரிமைக் கொள்கை மற்றும் ரத்து/பணத்திரும்பக் கொள்கையை முழுமையாக ஏற்கிறீர்கள்.",
+              ta: "srilakshmimangalyamalai.com (ஸ்ரீ லட்சுமி மங்கல்ய மாலை) என்பது போயர் சமுதாயத்திற்கான திருமணத் தகவல் சேவை. பதிவு செய்தல், ஆவணங்களை சமர்ப்பித்தல் அல்லது கட்டணம் செலுத்துதல் மூலம், இந்த விதிமுறைகள், தனியுரிமைக் கொள்கை மற்றும் ரத்து/பணத்திரும்பக் கொள்கையை முழுமையாக ஏற்கிறீர்கள்.",
             },
           ],
         },
@@ -127,7 +127,7 @@ export const privacySections: LegalSection[] = [
           body: [
             {
               en: "Your data is used to verify your identity, to approve your profile, and to introduce suitable matches within the Boyar community. Identity documents are used for verification only and are never shown to other members.",
-              ta: "உங்கள் தரவு அடையாளத்தைச் சரிபார்க்கவும், சுயவிவரத்தை அங்கீகரிக்கவும், பொயர் சமுதாயத்திற்குள் பொருத்தமான தொடர்புகளை அறிமுகப்படுத்தவும் பயன்படுகிறது. அடையாள ஆவணங்கள் சரிபார்ப்புக்கு மட்டுமே; மற்ற உறுப்பினர்களுக்கு ஒருபோதும் காட்டப்படாது.",
+              ta: "உங்கள் தரவு அடையாளத்தைச் சரிபார்க்கவும், சுயவிவரத்தை அங்கீகரிக்கவும், போயர் சமுதாயத்திற்குள் பொருத்தமான தொடர்புகளை அறிமுகப்படுத்தவும் பயன்படுகிறது. அடையாள ஆவணங்கள் சரிபார்ப்புக்கு மட்டுமே; மற்ற உறுப்பினர்களுக்கு ஒருபோதும் காட்டப்படாது.",
             },
             {
               en: "An automated AI pre-screening compares the photograph on your ID with your profile photo and checks document readability. The final decision is always made by a human administrator.",

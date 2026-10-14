@@ -15,7 +15,7 @@ type Dict = Record<string, { en: string; ta: string }>;
 
 export const dict: Dict = {
   brand: { en: "Sri Lakshmi Mangalya Malai", ta: "ஸ்ரீ லட்சுமி மங்கல்ய மாலை" },
-  brand_line2: { en: "Boyar Matrimony", ta: "பொயர் திருமண சேவை" },
+  brand_line2: { en: "Boyar Matrimony", ta: "போயர் திருமண சேவை" },
   brand_badge: { en: "Sri", ta: "ஸ்ரீ" },
   lang_en: { en: "English", ta: "ஆங்கிலம்" },
   lang_ta: { en: "Tamil", ta: "தமிழ்" },
@@ -25,7 +25,7 @@ export const dict: Dict = {
   },
   tagline: {
     en: "A verified, admin-approved matrimony service for the Boyar community",
-    ta: "பொயர் சமுதாயத்திற்கான சரிபார்க்கப்பட்ட, நிர்வாக ஒப்புதல் பெற்ற திருமண சேவை",
+    ta: "போயர் சமுதாயத்திற்கான சரிபார்க்கப்பட்ட, நிர்வாக ஒப்புதல் பெற்ற திருமண சேவை",
   },
   nav_home: { en: "Home", ta: "முகப்பு" },
   nav_plans: { en: "Plans", ta: "கட்டணத் திட்டங்கள்" },
@@ -59,7 +59,7 @@ export const dict: Dict = {
   trust_3_t: { en: "Community first", ta: "சமுதாயம் முதலில்" },
   trust_3_d: {
     en: "Built only for Boyar families, in Tamil and English.",
-    ta: "பொயர் குடும்பங்களுக்காக மட்டுமே, தமிழ் மற்றும் ஆங்கிலத்தில்.",
+    ta: "போயர் குடும்பங்களுக்காக மட்டுமே, தமிழ் மற்றும் ஆங்கிலத்தில்.",
   },
   plans_title: { en: "Membership plans", ta: "உறுப்பினர் திட்டங்கள்" },
   plans_sub: {
