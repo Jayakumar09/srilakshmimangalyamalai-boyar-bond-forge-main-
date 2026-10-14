@@ -83,3 +83,27 @@ npm run dev
 - The approved logo is the single permitted logo artwork for these application headers. Do not substitute the pendant artwork, the Canva logo, or the circular text badge.
 - Both testing and production builds must use the same version-controlled asset and source-code references.
 - Production deployment is a separate, explicitly approved action.
+
+---
+
+## GitHub Checkpoint — 2026-10-14
+
+**Branch:** `main`
+**Local HEAD:** `304fbbd` — `fix: correct Tamil Boyar spelling`
+**Remote HEAD (origin/main at last preflight):** `e2fa0e1` — `chore: isolate Lovable-specific integrations`
+**Status at last preflight:** local `main` ahead by 1 commit; no divergence.
+
+**Commit scope (304fbbd):** 9 Tamil spelling corrections (`பொயர்` → `போயர்`) across:
+- `src/routes/ta/index.tsx` (4 occurrences)
+- `src/lib/i18n.tsx` (3 occurrences)
+- `src/content/legal.ts` (2 occurrences)
+
+**Working tree:** 29 pre-existing modified files + 30+ untracked files preserved; not included in this commit.
+
+**Actions performed as of this checkpoint:**
+- Local commit only (`304fbbd`).
+- No push to `origin/main`.
+- No deployment to TEST or Production.
+- Production Supabase, Cloudflare Workers, and DNS untouched.
+
+**Next action (pending approval):** recheck `origin/main` status, then `git push origin main` for the single verified commit.
