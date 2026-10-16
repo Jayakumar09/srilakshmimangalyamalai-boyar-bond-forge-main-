@@ -1,77 +1,159 @@
 // slmm-comm-test.mjs
 // Client Communication E2E harness (safe cleanup edition).
 //
-// SAFETY MODEL (see slmm-test-safety.mjs):
-//  * The test NEVER uses a real/production account. It creates a fresh
+// SAFETY MODEL (see slmm-test-safety.mjs and live-guard.mjs):
+//  * LIVE AUTHORIZATION GATE (Phase 5B): this harness refuses to run unless the
+//    operator explicitly opts in from the shell with
+//      SLMM_LIVE_TESTS=true SLMM_LIVE_TARGET=test SLMM_LIVE_ACK=slmm-comm-test.mjs
+//    The gate runs BEFORE any credential load, network call, browser launch or
+//    service-client construction. Default behaviour = refuse. Production is
+//    unconditionally prohibited and there is NO production override.
+//  * The resolved SUPABASE_URL is validated after the environment file is read:
+//    the TEST project is the only permitted target; a production or unknown
+//    project aborts the run before anything is created.
+//  * The harness NEVER uses a real/production account. It creates a fresh
 //    scratch client (`e2e-comm-client-<ts>@slmm.test`) and records the
 //    exact UUIDs returned by its own INSERTs.
 //  * Cleanup deletes ONLY recorded primary keys via the guard allowlist.
 //    There is no `DELETE ...?user_id=eq.<id>` anywhere in this file.
+//  * Every POST-TEST verification read (preservation, probe and post-cleanup) is
+//    COMPLETE and validated (paginated, exact count, fully validated
+//    Content-Range) and fails closed: a failed read is a FAIL - it is never
+//    treated as "0 rows"/"empty" - and forces a non-zero exit status.
 //  * A scratch user may only be registered with its test-only scratch email
-//    marker; known production UUIDs are refused at registration and there is
-//    no silent fallback to another email/id.
+//    marker; rows that pre-existed this run are refused at registration and
+//    there is no silent fallback to another email/id.
 //  * Threads and messages are tied to the scratch owner; cleanup refuses any
 //    row it cannot positively prove belongs to this run's scratch account.
 //  * Cleanup refuses entirely unless SLMM_TEST_MODE=true AND every target
 //    is in this run's allowlist AND markers/baseline checks pass.
-//  * `node slmm-comm-test.mjs --cleanup-preview` prints the dry-run plan
-//    from the last run's state file WITHOUT touching the database.
+//  * `node slmm-comm-test.mjs --cleanup-preview` prints the dry-run plan from
+//    the last run's state file WITHOUT loading credentials, touching the
+//    network, or requiring live authorization.
 //
 // Usage:
-//   SLMM_TEST_MODE=true node slmm-comm-test.mjs            # run + safe cleanup
-//   node slmm-comm-test.mjs --cleanup-preview              # dry run, no writes
+//   SLMM_LIVE_TESTS=true SLMM_LIVE_TARGET=test SLMM_LIVE_ACK=slmm-comm-test.mjs \
+//     SLMM_TEST_MODE=true node slmm-comm-test.mjs       # authorised live run + cleanup
+//   node slmm-comm-test.mjs --cleanup-preview            # offline dry run, no writes
 // ---------------------------------------------------------------------------
 import { createRequire } from "module";
 import { readFileSync, writeFileSync, existsSync } from "fs";
-import { execSync } from "node:child_process";
 import path from "node:path";
 import { createCleanupGuard } from "./slmm-test-safety.mjs";
 import { resolveOfficeReplyId } from "./slmm-comm-capture.mjs";
+import { requireLiveAuthorization, assertNonProductionTarget } from "./live-guard.mjs";
+import { fetchCompleteBaseline, parseContentRange } from "./slmm-rest-baseline.mjs";
 
-const require = createRequire("D:/DevProjects/Working/srilakshmimangalyamalai(boyar-bond-forge-main)/package.json");
-const { chromium } = require("playwright");
-const BASE = "http://localhost:8080";
-const SUPABASE = "https://sxpkutjkqfekqwpabgrk.supabase.co";
+const HARNESS = "slmm-comm-test.mjs";
+// --cleanup-preview is a pure offline dry run: it reads the last run's state
+// file and prints the plan WITHOUT loading credentials or touching any service.
+const IS_PREVIEW = process.argv.includes("--cleanup-preview");
 
-// Real production accounts that must NEVER appear in any cleanup target list.
-const PROD_USER_IDS = new Set([
-  "4409e9c8-b57c-4e92-9333-983bdc2cb6fc", // real client (jayakumar)
-  "0c615e44-7c07-4efd-b917-1414db32cf10", // real client (Surekgha)
-]);
-const SURE_UID = "0c615e44-7c07-4efd-b917-1414db32cf10";
+// PHASE 5B LIVE AUTHORIZATION GATE. Refuse by default, before anything else.
+if (!IS_PREVIEW) {
+  requireLiveAuthorization({
+    harness: HARNESS,
+    services: ["supabase-auth", "supabase-rest", "headless-browser->localhost:8080"],
+  });
+}
 
+const require = createRequire(new URL("../package.json", import.meta.url));
 const SCRIPT_DIR = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const STATE_FILE = path.join(SCRIPT_DIR, "slmm-comm-state.json");
+const BASE = "http://localhost:8080";
+
+// Service bindings are populated ONLY after the gate passes, and never in
+// preview mode. Until then they stay null, so an accidental active call fails
+// loudly instead of reaching a service.
+let SUPABASE = null;
+let SVC = null;
+let ANON = null;
+let SVC_H = null;
+let chromium = null;
 
 function loadEnv() {
   const env = {};
-  const lit = "D:/DevProjects/Working/srilakshmimangalyamalai(boyar-bond-forge-main)/.env";
-  let raw = null;
-  try { raw = readFileSync(lit, "utf8"); } catch { /* FS quirk below */ }
-  if (raw === null) {
-    try { raw = execSync("cmd /c type .env", { cwd: process.cwd(), encoding: "utf8" }); } catch { /* handled below */ }
-  }
-  if (raw === null) throw new Error("cannot read .env");
+  const lit = path.join(SCRIPT_DIR, "..", ".env"); // repo-root environment file
+  const raw = readFileSync(lit, "utf8");
   for (const line of raw.split(/\r?\n/)) {
     const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
-    if (m) env[m[1]] = m[2].trim();
+    if (m) env[m[1]] = m[2].trim().replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1");
   }
   return env;
 }
 
-const ENV = loadEnv();
-const SVC = ENV["SUPABASE_SERVICE_ROLE_KEY"];
-const ANON = ENV["VITE_SUPABASE_PUBLISHABLE_KEY"] ?? ENV["SUPABASE_PUBLISHABLE_KEY"];
-const SVC_H = {
-  apikey: SVC,
-  Authorization: `Bearer ${SVC}`,
-  "Content-Type": "application/json",
-  Prefer: "return=representation", // so INSERT responses carry the created UUID
-};
 const svc = async (method, p, body) => {
   const r = await fetch(`${SUPABASE}${p}`, { method, headers: SVC_H, body: body ? JSON.stringify(body) : undefined });
   return { status: r.status, json: async () => { const t = await r.text(); if (!t) return null; try { return JSON.parse(t); } catch { return null; } } };
 };
+
+// Baseline page fetcher. It performs ONLY the HTTP round-trip and JSON decode;
+// the PostgREST `Content-Range` header is validated by the pure parser in
+// slmm-rest-baseline.mjs (parseContentRange), which checks the FULL interval
+// against the requested offset and the number of rows actually returned. It
+// returns { status, rows, total }; it does not itself decide what is acceptable.
+function makeBaselineFetcher(path, label) {
+  return async (offset, limit) => {
+    const res = await fetch(`${SUPABASE}${path}`, {
+      method: "GET",
+      headers: {
+        ...SVC_H,
+        "Range-Unit": "items",
+        Range: `${offset}-${offset + limit - 1}`,
+        Prefer: "count=exact",
+      },
+    });
+    const text = await res.text();
+    let rows = null;
+    if (text) {
+      try { rows = JSON.parse(text); } catch { rows = null; }
+    }
+    // A non-array payload is rejected later by fetchCompleteBaseline with the
+    // clearer "not a JSON array" error, so do not parse a range for it.
+    if (!Array.isArray(rows)) return { status: res.status, rows, total: null };
+    const { total } = parseContentRange(res.headers.get("content-range"), {
+      offset,
+      rowCount: rows.length,
+      label,
+    });
+    return { status: res.status, rows, total };
+  };
+}
+
+// Complete, validated, NON-THROWING read used by EVERY post-test verification
+// check (preservation, probe and post-cleanup reads). It reuses the exact same
+// paginated + exact-count + fully validated Content-Range reader as the baseline
+// (makeBaselineFetcher + fetchCompleteBaseline), so a verification read can never
+// silently truncate. On failure it records a FAIL (=> non-zero exit status) and
+// returns null: callers MUST treat null as a failure - it is never "0 rows" /
+// "empty". It deliberately does NOT throw, so a failed verification read can
+// never bypass the cleanup + reporting flow further down.
+async function verifyRead(path, label, requiredFields) {
+  try {
+    const { rows } = await fetchCompleteBaseline(makeBaselineFetcher(path, label), { label, requiredFields });
+    return rows;
+  } catch (e) {
+    r(`VERIFY ${label}`, false, e.message);
+    return null;
+  }
+}
+
+if (!IS_PREVIEW) {
+  const ENV = loadEnv();
+  SUPABASE = ENV["SUPABASE_URL"];
+  // Fail closed: the TEST project is the only permitted target; production and
+  // unknown projects abort here, before any service client is constructed.
+  assertNonProductionTarget(SUPABASE, { harness: HARNESS });
+  SVC = ENV["SUPABASE_SERVICE_ROLE_KEY"];
+  ANON = ENV["VITE_SUPABASE_PUBLISHABLE_KEY"] ?? ENV["SUPABASE_PUBLISHABLE_KEY"];
+  SVC_H = {
+    apikey: SVC,
+    Authorization: `Bearer ${SVC}`,
+    "Content-Type": "application/json",
+    Prefer: "return=representation", // so INSERT responses carry the created UUID
+  };
+  ({ chromium } = require("playwright"));
+}
 
 const TEST_RUN_ID = `comm-${Date.now()}`;
 const TS = Date.now();
@@ -99,12 +181,15 @@ const deleter = async (row) => {
   return { status: 404 };
 };
 
-function buildGuardFromState(state, modeEnv) {
+// Preview only: rebuild a guard from the last run's recorded state. The deny
+// list is empty here because the preview performs no network access and issues
+// no deletes; the allowlist is the run's own recorded ids.
+function buildGuardFromState(state, modeEnv, knownProductionUserIds = new Set()) {
   const guard = createCleanupGuard({
     testRunId: state.testRunId,
     modeEnv,
     baselineThreadIds: new Set(state.baselineThreadIds || []),
-    knownProductionUserIds: PROD_USER_IDS,
+    knownProductionUserIds,
     deleter,
     logger: console,
   });
@@ -145,29 +230,70 @@ if (process.argv.includes("--cleanup-preview")) {
 // ---------------------------------------------------------------------------
 
 (async () => {
-  const browser = await chromium.launch({ headless: true });
+  // ------------------------------------------------------------------
+  // 0. BASELINE READS - complete, validated, paginated.
+  //    These run BEFORE the browser launches and BEFORE any row is created or
+  //    written. Any failure here aborts the whole run (fail closed): a partial,
+  //    duplicated or ambiguous baseline could otherwise weaken the protection
+  //    set or the preservation assertions. There are no `|| []` fallbacks.
+  // ------------------------------------------------------------------
+  const baseThreads = (await fetchCompleteBaseline(makeBaselineFetcher("/rest/v1/support_threads?select=id,user_id,subject,status,channel&order=id.asc", "support_threads"), {
+    label: "support_threads",
+    requiredFields: ["id", "user_id", "subject", "status", "channel"],
+  })).rows;
+  const baseMsgs = (await fetchCompleteBaseline(makeBaselineFetcher("/rest/v1/support_messages?select=id,thread_id&order=id.asc", "support_messages"), {
+    label: "support_messages",
+    requiredFields: ["id", "thread_id"],
+  })).rows;
+  const baseConv = (await fetchCompleteBaseline(makeBaselineFetcher("/rest/v1/conversations?select=id&order=id.asc", "conversations"), {
+    label: "conversations",
+    requiredFields: ["id"],
+  })).rows;
+  const baseMemMsg = (await fetchCompleteBaseline(makeBaselineFetcher("/rest/v1/messages?select=id&order=id.asc", "messages"), {
+    label: "messages",
+    requiredFields: ["id"],
+  })).rows;
+  const baseDocs = (await fetchCompleteBaseline(makeBaselineFetcher("/rest/v1/documents?select=id&order=id.asc", "documents"), {
+    label: "documents",
+    requiredFields: ["id"],
+  })).rows;
+  const baseSl = (await fetchCompleteBaseline(makeBaselineFetcher("/rest/v1/shortlists?select=id&order=id.asc", "shortlists"), {
+    label: "shortlists",
+    requiredFields: ["id"],
+  })).rows;
+  const baseProfiles = (await fetchCompleteBaseline(makeBaselineFetcher("/rest/v1/profiles?select=id,status,membership_plan,profile_created_by&order=id.asc", "profiles"), {
+    label: "profiles",
+    requiredFields: ["id", "status", "membership_plan", "profile_created_by"],
+  })).rows;
 
-  // baseline (service key) BEFORE creating anything (H)
-  const baseThreads = await (await svc("GET", "/rest/v1/support_threads?select=id,user_id,subject,status,channel&order=created_at.asc")).json();
-  const baselineThreadIds = (baseThreads || []).map((x) => x.id);
-  const baseMsgs = await (await svc("GET", "/rest/v1/support_messages?select=id,thread_id&order=created_at.asc")).json();
-  const baseConv = await (await svc("GET", "/rest/v1/conversations?select=id")).json();
-  const baseMemMsg = await (await svc("GET", "/rest/v1/messages?select=id")).json();
-  const baseDocs = await (await svc("GET", "/rest/v1/documents?select=id")).json();
-  const baseSl = await (await svc("GET", "/rest/v1/shortlists?select=id")).json();
-  const baseProfiles = await (await svc("GET", "/rest/v1/profiles?select=id")).json();
-  const baselineSupportThreadCount = (baseThreads || []).length;
-  const baselineSupportMsgCount = (baseMsgs || []).length;
+  const baselineThreadIds = baseThreads.map((x) => x.id);
+  const baselineSupportThreadCount = baseThreads.length;
+  const baselineSupportMsgCount = baseMsgs.length;
+
+  // The protected set is built ONLY from the fully verified profile baseline
+  // above: every pre-existing profile is protected (stronger than a fixed list,
+  // and it cannot go stale). Nothing production-specific is hardcoded here.
+  const PROTECTED_USER_IDS = new Set(baseProfiles.map((x) => x.id));
+  const baselineProfileFingerprint = baseProfiles
+    .map((x) => `${x.id}|${x.status}|${x.membership_plan}|${x.profile_created_by}`)
+    .sort();
+  // A pre-existing thread owner is a real, non-scratch member used only for
+  // read/write isolation probes (never a cleanup target).
+  const OTHER_UID = baseThreads.map((x) => x.user_id).find((u) => typeof u === "string" && u) ?? null;
 
   // The guard is the ONLY path to deletion (allowlist + markers + test mode).
   const guard = createCleanupGuard({
     testRunId: TEST_RUN_ID,
     modeEnv: process.env.SLMM_TEST_MODE,
     baselineThreadIds: new Set(baselineThreadIds),
-    knownProductionUserIds: PROD_USER_IDS,
+    knownProductionUserIds: PROTECTED_USER_IDS,
     deleter,
     logger: console,
   });
+
+  // The browser is launched ONLY after the baseline is fully validated and the
+  // guard is built. No account has been created and nothing has been written yet.
+  const browser = await chromium.launch({ headless: true });
 
   // ---- A. SCRATCH ACCOUNT CREATION (recorded ids only) ---------------------
   const authResp = await svc("POST", "/auth/v1/admin/users", { email: SCRATCH_EMAIL, password: SCRATCH_PASS, email_confirm: true });
@@ -330,46 +456,66 @@ if (process.argv.includes("--cleanup-preview")) {
   const ownThreads = await restAs(`support_threads?select=id,user_id,channel`);
   const ownThr = JSON.parse(ownThreads.body);
   r("X1 client sees only own threads (RLS)", ownThreads.status === 200 && Array.isArray(ownThr) && ownThr.length >= 1 && ownThr.every((x) => x.user_id === CL_UID) ? true : false, `rows=${Array.isArray(ownThr) ? ownThr.length : "?"}`);
-  const x1b = await restAs(`support_threads?select=id&user_id=eq.${SURE_UID}`);
-  r("X1b cannot read another member's threads (0 rows)", x1b.status === 200 && JSON.parse(x1b.body).length === 0 ? true : false, `rows=${JSON.parse(x1b.body).length}`);
+  if (OTHER_UID) {
+    const x1b = await restAs(`support_threads?select=id&user_id=eq.${OTHER_UID}`);
+    r("X1b cannot read another member's threads (0 rows)", x1b.status === 200 && JSON.parse(x1b.body).length === 0 ? true : false, `rows=${JSON.parse(x1b.body).length}`);
+  } else {
+    r("X1b cannot read another member's threads (0 rows)", "SKIP", "no other-member thread in baseline to probe");
+  }
   const x2 = await page.evaluate(async ({ origin, token, apikey, tid, uid }) => {
     const rr = await fetch(`${origin}/rest/v1/support_messages`, { method: "POST", headers: { apikey, Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ thread_id: tid, sender_id: uid, sender_type: "admin", body: "probe-admin-type" }) });
     return { status: rr.status };
   }, { origin: SUPABASE, token: await pageToken(), apikey: ANON, tid: thr.id, uid: CL_UID });
   r("X2 client cannot forge admin sender_type (403)", x2.status === 403 ? true : false, `status=${x2.status}`);
-  const x3 = await page.evaluate(async ({ origin, token, apikey }) => {
-    const rr = await fetch(`${origin}/rest/v1/support_threads`, { method: "POST", headers: { apikey, Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ user_id: "0c615e44-7c07-4efd-b917-1414db32cf10", subject: "probe-other-user", channel: "communication" }) });
-    return { status: rr.status };
-  }, { origin: SUPABASE, token: await pageToken(), apikey: ANON });
-  r("X3 client cannot create thread for another user (403)", x3.status === 403 ? true : false, `status=${x3.status}`);
-  const beforeDel = (await (await svc("GET", `/rest/v1/support_threads?select=id&id=eq.${thr.id}`)).json())?.length ?? 0;
+  if (OTHER_UID) {
+    const x3 = await page.evaluate(async ({ origin, token, apikey, otherUid }) => {
+      const rr = await fetch(`${origin}/rest/v1/support_threads`, { method: "POST", headers: { apikey, Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ user_id: otherUid, subject: "probe-other-user", channel: "communication" }) });
+      return { status: rr.status };
+    }, { origin: SUPABASE, token: await pageToken(), apikey: ANON, otherUid: OTHER_UID });
+    r("X3 client cannot create thread for another user (403)", x3.status === 403 ? true : false, `status=${x3.status}`);
+  } else {
+    r("X3 client cannot create thread for another user (403)", "SKIP", "no other-member id in baseline to probe");
+  }
+  const beforeDelRows = await verifyRead(`/rest/v1/support_threads?select=id&id=eq.${thr.id}&order=id.asc`, "support_threads_before_delete", ["id"]);
+  const beforeDel = Array.isArray(beforeDelRows) ? beforeDelRows.length : null;
   const x4 = await page.evaluate(async ({ origin, token, apikey, tid }) => {
     const rr = await fetch(`${origin}/rest/v1/support_threads?id=eq.${tid}`, { method: "DELETE", headers: { apikey, Authorization: `Bearer ${token}` } });
     return { status: rr.status };
   }, { origin: SUPABASE, token: await pageToken(), apikey: ANON, tid: thr.id });
-  const afterDel = (await (await svc("GET", `/rest/v1/support_threads?select=id&id=eq.${thr.id}`)).json())?.length ?? 0;
+  const afterDelRows = await verifyRead(`/rest/v1/support_threads?select=id&id=eq.${thr.id}&order=id.asc`, "support_threads_after_delete", ["id"]);
+  const afterDel = Array.isArray(afterDelRows) ? afterDelRows.length : null;
   r("X4 client cannot DELETE support thread (row still present)", afterDel === beforeDel && afterDel === 1 ? true : false, `status=${x4.status} before=${beforeDel} after=${afterDel}`);
-  const probeThreads = await (await svc("GET", "/rest/v1/support_threads?select=id&subject=like.probe-%25")).json();
-  const probeMsgs = await (await svc("GET", "/rest/v1/support_messages?select=id&body=like.probe-%25")).json();
-  r("X5 probes created no rows", (probeThreads?.length ?? 0) === 0 && (probeMsgs?.length ?? 0) === 0 ? true : false, "");
+  const probeThreads = await verifyRead("/rest/v1/support_threads?select=id&subject=like.probe-%25&order=id.asc", "probe_threads", ["id"]);
+  const probeMsgs = await verifyRead("/rest/v1/support_messages?select=id&body=like.probe-%25&order=id.asc", "probe_messages", ["id"]);
+  r("X5 probes created no rows", Array.isArray(probeThreads) && Array.isArray(probeMsgs) && probeThreads.length === 0 && probeMsgs.length === 0 ? true : false, "");
   const domText = (await page.locator("body").innerText()).replace(/\s+/g, " ").trim();
-  r("X6 no member data leaked", !domText.includes("SLMM-") && !domText.includes("surekgha055") && !domText.includes("4409e9c8") ? true : false, "");
+  const leakedIdPrefixes = [...PROTECTED_USER_IDS].filter((id) => domText.includes(id.slice(0, 8)));
+  r("X6 no member identifiers leaked to the DOM", !domText.includes("SLMM-") && leakedIdPrefixes.length === 0 && (!OTHER_UID || !domText.includes(OTHER_UID)) ? true : false, `leaked=${leakedIdPrefixes.length}`);
 
-  // ============ D: PRESERVATION ============
-  const jkFields = "id,status,membership_plan,profile_created_by";
-  const jkProf = (await (await svc("GET", `/rest/v1/profiles?select=${jkFields}&id=eq.4409e9c8-b57c-4e92-9333-983bdc2cb6fc`)).json())?.[0];
-  const afterConv = await (await svc("GET", "/rest/v1/conversations?select=id")).json();
-  const afterMemMsg = await (await svc("GET", "/rest/v1/messages?select=id")).json();
-  const afterDocs = await (await svc("GET", "/rest/v1/documents?select=id")).json();
-  const afterSl = await (await svc("GET", "/rest/v1/shortlists?select=id")).json();
-  const afterProfiles = await (await svc("GET", "/rest/v1/profiles?select=id")).json();
-  const afterThreads = await (await svc("GET", "/rest/v1/support_threads?select=id,user_id")).json();
-  const nonScratchThreads = (afterThreads || []).filter((x) => x.user_id !== CL_UID);
-  r("D1 real client profile untouched", jkProf?.status === "pending" && jkProf?.membership_plan === "free" && jkProf?.profile_created_by === "admin" ? true : false, `status=${jkProf?.status}`);
-  r("D2 member-messaging tables untouched", (afterConv?.length ?? 0) === (baseConv?.length ?? 0) && (afterMemMsg?.length ?? 0) === (baseMemMsg?.length ?? 0) ? true : false, "");
-  r("D3 docs + shortlists untouched", (afterDocs?.length ?? 0) === (baseDocs?.length ?? 0) && (afterSl?.length ?? 0) === (baseSl?.length ?? 0) ? true : false, "");
-  r("D4 pre-existing (non-scratch) threads untouched", nonScratchThreads.length === baselineSupportThreadCount ? true : false, `baseline=${baselineSupportThreadCount} now=${nonScratchThreads.length}`);
-  r("D5 profiles = baseline + this run's scratch profile", (afterProfiles?.length ?? 0) === (baseProfiles?.length ?? 0) + 1 ? true : false, `base=${baseProfiles?.length} now=${afterProfiles?.length}`);
+  // ============ D: PRESERVATION (complete, validated reads) ============
+  // Every read below is COMPLETE and VALIDATED: paginated with an exact count and
+  // a fully validated Content-Range (verifyRead -> makeBaselineFetcher ->
+  // fetchCompleteBaseline -> parseContentRange). A failed read is recorded as a
+  // FAIL and yields null - it is NEVER treated as "0 rows" / "empty". The former
+  // empty-array / zero-count fallbacks silently turned a failed read into a
+  // passing preservation check; no such fallbacks remain.
+  const afterProfilesFull = await verifyRead("/rest/v1/profiles?select=id,status,membership_plan,profile_created_by&order=id.asc", "profiles_after", ["id", "status", "membership_plan", "profile_created_by"]);
+  const afterFingerprint = Array.isArray(afterProfilesFull)
+    ? afterProfilesFull.map((x) => `${x.id}|${x.status}|${x.membership_plan}|${x.profile_created_by}`).sort()
+    : null;
+  const nonScratchFingerprint = Array.isArray(afterFingerprint) ? afterFingerprint.filter((s) => !s.startsWith(`${CL_UID}|`)) : null;
+  const afterConv = await verifyRead("/rest/v1/conversations?select=id&order=id.asc", "conversations_after", ["id"]);
+  const afterMemMsg = await verifyRead("/rest/v1/messages?select=id&order=id.asc", "messages_after", ["id"]);
+  const afterDocs = await verifyRead("/rest/v1/documents?select=id&order=id.asc", "documents_after", ["id"]);
+  const afterSl = await verifyRead("/rest/v1/shortlists?select=id&order=id.asc", "shortlists_after", ["id"]);
+  const afterProfiles = await verifyRead("/rest/v1/profiles?select=id&order=id.asc", "profiles_count_after", ["id"]);
+  const afterThreads = await verifyRead("/rest/v1/support_threads?select=id,user_id&order=id.asc", "support_threads_after", ["id", "user_id"]);
+  const nonScratchThreads = Array.isArray(afterThreads) ? afterThreads.filter((x) => x.user_id !== CL_UID) : null;
+  r("D1 pre-existing member profiles untouched (fingerprint)", Array.isArray(nonScratchFingerprint) && JSON.stringify(nonScratchFingerprint) === JSON.stringify(baselineProfileFingerprint) ? true : false, `baseline=${baselineProfileFingerprint.length} now=${Array.isArray(nonScratchFingerprint) ? nonScratchFingerprint.length : "READ-FAILED"}`);
+  r("D2 member-messaging tables untouched", Array.isArray(afterConv) && Array.isArray(afterMemMsg) && afterConv.length === baseConv.length && afterMemMsg.length === baseMemMsg.length ? true : false, "");
+  r("D3 docs + shortlists untouched", Array.isArray(afterDocs) && Array.isArray(afterSl) && afterDocs.length === baseDocs.length && afterSl.length === baseSl.length ? true : false, "");
+  r("D4 pre-existing (non-scratch) threads untouched", Array.isArray(nonScratchThreads) && nonScratchThreads.length === baselineSupportThreadCount ? true : false, `baseline=${baselineSupportThreadCount} now=${Array.isArray(nonScratchThreads) ? nonScratchThreads.length : "READ-FAILED"}`);
+  r("D5 profiles = baseline + this run's scratch profile", Array.isArray(afterProfiles) && afterProfiles.length === baseProfiles.length + 1 ? true : false, `base=${baseProfiles.length} now=${Array.isArray(afterProfiles) ? afterProfiles.length : "READ-FAILED"}`);
 
   // ============ N: CONSOLE / NETWORK ============
   const uniq = (a) => [...new Set(a.map((x) => x.slice(0, 200)))];
@@ -384,7 +530,7 @@ if (process.argv.includes("--cleanup-preview")) {
     testRunId: TEST_RUN_ID,
     createdAt: new Date().toISOString(),
     baselineThreadIds,
-    baselineCounts: { threads: baselineSupportThreadCount, messages: baselineSupportMsgCount, profiles: (baseProfiles || []).length },
+    baselineCounts: { threads: baselineSupportThreadCount, messages: baselineSupportMsgCount, profiles: baseProfiles.length },
     created: {
       users: [CL_UID],
       userEmails: { [CL_UID]: SCRATCH_EMAIL },
@@ -403,13 +549,26 @@ if (process.argv.includes("--cleanup-preview")) {
   const outcome = await guard.cleanup();
   r("CLEANUP guard decision", outcome.decision === "ALLOW" ? true : false, `decision=${outcome.decision} executed=${outcome.executed}`);
 
-  // verify: pre-existing rows restored to baseline; scratch rows gone
-  const postThreads = await (await svc("GET", "/rest/v1/support_threads?select=id")).json();
-  const postMsgs = await (await svc("GET", "/rest/v1/support_messages?select=id")).json();
-  const postProfiles = await (await svc("GET", "/rest/v1/profiles?select=id")).json();
-  r("CLEANUP support_threads back to baseline", (postThreads?.length ?? 0) === baselineSupportThreadCount ? true : false, `now=${postThreads?.length} baseline=${baselineSupportThreadCount}`);
-  r("CLEANUP support_messages back to baseline", (postMsgs?.length ?? 0) === baselineSupportMsgCount ? true : false, `now=${postMsgs?.length} baseline=${baselineSupportMsgCount}`);
-  r("CLEANUP profiles back to baseline", (postProfiles?.length ?? 0) === (baseProfiles?.length ?? 0) ? true : false, `now=${postProfiles?.length} baseline=${(baseProfiles || []).length}`);
+  // verify (complete, validated reads): pre-existing rows restored to baseline;
+  // scratch rows gone. A failed read is a FAIL, never treated as "0 rows".
+  const postThreads = await verifyRead("/rest/v1/support_threads?select=id&order=id.asc", "support_threads_post_cleanup", ["id"]);
+  const postMsgs = await verifyRead("/rest/v1/support_messages?select=id&order=id.asc", "support_messages_post_cleanup", ["id"]);
+  const postProfiles = await verifyRead("/rest/v1/profiles?select=id&order=id.asc", "profiles_post_cleanup", ["id"]);
+  r("CLEANUP support_threads back to baseline", Array.isArray(postThreads) && postThreads.length === baselineSupportThreadCount ? true : false, `now=${Array.isArray(postThreads) ? postThreads.length : "READ-FAILED"} baseline=${baselineSupportThreadCount}`);
+  r("CLEANUP support_messages back to baseline", Array.isArray(postMsgs) && postMsgs.length === baselineSupportMsgCount ? true : false, `now=${Array.isArray(postMsgs) ? postMsgs.length : "READ-FAILED"} baseline=${baselineSupportMsgCount}`);
+  r("CLEANUP profiles back to baseline", Array.isArray(postProfiles) && postProfiles.length === baseProfiles.length ? true : false, `now=${Array.isArray(postProfiles) ? postProfiles.length : "READ-FAILED"} baseline=${baseProfiles.length}`);
 
   await browser.close();
+
+  // ============ SUMMARY / EXIT STATUS ======================================
+  // Verification failures MUST fail the run: a non-zero exit status is required
+  // so a failed preservation/probe/cleanup check is never silently reported as
+  // success. `process.exitCode` is used (not `process.exit`) so buffered output
+  // still flushes.
+  const failed = results.filter((x) => x.ok === false);
+  const skipped = results.filter((x) => x.ok !== true && x.ok !== false);
+  console.log("");
+  console.log(`SUMMARY: ${results.length - failed.length - skipped.length} pass, ${failed.length} fail, ${skipped.length} skip`);
+  for (const f of failed) console.log(`  FAIL ${f.label}${f.detail === undefined ? "" : ` :: ${f.detail}`}`);
+  if (failed.length > 0) process.exitCode = 1;
 })().catch((e) => { console.error("FATAL", e.message, e.stack); process.exit(1); });

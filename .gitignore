@@ -26,6 +26,13 @@ supabase/.temp/
 .wrangler/
 .dev.vars
 
+# SLMM generated test artifacts (never commit; produced by live harnesses)
+test-harness/slmm-comm-state.json
+receipt-delivery-select-fix-functional-test-report.txt
+payment-review-guard-functional-test-report.txt
+profile-self-approval-trigger-report.txt
+payment_b1_atomic_readonly_precheck.txt
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

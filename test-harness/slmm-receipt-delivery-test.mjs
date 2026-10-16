@@ -13,14 +13,32 @@
 //  * verify_payment() and reviewPayment() are NEVER called. verify_payment is
 //    REVOKED from this harness on purpose; the post-verification outbox row is
 //    inserted directly as fixture state.
-//  * Known production payment ids are hard-refused and the harness asserts
-//    they are byte-identical before/after.
+//  * LIVE AUTHORIZATION GATE (Phase 5B): refuses to run unless the operator
+//    opts in with SLMM_LIVE_TESTS=true SLMM_LIVE_TARGET=test and
+//    SLMM_LIVE_ACK=slmm-receipt-delivery-test.mjs, before any credential load.
+//    The resolved SUPABASE_URL must be the TEST project; production is
+//    unconditionally prohibited.
+//  * Known production payment and member ids are hard-refused. Both protected
+//    sets are derived at RUNTIME from COMPLETE, paginated, validated read-only
+//    preflights (never from pinned literals) and the harness asserts the
+//    pre-existing rows are byte-identical before/after.
 //  * SLMM_TEST_MODE=true is mandatory for cleanup.
 // ---------------------------------------------------------------------------
 import { createServer } from "vite";
 import { readFileSync, writeFileSync } from "fs";
 import { AwsClient } from "aws4fetch";
 import { createCleanupGuard } from "./slmm-test-safety.mjs";
+import { requireLiveAuthorization, assertNonProductionTarget } from "./live-guard.mjs";
+import { fetchCompleteBaseline, parseContentRange } from "./slmm-rest-baseline.mjs";
+
+const HARNESS = "slmm-receipt-delivery-test.mjs";
+
+// PHASE 5B LIVE AUTHORIZATION GATE. Refuse by default, before ANY credential
+// load, network call, module construction or service-client construction.
+requireLiveAuthorization({
+  harness: HARNESS,
+  services: ["supabase-auth", "supabase-rest", "cloudflare-r2", "resend-email"],
+});
 
 const ROOT = process.cwd();
 const REPORT = ROOT + "/receipt-delivery-select-fix-functional-test-report.txt";
@@ -35,6 +53,9 @@ function loadEnv() {
 loadEnv();
 
 const SUPABASE = process.env.SUPABASE_URL;
+// Fail closed: the TEST project is the only permitted target; production and
+// unknown projects abort here, before any service client is constructed.
+assertNonProductionTarget(SUPABASE, { harness: HARNESS });
 const SVC = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const H = {
   apikey: SVC,
@@ -57,6 +78,40 @@ const rest = async (p) => {
   return r;
 };
 
+// Baseline page fetcher (the same pattern as slmm-comm-test.mjs). It performs
+// ONLY the HTTP round-trip and JSON decode; the PostgREST `Content-Range`
+// header is validated by the pure parser in slmm-rest-baseline.mjs
+// (parseContentRange), which checks the FULL interval against the requested
+// offset and the number of rows actually returned. Returns { status, rows,
+// total }; it does not itself decide what is acceptable.
+function makeBaselineFetcher(path, label) {
+  return async (offset, limit) => {
+    const r = await fetch(`${SUPABASE}${path}`, {
+      method: "GET",
+      headers: {
+        ...H,
+        "Range-Unit": "items",
+        Range: `${offset}-${offset + limit - 1}`,
+        Prefer: "count=exact",
+      },
+    });
+    const t = await r.text();
+    let rows = null;
+    if (t) {
+      try { rows = JSON.parse(t); } catch { rows = null; }
+    }
+    // A non-array payload is rejected later by fetchCompleteBaseline with the
+    // clearer "not a JSON array" error, so do not parse a range for it.
+    if (!Array.isArray(rows)) return { status: r.status, rows, total: null };
+    const { total } = parseContentRange(r.headers.get("content-range"), {
+      offset,
+      rowCount: rows.length,
+      label,
+    });
+    return { status: r.status, rows, total };
+  };
+}
+
 // Production payments are identified at RUNTIME from a read-only preflight
 // rather than pinned as literals in this tracked file. Every payment that
 // already exists is protected, which is strictly stronger than a hard-coded
@@ -68,21 +123,38 @@ let PROTECTED_PAYMENT_IDS = null;
 // Fail-closed loader. Throws - aborting the run before anything is created -
 // if the protected set cannot be established. It never falls back to an empty,
 // guessed, or placeholder set.
+//
+// The read is COMPLETE and VALIDATED (paginated, exact count, fully validated
+// Content-Range). This set is the deleter's deny-list: a TRUNCATED read would
+// silently SHRINK it and let cleanup delete a real payment, so failed HTTP
+// responses, malformed payloads, missing/invalid ids, duplicates, truncated
+// reads and ambiguous totals are all fatal. Malformed rows fail the read rather
+// than being silently filtered out of the protected set.
 async function loadProtectedPaymentIds() {
-  const res = await svc("GET", "/rest/v1/payments?select=id");
-  if (res.status < 200 || res.status >= 300) {
-    throw new Error(`protected payment id preflight failed (HTTP ${res.status}) - refusing to continue`);
-  }
-  const rows = await res.json();
-  if (!Array.isArray(rows)) {
-    throw new Error("protected payment id preflight returned a non-array payload - refusing to continue");
-  }
-  return new Set(rows.map((r) => r?.id).filter((id) => typeof id === "string" && id.length > 0));
+  const { rows } = await fetchCompleteBaseline(
+    makeBaselineFetcher("/rest/v1/payments?select=id&order=id.asc", "payments"),
+    { label: "payments", requiredFields: ["id"] },
+  );
+  return new Set(rows.map((r) => r.id));
 }
-const PROD_USER_IDS = new Set([
-  "4409e9c8-b57c-4e92-9333-983bdc2cb6fc",
-  "0c615e44-7c07-4efd-b917-1414db32cf10",
-]);
+// Pre-existing member ids are identified at RUNTIME from a read-only preflight
+// (the same pattern as the payment set above) rather than pinned as literals in
+// this tracked file. Every profile that already exists is protected: strictly
+// stronger than a fixed list, and it cannot go stale. Stays null until the
+// preflight succeeds, so any delete attempted before then is refused (deleter).
+let PROTECTED_USER_IDS = null;
+
+// The preflight is COMPLETE and VALIDATED, exactly like the payment set above:
+// a truncated read would shrink the deny-list and let cleanup delete a real
+// member profile. Malformed rows fail the read rather than being silently
+// filtered out of the protected set.
+async function loadProtectedUserIds() {
+  const { rows } = await fetchCompleteBaseline(
+    makeBaselineFetcher("/rest/v1/profiles?select=id&order=id.asc", "profiles"),
+    { label: "profiles", requiredFields: ["id"] },
+  );
+  return new Set(rows.map((r) => r.id));
+}
 
 const TS = Date.now();
 const TEST_RUN_ID = `receipt-${TS}`;
@@ -148,7 +220,7 @@ const deleter = async (row) => {
   // Fail-closed: refuse while the protected set is unknown, and refuse any row
   // that pre-existed this run. Returning a non-ok response makes the guard
   // abort the ENTIRE cleanup with zero further deletes.
-  if (!PROTECTED_PAYMENT_IDS || PROTECTED_PAYMENT_IDS.has(row.id) || PROD_USER_IDS.has(row.id)) {
+  if (!PROTECTED_PAYMENT_IDS || !PROTECTED_USER_IDS || PROTECTED_PAYMENT_IDS.has(row.id) || PROTECTED_USER_IDS.has(row.id)) {
     return { status: 409, ok: false };
   }
   switch (row.kind) {
@@ -190,6 +262,9 @@ const notifRows = async (uid) =>
   PROTECTED_PAYMENT_IDS = await loadProtectedPaymentIds();
   log(`protected production payment ids loaded at runtime: ${PROTECTED_PAYMENT_IDS.size} (values never printed)`);
   check("protected production payment set established from runtime preflight", PROTECTED_PAYMENT_IDS.size > 0, `size=${PROTECTED_PAYMENT_IDS.size}`);
+  PROTECTED_USER_IDS = await loadProtectedUserIds();
+  log(`protected pre-existing member ids loaded at runtime: ${PROTECTED_USER_IDS.size} (values never printed)`);
+  check("protected member id set established from runtime preflight", PROTECTED_USER_IDS instanceof Set, `size=${PROTECTED_USER_IDS.size}`);
   log("");
 
   // --- load the real processor from app source -----------------------------
@@ -207,7 +282,7 @@ const notifRows = async (uid) =>
   const guard = createCleanupGuard({
     testRunId: TEST_RUN_ID,
     modeEnv: process.env.SLMM_TEST_MODE,
-    knownProductionUserIds: PROD_USER_IDS,
+    knownProductionUserIds: PROTECTED_USER_IDS,
     baselinePaymentIds: PROTECTED_PAYMENT_IDS,
     deleter,
     logger: console,
@@ -370,13 +445,23 @@ const notifRows = async (uid) =>
 
     // === SCOPING PROOF: non-scratch events untouched ========================
     log("--- SCOPING PROOF ---");
-    const allEvents = await rest("/rest/v1/payment_events?select=id,payment_id");
-    const foreign = (allEvents || []).filter((r) => r.payment_id !== PID);
+    // Complete, validated reads. A truncated or failed read here would collapse
+    // to an empty array under the old `?? []` fallback and make this scoping
+    // proof PASS when it should FAIL. Both are paginated with an exact count and
+    // a fully validated Content-Range, like the protected preflights above.
+    const { rows: allEvents } = await fetchCompleteBaseline(
+      makeBaselineFetcher("/rest/v1/payment_events?select=id,payment_id&order=id.asc", "payment_events"),
+      { label: "payment_events", requiredFields: ["id", "payment_id"] },
+    );
+    const foreign = allEvents.filter((r) => r.payment_id !== PID);
     check("scoping: no other payment_events row exists to be touched", foreign.length === 0, `foreign=${foreign.length}`);
-    const allPayments = (await rest("/rest/v1/payments?select=id,status,verified_at,gateway_payment_id,updated_at")) ?? [];
+    const { rows: allPayments } = await fetchCompleteBaseline(
+      makeBaselineFetcher("/rest/v1/payments?select=id,status,verified_at,gateway_payment_id,updated_at&order=id.asc", "payments"),
+      { label: "payments", requiredFields: ["id", "status", "verified_at", "gateway_payment_id", "updated_at"] },
+    );
     const baselineCount = baseline.counts.payments;
-    check("scoping: payments table holds the pre-existing rows + 1 scratch row", Array.isArray(allPayments) && allPayments.length === baselineCount + 1, `count=${Array.isArray(allPayments) ? allPayments.length : "ERR"}`);
-    const prodPayments = (allPayments || []).filter((x) => x.id !== PID);
+    check("scoping: payments table holds the pre-existing rows + 1 scratch row", allPayments.length === baselineCount + 1, `count=${allPayments.length}`);
+    const prodPayments = allPayments.filter((x) => x.id !== PID);
     check("scoping: every pre-existing payment still present", prodPayments.length === baselineCount, `count=${prodPayments.length}`);
     for (const pid of PROTECTED_PAYMENT_IDS) {
       const p = prodPayments.find((x) => x.id === pid);
@@ -417,15 +502,25 @@ const notifRows = async (uid) =>
     }
     check("H: production payment ids unchanged", JSON.stringify(after.detail.paymentIds) === JSON.stringify(baseline.detail.paymentIds));
     check("H: production payment_events fingerprint unchanged", JSON.stringify(after.detail.payment_events) === JSON.stringify(baseline.detail.payment_events));
+    // These post-cleanup reads run inside `finally`, so they must NOT throw (a
+    // throw here would skip the report write and the exit code). They are
+    // status-checked instead: a failed read now FAILS the check rather than
+    // silently passing via the old `|| []` fallback.
     if (cleanedPaymentId) {
-      const left = await rest(`/rest/v1/payments?select=id&id=eq.${cleanedPaymentId}`);
-      check("E: scratch payment row removed", (left || []).length === 0);
-      const leftEv = await rest(`/rest/v1/payment_events?select=id&payment_id=eq.${cleanedPaymentId}`);
-      check("E: scratch payment_events rows removed (FK cascade)", (leftEv || []).length === 0, `count=${(leftEv || []).length}`);
+      const left = await svc("GET", `/rest/v1/payments?select=id&id=eq.${cleanedPaymentId}`);
+      const leftRows = left.status >= 200 && left.status < 300 ? await left.json() : null;
+      check("E: scratch payment row removed", Array.isArray(leftRows) ? leftRows.length === 0 : false,
+        Array.isArray(leftRows) ? `count=${leftRows.length}` : `HTTP ${left.status}`);
+      const leftEv = await svc("GET", `/rest/v1/payment_events?select=id&payment_id=eq.${cleanedPaymentId}`);
+      const leftEvRows = leftEv.status >= 200 && leftEv.status < 300 ? await leftEv.json() : null;
+      check("E: scratch payment_events rows removed (FK cascade)", Array.isArray(leftEvRows) ? leftEvRows.length === 0 : false,
+        Array.isArray(leftEvRows) ? `count=${leftEvRows.length}` : `HTTP ${leftEv.status}`);
     }
     if (cleanedNotifId) {
-      const leftN = await rest(`/rest/v1/notifications?select=id&id=eq.${cleanedNotifId}`);
-      check("E: scratch notification row removed", (leftN || []).length === 0);
+      const leftN = await svc("GET", `/rest/v1/notifications?select=id&id=eq.${cleanedNotifId}`);
+      const leftNRows = leftN.status >= 200 && leftN.status < 300 ? await leftN.json() : null;
+      check("E: scratch notification row removed", Array.isArray(leftNRows) ? leftNRows.length === 0 : false,
+        Array.isArray(leftNRows) ? `count=${leftNRows.length}` : `HTTP ${leftN.status}`);
     }
     const scratchLeft = await svc("GET", `/auth/v1/admin/users/${report.scratch.user}`);
     check("E: scratch auth user removed", scratchLeft.status === 404, `status=${scratchLeft.status}`);
