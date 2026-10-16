@@ -482,10 +482,11 @@ export const deleteUpload = createServerFn({ method: "POST" })
     }
     if (!allowed) throw new Error("Not allowed");
 
-    const { data: rows } = await context.supabase
+    const { data: rows, error: lookupError } = await context.supabase
       .from("documents")
       .select("user_id, doc_type")
       .eq("storage_key", data.key);
+    if (lookupError || !rows) throw new Error("Cannot verify document references.");
     const row = rows?.[0];
 
     if (row) {
@@ -494,25 +495,39 @@ export const deleteUpload = createServerFn({ method: "POST" })
         .delete()
         .eq("storage_key", data.key);
       if (delError) throw delError;
+    }
 
-      if (row.doc_type === "photo") {
+    // Clear a dangling profile photo pointer. Checked even when there was no
+    // `documents` row: a compensation cleanup can run after `profiles.photo_url`
+    // was already pointed at a just-uploaded key whose row insert then failed,
+    // and leaving the profile advertising a deleted object would render a broken
+    // primary photo. The owner comes from the key prefix, not the caller, so an
+    // admin deleting another member's photo still clears that member's pointer.
+    const keyOwner = data.key.split("/")[0] ?? "";
+    const keyFolder = data.key.split("/")[1] ?? "";
+    if (row ? row.doc_type === "photo" : keyFolder === "photo") {
+      const profileId = row?.user_id ?? keyOwner;
+      if (profileId) {
         const { data: profile } = await context.supabase
           .from("profiles")
           .select("photo_url")
-          .eq("id", row.user_id)
+          .eq("id", profileId)
           .maybeSingle();
         if (profile?.photo_url === data.key) {
-          await context.supabase.from("profiles").update({ photo_url: null }).eq("id", row.user_id);
+          await context.supabase.from("profiles").update({ photo_url: null }).eq("id", profileId);
         }
       }
     }
 
-    // Best-effort removal of the R2 object so storage is freed.
+    // Report an R2 failure after the best-effort quota resync below.
+    let r2DeleteError: Error | null = null;
     try {
       const delUrl = await signR2(data.key, "DELETE");
-      await fetch(delUrl, { method: "DELETE" });
+      const response = await fetch(delUrl, { method: "DELETE" });
+      if (!response.ok) r2DeleteError = new Error(`Storage deletion failed (${response.status}).`);
     } catch {
-      // The metadata row is already gone; R2 cleanup is retried on next delete.
+      // Do not expose a signed URL or credentials from a signing/network error.
+      r2DeleteError = new Error("Storage deletion failed.");
     }
 
     // The counters are a cache of what is in the bucket, so a delete has to
@@ -528,6 +543,7 @@ export const deleteUpload = createServerFn({ method: "POST" })
       }
     }
 
+    if (r2DeleteError) throw r2DeleteError;
     return { ok: true };
   });
 
