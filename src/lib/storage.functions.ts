@@ -13,6 +13,8 @@ import {
   UPLOAD_LIMIT_TOTAL,
   UPLOAD_LIMIT_STORAGE,
 } from "@/lib/compress";
+import { keysSafeToDelete } from "@/lib/screening";
+import { supabase } from "@/integrations/supabase/client";
 
 /**
  * Files belong to whoever owns them so the member can always open their own
@@ -546,6 +548,51 @@ export const deleteUpload = createServerFn({ method: "POST" })
     if (r2DeleteError) throw r2DeleteError;
     return { ok: true };
   });
+
+/**
+ * Best-effort removal of objects this attempt uploaded but never persisted.
+ *
+ * Shared by every client flow that uploads first and writes its `documents`
+ * rows second (registration and both admin upload dialogs). Ownership and
+ * persistence are BOTH verified before deleting: only keys owned by `ownerId`
+ * (the member whose prefix the upload used -- for an admin-on-behalf upload that
+ * is the CLIENT's id, never the admin's) and that no stored document references
+ * are removed. That is what keeps cleanup from ever deleting a persisted
+ * document -- for example the screened photo/ID pair a registration retry is
+ * about to reuse -- or another member's object.
+ *
+ * Runs against the caller's own RLS-scoped client, so a member sees only their
+ * own rows and an admin only what their role allows. Read-then-delete is not
+ * atomic; a key that gets persisted between the read and the delete is not
+ * expected here because the keys are per-attempt and uniquely generated, and the
+ * caller only invokes this on a failed attempt.
+ *
+ * Never throws: a cleanup failure must not replace the original error the
+ * caller is about to report.
+ */
+export async function cleanupOrphanedUploads(
+  ownerId: string,
+  keys: readonly string[],
+): Promise<void> {
+  if (!ownerId || keys.length === 0) return;
+  try {
+    const { data: rows, error } = await supabase
+      .from("documents")
+      .select("storage_key")
+      .in("storage_key", [...keys]);
+    if (error || !rows) return;
+    const referenced = rows.map((row) => row.storage_key);
+    for (const key of keysSafeToDelete(keys, referenced, ownerId)) {
+      try {
+        await deleteUpload({ data: { key } });
+      } catch {
+        /* best-effort: one failed delete must not stop the others */
+      }
+    }
+  } catch {
+    /* best-effort: cleanup failure must never change the reported outcome */
+  }
+}
 
 /** Returns a short-lived view URL. Owners and admins only. */
 export const createViewUrl = createServerFn({ method: "POST" })
