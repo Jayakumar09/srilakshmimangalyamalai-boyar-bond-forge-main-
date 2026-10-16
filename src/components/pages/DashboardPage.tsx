@@ -349,6 +349,10 @@ export function DashboardPage() {
     }
     setPhotoUploading(true);
     let up: Awaited<ReturnType<typeof uploadToR2>> | undefined;
+    // Set only once the documents row is durably inserted. Cleanup below must
+    // run for a failed insert, never for a later unrelated failure (for example
+    // a rejected `loadDocs` after a successful insert).
+    let persisted = false;
     try {
       up = await uploadToR2(file, "photo");
       const { error } = await supabase.from("documents").insert({
@@ -360,11 +364,12 @@ export function DashboardPage() {
         size_bytes: up.sizeBytes,
       });
       if (error) throw error;
+      persisted = true;
       toast.success(t("adm_uploaded"));
       if (userId) await loadDocs(userId);
     } catch (err) {
       // If upload succeeded but DB insert failed, clean up the orphaned object.
-      if (up?.key) {
+      if (up?.key && !persisted) {
         try {
           await deleteUpload({ data: { key: up.key } });
         } catch (cleanupErr) {
@@ -393,6 +398,10 @@ export function DashboardPage() {
     }
     setUploading(true);
     let up: Awaited<ReturnType<typeof uploadToR2>> | undefined;
+    // Set only once the documents row is durably inserted. Cleanup below must
+    // run for a failed insert, never for a later unrelated failure (for example
+    // a rejected `loadDocs` after a successful insert).
+    let persisted = false;
     try {
       up = await uploadToR2(file, "govt_id");
       const { error } = await supabase.from("documents").insert({
@@ -405,11 +414,12 @@ export function DashboardPage() {
         size_bytes: up.sizeBytes,
       });
       if (error) throw error;
+      persisted = true;
       toast.success(t("adm_uploaded"));
       if (userId) await loadDocs(userId);
     } catch (err) {
       // If upload succeeded but DB insert failed, clean up the orphaned object.
-      if (up?.key) {
+      if (up?.key && !persisted) {
         try {
           await deleteUpload({ data: { key: up.key } });
         } catch (cleanupErr) {
