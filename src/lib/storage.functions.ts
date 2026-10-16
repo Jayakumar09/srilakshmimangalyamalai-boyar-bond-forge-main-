@@ -365,29 +365,50 @@ export const uploadFile = createServerFn({ method: "POST" })
     }
 
     const key = `${owner}/${folder}/${Date.now()}-${crypto.randomUUID()}-${sanitize(file.name || "file")}`;
+
+    // Hand the reservation back, best-effort. Only ever reached for outcomes
+    // that prove no object was stored; a failed release must not replace the
+    // error the member actually needs to see, and the slot is recovered by the
+    // next resync.
+    const releaseReservation = async () => {
+      if (!isProfileFolder) return;
+      try {
+        await releaseProfileQuota(owner, folder, file.size);
+      } catch {
+        // Reservation stays held; drifts high, never low.
+      }
+    };
+
+    // Both of these run before the PUT is dispatched, so a failure here stored
+    // nothing and the reservation can safely be given back.
+    let uploadUrl: string;
     try {
       assertValidMagicBytes(contentType, body);
-      const uploadUrl = await signR2(key, "PUT", contentType);
-      const res = await fetch(uploadUrl, {
-        method: "PUT",
-        headers: { "content-type": contentType },
-        body,
-      });
-      if (!res.ok) throw new Error(`Upload failed (${res.status}).`);
+      uploadUrl = await signR2(key, "PUT", contentType);
     } catch (err) {
-      // Nothing reached the bucket, so give the quota back. Otherwise a
-      // transient R2 or validation failure would permanently burn a slot.
-      // Best-effort: a failed release must not replace the error the member
-      // actually needs to see, and the slot is recovered by the next resync.
-      if (isProfileFolder) {
-        try {
-          await releaseProfileQuota(owner, folder, file.size);
-        } catch {
-          // Reservation stays held; drifts high, never low.
-        }
-      }
+      await releaseReservation();
       throw err;
     }
+
+    // The PUT is dispatched outside that guard: once the request may have
+    // reached R2 we can no longer prove the object is absent. Neither a lost
+    // response nor an explicit non-2xx is trusted to establish that, so the
+    // reservation is retained (drift high, never low) rather than released and
+    // letting a stored object go uncounted, which would defeat the caps below.
+    const res = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: { "content-type": contentType },
+      body,
+    });
+
+    if (!res.ok) {
+      // Every non-2xx response retains the reservation: even a 4xx is not
+      // trusted to prove the object is absent (an intermediary could have
+      // stored it before answering). Only the member-facing error is surfaced;
+      // its text is unchanged.
+      throw new Error(`Upload failed (${res.status}).`);
+    }
+
     return {
       key,
       fileName: originalName,
