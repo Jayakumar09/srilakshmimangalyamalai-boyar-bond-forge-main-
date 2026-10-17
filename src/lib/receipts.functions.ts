@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { assertCanonicalStorageKey, storageObjectUrl } from "@/lib/storage-key";
 
 /**
  * Downstream, retryable delivery for PAYMENT_VERIFIED events (receipt + client
@@ -155,6 +156,7 @@ function buildReceiptHtml(input: {
 }
 
 async function signR2Put(key: string, contentType: string): Promise<string> {
+  assertCanonicalStorageKey(key);
   const accountId = process.env["R2_ACCOUNT_ID"];
   const accessKeyId = process.env["R2_ACCESS_KEY_ID"];
   const secretAccessKey = process.env["R2_SECRET_ACCESS_KEY"];
@@ -162,9 +164,9 @@ async function signR2Put(key: string, contentType: string): Promise<string> {
   if (!accountId || !accessKeyId || !secretAccessKey || !bucket) {
     throw new Error("Cloud storage is not configured yet.");
   }
+  const url = storageObjectUrl(accountId, bucket, key);
   const { AwsClient } = await import("aws4fetch");
   const client = new AwsClient({ accessKeyId, secretAccessKey, service: "s3", region: "auto" });
-  const url = new URL(`https://${accountId}.r2.cloudflarestorage.com/${bucket}/${key}?X-Amz-Expires=900`);
   const signed = await client.sign(
     new Request(url, { method: "PUT", headers: { "content-type": contentType } }),
     { aws: { signQuery: true } },

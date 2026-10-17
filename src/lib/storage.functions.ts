@@ -14,6 +14,7 @@ import {
   UPLOAD_LIMIT_STORAGE,
 } from "@/lib/compress";
 import { keysSafeToDelete } from "@/lib/screening";
+import { assertCanonicalStorageKey, isCanonicalStorageKey, storageObjectUrl } from "@/lib/storage-key";
 import { supabase } from "@/integrations/supabase/client";
 
 /**
@@ -86,6 +87,7 @@ function assertValidMagicBytes(contentType: string, buf: Uint8Array) {
 }
 
 async function signR2(key: string, method: "PUT" | "GET" | "DELETE", contentType?: string) {
+  assertCanonicalStorageKey(key);
   const accountId = process.env["R2_ACCOUNT_ID"];
   const accessKeyId = process.env["R2_ACCESS_KEY_ID"];
   const secretAccessKey = process.env["R2_SECRET_ACCESS_KEY"];
@@ -93,15 +95,9 @@ async function signR2(key: string, method: "PUT" | "GET" | "DELETE", contentType
   if (!accountId || !accessKeyId || !secretAccessKey || !bucket) {
     throw new Error("Cloud storage is not configured yet.");
   }
+  const url = storageObjectUrl(accountId, bucket, key);
   const { AwsClient } = await import("aws4fetch");
   const client = new AwsClient({ accessKeyId, secretAccessKey, service: "s3", region: "auto" });
-  const url = new URL(
-    `https://${accountId}.r2.cloudflarestorage.com/${bucket}/${key}?X-Amz-Expires=900`,
-  );
-  // `new URL` collapses `..` segments, so a key like `<me>/../<them>/x` reaches
-  // a different object than the prefix the caller just authorised. Refuse any
-  // key that no longer resolves under the bucket rather than sign it.
-  if (!url.pathname.startsWith(`/${bucket}/`)) throw new Error("Invalid storage key.");
   const signed = await client.sign(
     new Request(url, { method, headers: contentType ? { "content-type": contentType } : {} }),
     { aws: { signQuery: true } },
@@ -421,46 +417,12 @@ export const uploadFile = createServerFn({ method: "POST" })
     };
   });
 
-/**
- * Percent-decodes a client-supplied key, or returns null when the encoding is
- * malformed. A key with no `%` is already in decoded form.
- *
- * Keys are refused rather than guessed at when the escapes are broken:
- * `sanitize` only ever writes `[a-zA-Z0-9._-]` into a key, so no genuine
- * storage key contains `%` and rejecting them costs nothing.
- */
-function decodeStorageKey(key: string): string | null {
-  if (!key.includes("%")) return key;
-  try {
-    return decodeURIComponent(key);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * A storage key supplied by a client, for the helpers that authorise on the key.
- *
- * The owner checks compare string prefixes, but `signR2` puts the key into a URL
- * and URL parsing collapses dot segments before anything is signed. A key such as
- * `<me>/../<them>/photo/x.jpg` satisfies `startsWith(`${me}/`)` and would then be
- * signed as a valid read or delete of another member's object.
- *
- * URL parsing recognises a dot segment after decoding its escapes, so `%2e%2e`,
- * `%2E%2E`, `%2e.` and `.%2e` collapse exactly like `..` and defeat a check on
- * the raw text. The key is therefore decoded first and the segment test runs on
- * the decoded form. Filenames that merely contain dots (`report..final.pdf`) are
- * unaffected: only a segment that is entirely `.` or `..` is refused.
- */
+/** Validate the literal key before authorization or metadata mutations. */
 const zStorageKey = z
   .string()
   .min(1)
   .max(300)
-  .refine((key) => {
-    const decoded = decodeStorageKey(key);
-    if (decoded === null) return false;
-    return !decoded.split("/").some((segment) => segment === "." || segment === "..");
-  }, {
+  .refine(isCanonicalStorageKey, {
     message: "Invalid key.",
   });
 
@@ -669,7 +631,7 @@ export const createViewUrls = createServerFn({ method: "POST" })
  */
 export const setPrimaryPhoto = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => z.object({ key: z.string().min(1).max(300) }).parse(input))
+  .inputValidator((input: unknown) => z.object({ key: zStorageKey }).parse(input))
   .handler(async ({ data, context }) => {
     const { data: rows } = await context.supabase
       .from("documents")

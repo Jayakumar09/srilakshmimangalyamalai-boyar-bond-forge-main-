@@ -4,6 +4,8 @@
  * Supabase, network and env imports so it can be exercised in isolation.
  */
 
+import { isCanonicalStorageKey } from "@/lib/storage-key";
+
 export type Residency = "india" | "abroad" | "unknown";
 
 /**
@@ -57,37 +59,9 @@ export function decideScreenedPair(result: ScreeningVerdict): ScreenedPairStatus
   return result.faceMatch ? "pass" : "review";
 }
 
-/**
- * Percent-decodes a stored-key candidate, or returns null when the encoding is
- * malformed. A key with no "%" is already decoded. Genuine keys are written by
- * the upload helper's `sanitize` (only `[a-zA-Z0-9._-]`), so no real key
- * contains "%" and refusing broken escapes costs nothing.
- */
-function decodeStorageKey(key: string): string | null {
-  if (!key.includes("%")) return key;
-  try {
-    return decodeURIComponent(key);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * True when `key` is owned by `userId` and cannot escape that owner's prefix.
- *
- * The owner test is a string prefix, but URL parsing collapses dot segments, so
- * `<me>/../<them>/photo/x.jpg` would satisfy `startsWith("<me>/")` and then
- * resolve to another member's object. URL parsing also recognises dot segments
- * after decoding, so `%2e%2e`, `%2E%2E`, `%2e.` and `.%2e` are checked on the
- * DECODED form. Only a segment that is entirely "." or ".." is refused, so
- * filenames that merely contain dots (`report..final.pdf`) stay valid.
- */
+/** Ownership is checked only on canonical literal keys, never decoded aliases. */
 export function isOwnedStorageKey(key: string, userId: string): boolean {
-  if (!key || !userId) return false;
-  const decoded = decodeStorageKey(key);
-  if (decoded === null) return false;
-  if (!decoded.startsWith(`${userId}/`)) return false;
-  return decoded.split("/").every((segment) => segment !== "." && segment !== "..");
+  return !!userId && isCanonicalStorageKey(key) && key.startsWith(`${userId}/`);
 }
 
 /**

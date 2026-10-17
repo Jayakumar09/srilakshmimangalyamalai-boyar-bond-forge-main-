@@ -18,7 +18,14 @@ function loadFunction(source, context, name) {
 }
 
 const screening = readFileSync(new URL("../src/lib/screening.ts", import.meta.url), "utf8");
-const keysSafeToDelete = loadFunction(screening, {}, "keysSafeToDelete");
+const keySource = readFileSync(new URL("../src/lib/storage-key.ts", import.meta.url), "utf8");
+const isCanonicalStorageKey = loadFunction(keySource, {}, "isCanonicalStorageKey");
+const keysSafeToDelete = loadFunction(screening, {
+  require(name) {
+    assert.equal(name, "@/lib/storage-key");
+    return { isCanonicalStorageKey };
+  },
+}, "keysSafeToDelete");
 const storage = readFileSync(new URL("../src/lib/storage.functions.ts", import.meta.url), "utf8");
 const start = storage.indexOf("export async function cleanupOrphanedUploads(");
 const end = storage.indexOf("/** Returns a short-lived view URL.", start);

@@ -35,9 +35,15 @@ function loadModule(source, context) {
   return exports;
 }
 
-// ---- real screening policy (pure, no imports) ------------------------------
+// ---- real screening policy and pure storage-key dependency ----------------
 const screening = readFileSync(new URL("../src/lib/screening.ts", import.meta.url), "utf8");
-const policy = loadModule(screening, {});
+const keyPolicy = loadModule(readFileSync(new URL("../src/lib/storage-key.ts", import.meta.url), "utf8"), {});
+const policy = loadModule(screening, {
+  require(name) {
+    assert.equal(name, "@/lib/storage-key");
+    return keyPolicy;
+  },
+});
 const { isOwnedStorageKey, isApprovedMandatoryIdKind, summarizePersistedPair, decideScreenedPair } =
   policy;
 
@@ -318,6 +324,18 @@ test("an unapproved id kind is rejected before any read or mutation", async () =
   await assert.rejects(ctx.run(), /Invalid document kind/);
   assert.equal(ctx.calls.select, 0);
   assert.deepEqual(ctx.calls.quota, []);
+});
+
+test("unsafe storage keys are rejected before screening reads or persistence", async () => {
+  for (const suffix of ["..\\another-owner/photo/x", "%2e%2e/photo/x", "photo/x?alias", "photo/x\n"]) {
+    const photoKey = `${PHOTO_KEY.split("/")[0]}/${suffix}`;
+    const ctx = setup({ photoKey });
+    await assert.rejects(ctx.run(), /Invalid storage key/);
+    assert.equal(ctx.calls.select, 0);
+    assert.equal(ctx.calls.insert.length, 0);
+    assert.equal(ctx.calls.model, 0);
+    assert.deepEqual(ctx.calls.quota, []);
+  }
 });
 
 test("quota-counter integrity: the handler only ever reads documents, never mutates quota", async () => {
