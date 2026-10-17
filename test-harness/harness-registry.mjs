@@ -29,7 +29,9 @@ export const OFFLINE_SUITES = Object.freeze([
   { file: "slmm-orphan-cleanup-tests.mjs", runner: "node-test" },
   { file: "slmm-quota-release-tests.mjs", runner: "node-test" },
   { file: "slmm-screened-pair-quota-tests.mjs", runner: "node-test" },
+  { file: "slmm-upload-cap-tests.mjs", runner: "node-test" },
   { file: "slmm-sql-contract-tests.mjs", runner: "node-test" },
+  { file: "slmm-quota-sql-contract-tests.mjs", runner: "node-test" },
   { file: "slmm-harness-safety-tests.mjs", runner: "node-test" },
   { file: "slmm-rest-baseline-tests.mjs", runner: "node-test" },
 ]);
