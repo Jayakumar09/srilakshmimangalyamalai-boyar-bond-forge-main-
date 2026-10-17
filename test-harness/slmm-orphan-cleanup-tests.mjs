@@ -72,7 +72,7 @@ test("server skips referenced keys without stopping independent orphan cleanup",
   assert.deepEqual(deleted, [fresh]);
 });
 
-for (const message of ["RPC missing", "Cannot verify document references.", "Not allowed", "Storage deletion failed."]) {
+for (const message of ["RPC missing", "Cannot verify storage references.", "Not allowed", "Storage deletion failed."]) {
   test(`server failure remains best-effort: ${message}`, async () => {
     const deleted = [];
     const ctx = setup(async (key) => {
@@ -91,4 +91,20 @@ test("repeat cleanup requests re-enter server verification", async () => {
   await ctx.cleanup(owner, [fresh]);
   await ctx.cleanup(owner, [fresh]);
   assert.deepEqual(ctx.attempts, [fresh, fresh]);
+});
+
+test("mixed six-table reference skips preserve independent orphan cleanup", async () => {
+  // Server returns skips for documents, proofs, reports, attachments, photos,
+  // and receipts. The wrapper must not retry these in explicit-delete mode.
+  const referenced = ["govt_id", "payment_proof", "jathagam", "attachment", "photo", "receipts"]
+    .map((folder) => `${owner}/${folder}/referenced-file.pdf`);
+  const deleted = [];
+  const ctx = setup(async (key) => {
+    if (referenced.includes(key)) return { ok: true, skipped: true };
+    deleted.push(key);
+    return { ok: true };
+  });
+  await ctx.cleanup(owner, [...referenced, fresh]);
+  assert.deepEqual(ctx.attempts, [...referenced, fresh]);
+  assert.deepEqual(deleted, [fresh]);
 });

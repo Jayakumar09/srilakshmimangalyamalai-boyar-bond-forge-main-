@@ -721,6 +721,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      get_storage_reference_state: {
+        Args: { p_storage_key: string }
+        Returns: {
+          has_document_references: boolean
+          may_delete_document_references: boolean
+          has_protected_references: boolean
+        }[]
+      }
       get_document_storage_reference_state: {
         Args: { p_storage_key: string }
         Returns: { has_references: boolean; may_delete_references: boolean }[]

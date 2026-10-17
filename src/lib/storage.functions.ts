@@ -426,10 +426,9 @@ const zStorageKey = z
   });
 
 /**
- * Deletes a stored file: removes the R2 object, the `documents` row and the
- * profile photo pointer if the deleted file was the primary photo. Owners can
- * delete their own files; admins can delete any file. Counts and stored bytes
- * therefore decrease so a member can free up quota.
+ * Deletes an owner/admin-authorized file and its deletable document metadata.
+ * Any payment, report, support, receipt or primary-photo reference protects the
+ * object, even from admin deletion. Cleanup preserves document references too.
  */
 export const deleteUpload = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -453,23 +452,27 @@ export const deleteUpload = createServerFn({ method: "POST" })
     const referenceState = async () => {
       try {
         const { data: states, error } = await context.supabase.rpc(
-          "get_document_storage_reference_state", { p_storage_key: data.key },
+          "get_storage_reference_state", { p_storage_key: data.key },
         );
         const state = Array.isArray(states) && states.length === 1 ? states[0] : null;
         if (error || !state || Array.isArray(state)
-          || typeof state.has_references !== "boolean"
-          || typeof state.may_delete_references !== "boolean"
-          || (!state.has_references && !state.may_delete_references)) {
+          || typeof state.has_document_references !== "boolean"
+          || typeof state.may_delete_document_references !== "boolean"
+          || typeof state.has_protected_references !== "boolean"
+          || (!state.has_document_references && !state.may_delete_document_references)) {
           throw new Error("Invalid reference state.");
         }
         return state;
       } catch {
-        throw new Error("Cannot verify document references.");
+        throw new Error("Cannot verify storage references.");
       }
     };
     const before = await referenceState();
-    if (data.onlyIfUnreferenced && before.has_references) return { ok: true, skipped: true };
-    if (!before.may_delete_references) throw new Error("Not allowed");
+    if (data.onlyIfUnreferenced && (before.has_document_references || before.has_protected_references)) {
+      return { ok: true, skipped: true };
+    }
+    if (before.has_protected_references) throw new Error("File is still in use and cannot be deleted.");
+    if (!before.may_delete_document_references) throw new Error("Not allowed");
 
     const { data: rows, error: lookupError } = await context.supabase
       .from("documents")
@@ -492,31 +495,10 @@ export const deleteUpload = createServerFn({ method: "POST" })
     // A successful RLS-scoped DELETE can affect zero rows. Require authoritative
     // absence before proceeding. This remains a snapshot, NOT an insert lock;
     // cross-system atomicity and durable retries belong to Findings 4–5.
-    if ((await referenceState()).has_references) {
+    const after = await referenceState();
+    if (after.has_document_references || after.has_protected_references) {
       if (data.onlyIfUnreferenced) return { ok: true, skipped: true };
-      throw new Error("Document references remain.");
-    }
-
-    // Clear a dangling profile photo pointer. Checked even when there was no
-    // `documents` row: a compensation cleanup can run after `profiles.photo_url`
-    // was already pointed at a just-uploaded key whose row insert then failed,
-    // and leaving the profile advertising a deleted object would render a broken
-    // primary photo. The owner comes from the key prefix, not the caller, so an
-    // admin deleting another member's photo still clears that member's pointer.
-    const keyOwner = data.key.split("/")[0] ?? "";
-    const keyFolder = data.key.split("/")[1] ?? "";
-    if (row ? row.doc_type === "photo" : keyFolder === "photo") {
-      const profileId = row?.user_id ?? keyOwner;
-      if (profileId) {
-        const { data: profile } = await context.supabase
-          .from("profiles")
-          .select("photo_url")
-          .eq("id", profileId)
-          .maybeSingle();
-        if (profile?.photo_url === data.key) {
-          await context.supabase.from("profiles").update({ photo_url: null }).eq("id", profileId);
-        }
-      }
+      throw new Error("Storage references remain.");
     }
 
     // Report an R2 failure after the best-effort quota resync below.
@@ -554,8 +536,9 @@ export const deleteUpload = createServerFn({ method: "POST" })
  * rows second (registration and both admin upload dialogs). Ownership and
  * persistence are BOTH verified before deleting: only keys owned by `ownerId`
  * (the member whose prefix the upload used -- for an admin-on-behalf upload that
- * is the CLIENT's id, never the admin's) and that no stored document references
- * are removed. The server skips referenced keys, including rows hidden by RLS.
+ * is the CLIENT's id, never the admin's) and that no known storage-reference
+ * column references are removed. The server checks all six tables, including
+ * rows hidden by RLS, and never detaches protected references to permit cleanup.
  *
  * Reference verification runs server-side through the authoritative RPC, never
  * through a browser-visible absence check. Read-then-delete remains non-atomic:

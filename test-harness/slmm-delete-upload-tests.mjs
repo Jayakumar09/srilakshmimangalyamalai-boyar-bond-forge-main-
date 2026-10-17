@@ -23,12 +23,13 @@ assert.ok(start >= 0 && end > start);
 const owner = "mock-owner";
 const key = `${owner}/govt_id/example.pdf`;
 const row = { user_id: owner, doc_type: "govt_id" };
-const state = (has_references, may_delete_references = true) => ({
-  data: [{ has_references, may_delete_references }], error: null,
+const state = (has_document_references, may_delete_document_references = true, has_protected_references = false) => ({
+  data: [{ has_document_references, may_delete_document_references, has_protected_references }], error: null,
 });
 const absent = () => state(false);
 
 function setup(options = {}) {
+  const storageKey = options.key ?? key;
   const calls = [];
   const rows = options.rows ?? [];
   let checks = 0;
@@ -42,9 +43,9 @@ function setup(options = {}) {
           assert.equal(args._role, "admin");
           return options.roleResult ?? { data: true, error: null };
         }
-        assert.equal(name, "get_document_storage_reference_state");
+        assert.equal(name, "get_storage_reference_state");
         assert.deepEqual(Object.keys(args), ["p_storage_key"]);
-        assert.equal(args.p_storage_key, key);
+        assert.equal(args.p_storage_key, storageKey);
         calls.push("reference-check");
         const result = options.states
           ? options.states[checks++]
@@ -59,7 +60,7 @@ function setup(options = {}) {
             assert.equal(columns, "user_id, doc_type");
             return { eq(column, value) {
               assert.equal(column, "storage_key");
-              assert.equal(value, key);
+              assert.equal(value, storageKey);
               calls.push("lookup");
               return options.lookup ?? { data: rows, error: null };
             } };
@@ -67,7 +68,7 @@ function setup(options = {}) {
           delete() {
             return { eq(column, value) {
               assert.equal(column, "storage_key");
-              assert.equal(value, key);
+              assert.equal(value, storageKey);
               calls.push("metadata-delete");
               return { error: options.deleteError ?? null };
             } };
@@ -90,7 +91,7 @@ function setup(options = {}) {
     },
     signR2: async (signedKey, method) => {
       calls.push("sign");
-      assert.equal(signedKey, key);
+      assert.equal(signedKey, storageKey);
       assert.equal(method, "DELETE");
       if (options.signError) throw new Error("private signing details");
       return "https://mock.invalid/deletion";
@@ -107,7 +108,7 @@ function setup(options = {}) {
       if (options.resyncError) throw new Error("quota failed");
     },
   });
-  return { calls, run: (data = {}) => mod.deleteUpload({ key, ...data }) };
+  return { calls, run: (data = {}) => mod.deleteUpload({ key: storageKey, ...data }) };
 }
 
 test("hidden foreign references block owner deletion before metadata or R2", async () => {
@@ -124,7 +125,7 @@ test("mixed visible own and hidden foreign references also block deletion", asyn
 
 for (const refs of [state(true), state(true, false)]) {
   for (const userId of [owner, "admin-user"]) {
-    test(`cleanup skips referenced objects without deleting rows (${userId}, deletable=${refs.data[0].may_delete_references})`, async () => {
+    test(`cleanup skips referenced objects without deleting rows (${userId}, deletable=${refs.data[0].may_delete_document_references})`, async () => {
       const ctx = setup({ userId, states: [refs] });
       assert.equal((await ctx.run({ onlyIfUnreferenced: true })).skipped, true);
       assert.deepEqual(ctx.calls, userId === owner ? ["reference-check"] : ["authorize", "reference-check"]);
@@ -154,13 +155,13 @@ for (const onlyIfUnreferenced of [false, true]) {
 
 test("successful metadata DELETE with references remaining cannot reach R2", async () => {
   const ctx = setup({ rows: [row], states: [state(true), state(true, false)] });
-  await assert.rejects(ctx.run(), /Document references remain/);
+  await assert.rejects(ctx.run(), /Storage references remain/);
   assert.deepEqual(ctx.calls, ["reference-check", "lookup", "metadata-delete", "reference-check"]);
 });
 
 test("scoped empty lookup cannot override remaining authoritative references", async () => {
   const ctx = setup({ states: [state(true), state(true)] });
-  await assert.rejects(ctx.run(), /Document references remain/);
+  await assert.rejects(ctx.run(), /Storage references remain/);
   assert.deepEqual(ctx.calls, ["reference-check", "lookup", "reference-check"]);
 });
 
@@ -182,17 +183,23 @@ const uncertain = [
   new Error("transport failed"), undefined, null,
   { data: null }, { data: [] }, { data: [null] }, { data: [[]] },
   { data: [absent().data[0], absent().data[0]] }, { data: {} },
-  { data: [{}] }, { data: [{ has_references: "false", may_delete_references: true }] },
-  { data: [{ has_references: false, may_delete_references: null }] },
+  { data: [{}] }, { data: [{ ...absent().data[0], has_document_references: "false" }] },
+  { data: [{ ...absent().data[0], may_delete_document_references: null }] },
+  { data: [{ ...absent().data[0], has_protected_references: null }] },
+  { data: [{ ...absent().data[0], has_protected_references: "false" }] },
+  { data: [{ has_document_references: false, may_delete_document_references: true }] },
+  // The old RPC shape must never be accepted as an aggregate absence result.
+  { data: [{ has_references: false, may_delete_references: true }] },
+  { data: null, error: { code: "42P01", message: "missing relation" } },
   state(false, false),
 ];
 for (const [index, result] of uncertain.entries()) {
   test(`uncertain reference response ${index} fails closed at both checkpoints`, async () => {
     const initial = setup({ states: [result] });
-    await assert.rejects(initial.run(), /Cannot verify document references/);
+    await assert.rejects(initial.run(), /Cannot verify storage references/);
     assert.deepEqual(initial.calls, ["reference-check"]);
     const final = setup({ rows: [row], states: [state(true), result] });
-    await assert.rejects(final.run(), /Cannot verify document references/);
+    await assert.rejects(final.run(), /Cannot verify storage references/);
     assert.deepEqual(final.calls, ["reference-check", "lookup", "metadata-delete", "reference-check"]);
   });
 }
@@ -240,4 +247,60 @@ test("canonical validation and cleanup boolean validation precede reference call
   await assert.rejects(ctx.run({ key: `${owner}/..\\victim/x` }));
   await assert.rejects(ctx.run({ onlyIfUnreferenced: "true" }));
   assert.deepEqual(ctx.calls, []);
+});
+
+// Source labels describe mocked aggregate RPC responses, not executed SQL.
+// The separate SQL contract suite pins each real table/column predicate.
+const protectedSources = [
+  ["payments.proof_key", "payment_proof"],
+  ["jathagam_requests.report_key", "jathagam"],
+  ["support_messages.attachment_key", "attachment"],
+  ["profiles.photo_url", "photo"],
+  ["payment_events.receipt_key", "receipts"],
+];
+for (const [sourceName, folder] of protectedSources) {
+  test(`${sourceName}: hidden protected reference blocks explicit deletion and skips cleanup for owner/admin`, async () => {
+    for (const userId of [owner, "admin-user"]) {
+      for (const rows of [[], [row]]) {
+        for (const onlyIfUnreferenced of [false, true]) {
+          const ctx = setup({
+            key: `${owner}/${folder}/existing-file.pdf`, userId, rows,
+            states: [state(rows.length > 0, true, true)],
+          });
+          if (onlyIfUnreferenced) {
+            assert.equal((await ctx.run({ onlyIfUnreferenced })).skipped, true);
+          } else {
+            await assert.rejects(ctx.run(), /File is still in use/);
+          }
+          // Even visible, deletable documents must be preserved in these cases.
+          assert.deepEqual(ctx.calls, userId === owner ? ["reference-check"] : ["authorize", "reference-check"]);
+        }
+      }
+    }
+  });
+}
+
+test("new protected reference at final check blocks R2 after authorized metadata removal", async () => {
+  const ctx = setup({ rows: [row], states: [state(true), state(false, true, true)] });
+  await assert.rejects(ctx.run(), /Storage references remain/);
+  assert.deepEqual(ctx.calls, ["reference-check", "lookup", "metadata-delete", "reference-check"]);
+});
+
+test("cleanup skips a newly observed non-document reference before signing", async () => {
+  const ctx = setup({ states: [absent(), state(false, true, true)] });
+  assert.equal((await ctx.run({ onlyIfUnreferenced: true })).skipped, true);
+  assert.deepEqual(ctx.calls, ["reference-check", "lookup", "reference-check"]);
+});
+
+test("non-primary gallery photo deletion no longer reads or clears profile pointers", async () => {
+  const ctx = setup({ key: `${owner}/photo/gallery.jpg`, rows: [{ ...row, doc_type: "photo" }] });
+  assert.equal((await ctx.run()).ok, true);
+  assert.deepEqual(ctx.calls, ["reference-check", "lookup", "metadata-delete", "reference-check", "sign", "r2-delete", "quota-resync"]);
+  assert.doesNotMatch(source.slice(start, end), /\.from\("profiles"\)|photo_url:\s*null/);
+});
+
+test("protected references cannot be bypassed using another folder", async () => {
+  const ctx = setup({ key, states: [state(false, true, true)] });
+  await assert.rejects(ctx.run(), /File is still in use/);
+  assert.deepEqual(ctx.calls, ["reference-check"]);
 });
