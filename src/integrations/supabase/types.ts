@@ -612,6 +612,69 @@ export type Database = {
         }
         Relationships: []
       }
+      storage_deletion_requests: {
+        Row: {
+          attempt_count: number
+          block_reason: string | null
+          created_at: string
+          document_row_ids: string[]
+          finalize_state: string
+          finalized_at: string | null
+          id: string
+          last_error: string | null
+          lease_expires_at: string | null
+          lease_token: string | null
+          owner_id: string
+          quota_resynced_at: string | null
+          r2_state: string
+          requested_as_admin: boolean
+          requested_by: string
+          status: string
+          storage_key: string
+          updated_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          block_reason?: string | null
+          created_at?: string
+          document_row_ids?: string[]
+          finalize_state?: string
+          finalized_at?: string | null
+          id?: string
+          last_error?: string | null
+          lease_expires_at?: string | null
+          lease_token?: string | null
+          owner_id: string
+          quota_resynced_at?: string | null
+          r2_state?: string
+          requested_as_admin?: boolean
+          requested_by: string
+          status?: string
+          storage_key: string
+          updated_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          block_reason?: string | null
+          created_at?: string
+          document_row_ids?: string[]
+          finalize_state?: string
+          finalized_at?: string | null
+          id?: string
+          last_error?: string | null
+          lease_expires_at?: string | null
+          lease_token?: string | null
+          owner_id?: string
+          quota_resynced_at?: string | null
+          r2_state?: string
+          requested_as_admin?: boolean
+          requested_by?: string
+          status?: string
+          storage_key?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       support_messages: {
         Row: {
           attachment_key: string | null
@@ -721,6 +784,80 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      request_storage_deletion: {
+        Args: { p_storage_key: string }
+        Returns: string
+      }
+      cancel_storage_deletion: {
+        Args: { p_request_id: string }
+        Returns: boolean
+      }
+      check_storage_deletion_references: {
+        Args: { p_storage_key: string }
+        Returns: { has_protected_references: boolean; current_document_ids: string[] }[]
+      }
+      claim_storage_deletion_request: {
+        Args: { p_request_id: string }
+        Returns: {
+          id: string
+          storage_key: string
+          owner_id: string
+          lease_token: string
+          status: string
+          r2_state: string
+          finalize_state: string
+          document_row_ids: string[]
+          attempt_count: number
+        }[]
+      }
+      claim_storage_deletion_requests: {
+        Args: { p_limit: number }
+        Returns: {
+          id: string
+          storage_key: string
+          owner_id: string
+          lease_token: string
+          status: string
+          r2_state: string
+          finalize_state: string
+          document_row_ids: string[]
+          attempt_count: number
+        }[]
+      }
+      block_storage_deletion: {
+        Args: { p_request_id: string; p_lease_token: string; p_reason: string }
+        Returns: boolean
+      }
+      record_storage_deletion_failure: {
+        Args: {
+          p_request_id: string
+          p_lease_token: string
+          p_error: string
+          p_max_attempts: number
+        }
+        Returns: string | null
+      }
+      set_r2_confirmed_absent: {
+        Args: { p_request_id: string; p_lease_token: string }
+        Returns: boolean
+      }
+      finalize_storage_deletion: {
+        Args: { p_request_id: string; p_lease_token: string }
+        Returns: boolean
+      }
+      mark_storage_deletion_quota_resynced: {
+        Args: { p_request_id: string }
+        Returns: undefined
+      }
+      list_storage_deletion_quota_resyncs: {
+        Args: { p_limit: number }
+        Returns: {
+          id: string
+          storage_key: string
+          owner_id: string
+          finalized_at: string
+        }[]
+      }
       get_storage_reference_state: {
         Args: { p_storage_key: string }
         Returns: {

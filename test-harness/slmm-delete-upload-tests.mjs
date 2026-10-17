@@ -1,5 +1,7 @@
-// Real deletion validator/handler, with offline database, signing and R2 boundaries.
-// RLS and SQL execution are NOT simulated or verified by these mocks.
+// Real deletion lifecycle handler, with offline database, signing, R2 and
+// service-role RPC boundaries. The durable state machine (claims, CAS,
+// finalization) is a test double: SQL and RLS execution are NOT simulated or
+// verified here, and neither is concurrent reference insertion.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -22,7 +24,8 @@ const end = source.indexOf("/** Returns a short-lived view URL.", start);
 assert.ok(start >= 0 && end > start);
 const owner = "mock-owner";
 const key = `${owner}/govt_id/example.pdf`;
-const row = { user_id: owner, doc_type: "govt_id" };
+const REQUEST_ID = "11111111-1111-1111-1111-111111111111";
+
 const state = (has_document_references, may_delete_document_references = true, has_protected_references = false) => ({
   data: [{ has_document_references, may_delete_document_references, has_protected_references }], error: null,
 });
@@ -31,8 +34,28 @@ const absent = () => state(false);
 function setup(options = {}) {
   const storageKey = options.key ?? key;
   const calls = [];
-  const rows = options.rows ?? [];
   let checks = 0;
+  const claimOwner = options.ownerId ?? owner;
+  const capturedIds = options.rowIds ?? [];
+  const issuedRequestId = options.requestId ?? REQUEST_ID;
+  const defaultClaim = {
+    id: issuedRequestId,
+    storage_key: storageKey,
+    owner_id: claimOwner,
+    lease_token: "lease-1",
+    status: "deleting",
+    r2_state: "not_attempted",
+    finalize_state: "pending",
+    document_row_ids: capturedIds,
+    attempt_count: 1,
+  };
+  const defaultRecheck = { has_protected_references: false, current_document_ids: capturedIds };
+  // Outstanding quota-resync records the worker can recover. A successful
+  // `mark_...` removes the record, so a later pass that re-lists sees it as
+  // already stamped (this mirrors the quota_resynced_at IS NULL filter).
+  const pendingResyncs = (options.resyncRecords ?? []).map((r) => ({ ...r }));
+  let resyncFailRemaining = options.resyncFailCount ?? 0;
+
   const context = {
     userId: options.userId ?? owner,
     supabase: {
@@ -43,43 +66,87 @@ function setup(options = {}) {
           assert.equal(args._role, "admin");
           return options.roleResult ?? { data: true, error: null };
         }
-        assert.equal(name, "get_storage_reference_state");
-        assert.deepEqual(Object.keys(args), ["p_storage_key"]);
-        assert.equal(args.p_storage_key, storageKey);
-        calls.push("reference-check");
-        const result = options.states
-          ? options.states[checks++]
-          : checks++ === 0 ? state(rows.length > 0) : absent();
-        if (result instanceof Error) throw result;
-        return result;
-      },
-      from(table) {
-        assert.equal(table, "documents", "blocked deletion must not touch profile pointers");
-        return {
-          select(columns) {
-            assert.equal(columns, "user_id, doc_type");
-            return { eq(column, value) {
-              assert.equal(column, "storage_key");
-              assert.equal(value, storageKey);
-              calls.push("lookup");
-              return options.lookup ?? { data: rows, error: null };
-            } };
-          },
-          delete() {
-            return { eq(column, value) {
-              assert.equal(column, "storage_key");
-              assert.equal(value, storageKey);
-              calls.push("metadata-delete");
-              return { error: options.deleteError ?? null };
-            } };
-          },
-        };
+        if (name === "get_storage_reference_state") {
+          assert.deepEqual(Object.keys(args), ["p_storage_key"]);
+          assert.equal(args.p_storage_key, storageKey);
+          calls.push("reference-check");
+          const result = options.states
+            ? options.states[checks++]
+            : checks++ === 0 ? state(capturedIds.length > 0) : absent();
+          if (result instanceof Error) throw result;
+          return result;
+        }
+        if (name === "request_storage_deletion") {
+          assert.deepEqual(Object.keys(args), ["p_storage_key"]);
+          assert.equal(args.p_storage_key, storageKey);
+          calls.push("request-deletion");
+          if (options.requestError) return { data: null, error: options.requestError };
+          return { data: issuedRequestId, error: null };
+        }
+        throw new Error(`unexpected rpc: ${name}`);
       },
     },
   };
+
+  const serviceRpc = async (name, args) => {
+    if (name === "claim_storage_deletion_request") {
+      assert.deepEqual(Object.keys(args), ["p_request_id"]);
+      assert.equal(args.p_request_id, issuedRequestId, "claim must use the server-issued request id");
+      calls.push("claim");
+      if (options.claimError) return { data: null, error: options.claimError };
+      if (options.claimEmpty) return { data: [], error: null };
+      return { data: [options.claim ?? defaultClaim], error: null };
+    }
+    if (name === "claim_storage_deletion_requests") {
+      calls.push("claim-batch");
+      if (options.claimError) return { data: null, error: options.claimError };
+      return { data: options.claims ?? [options.claim ?? defaultClaim], error: null };
+    }
+    if (name === "check_storage_deletion_references") {
+      assert.deepEqual(Object.keys(args), ["p_storage_key"]);
+      assert.equal(args.p_storage_key, storageKey);
+      calls.push("recheck");
+      if (options.recheckError) return { data: null, error: options.recheckError };
+      return { data: [options.recheck ?? defaultRecheck], error: null };
+    }
+    if (name === "block_storage_deletion") {
+      calls.push("block");
+      return { data: options.blockResult ?? true, error: null };
+    }
+    if (name === "record_storage_deletion_failure") {
+      calls.push("failure");
+      return { data: options.failureResult ?? "pending", error: null };
+    }
+    if (name === "set_r2_confirmed_absent") {
+      calls.push("confirm");
+      return { data: options.confirmResult ?? true, error: null };
+    }
+    if (name === "finalize_storage_deletion") {
+      calls.push("finalize");
+      if (options.finalizeError) return { data: null, error: options.finalizeError };
+      return { data: options.finalizeResult ?? true, error: null };
+    }
+    if (name === "mark_storage_deletion_quota_resynced") {
+      calls.push("quota-mark");
+      if (options.markError) return { data: null, error: options.markError };
+      const index = pendingResyncs.findIndex((record) => record.id === args.p_request_id);
+      if (index >= 0) pendingResyncs.splice(index, 1);
+      return { data: undefined, error: null };
+    }
+    if (name === "list_storage_deletion_quota_resyncs") {
+      assert.deepEqual(Object.keys(args), ["p_limit"]);
+      calls.push("quota-resync-list");
+      if (options.resyncListError) return { data: null, error: options.resyncListError };
+      if ("resyncListData" in options) return { data: options.resyncListData, error: null };
+      return { data: pendingResyncs, error: null };
+    }
+    throw new Error(`unexpected service rpc: ${name}`);
+  };
+
   const requireSupabaseAuth = Symbol("authentication");
   const mod = load(source.slice(start, end), {
     z, isCanonicalStorageKey, requireSupabaseAuth,
+    storageDeletionServiceRpc: serviceRpc,
     createServerFn({ method }) {
       assert.equal(method, "POST");
       let validate;
@@ -103,79 +170,41 @@ function setup(options = {}) {
       return { ok: status >= 200 && status < 300, status };
     },
     resyncProfileQuota: async (userId) => {
-      assert.equal(userId, owner);
+      assert.equal(userId, claimOwner);
       calls.push("quota-resync");
       if (options.resyncError) throw new Error("quota failed");
+      if (resyncFailRemaining > 0) {
+        resyncFailRemaining--;
+        throw new Error("quota failed");
+      }
     },
   });
-  return { calls, run: (data = {}) => mod.deleteUpload({ key: storageKey, ...data }) };
+  return {
+    calls,
+    run: (data = {}) => mod.deleteUpload({ key: storageKey, ...data }),
+    process: (opts = {}) => mod.processStorageDeletionRequests(opts),
+  };
 }
 
-test("hidden foreign references block owner deletion before metadata or R2", async () => {
-  const ctx = setup({ rows: [], states: [state(true, false)] });
-  await assert.rejects(ctx.run(), /Not allowed/);
-  assert.deepEqual(ctx.calls, ["reference-check"]);
-});
+// --- Findings 2-3 authorization / reference gates -------------------------
 
-test("mixed visible own and hidden foreign references also block deletion", async () => {
-  const ctx = setup({ rows: [row], states: [state(true, false)] });
-  await assert.rejects(ctx.run(), /Not allowed/);
-  assert.deepEqual(ctx.calls, ["reference-check"]);
-});
+for (const rows of [[], ["doc-1"]]) {
+  test(`hidden foreign document references block owner deletion (rows=${rows.length})`, async () => {
+    const ctx = setup({ rowIds: rows, states: [state(true, false)] });
+    await assert.rejects(ctx.run(), /Not allowed/);
+    assert.deepEqual(ctx.calls, ["reference-check"]);
+  });
+}
 
 for (const refs of [state(true), state(true, false)]) {
   for (const userId of [owner, "admin-user"]) {
-    test(`cleanup skips referenced objects without deleting rows (${userId}, deletable=${refs.data[0].may_delete_document_references})`, async () => {
+    test(`cleanup skips referenced objects (${userId}, deletable=${refs.data[0].may_delete_document_references})`, async () => {
       const ctx = setup({ userId, states: [refs] });
       assert.equal((await ctx.run({ onlyIfUnreferenced: true })).skipped, true);
       assert.deepEqual(ctx.calls, userId === owner ? ["reference-check"] : ["authorize", "reference-check"]);
     });
   }
 }
-
-test("explicit own-document deletion confirms absence after metadata deletion", async () => {
-  const ctx = setup({ rows: [row] });
-  assert.equal((await ctx.run()).ok, true);
-  assert.deepEqual(ctx.calls, ["reference-check", "lookup", "metadata-delete", "reference-check", "sign", "r2-delete", "quota-resync"]);
-});
-
-test("admin explicit deletion retains access but requires final authoritative absence", async () => {
-  const ctx = setup({ userId: "admin-user", rows: [row, { ...row, user_id: "another-owner" }] });
-  assert.equal((await ctx.run()).ok, true);
-  assert.deepEqual(ctx.calls, ["authorize", "reference-check", "lookup", "metadata-delete", "reference-check", "sign", "r2-delete", "quota-resync"]);
-});
-
-for (const onlyIfUnreferenced of [false, true]) {
-  test(`true orphan can be deleted (cleanup=${onlyIfUnreferenced})`, async () => {
-    const ctx = setup();
-    assert.equal((await ctx.run({ onlyIfUnreferenced })).ok, true);
-    assert.deepEqual(ctx.calls, ["reference-check", "lookup", "reference-check", "sign", "r2-delete", "quota-resync"]);
-  });
-}
-
-test("successful metadata DELETE with references remaining cannot reach R2", async () => {
-  const ctx = setup({ rows: [row], states: [state(true), state(true, false)] });
-  await assert.rejects(ctx.run(), /Storage references remain/);
-  assert.deepEqual(ctx.calls, ["reference-check", "lookup", "metadata-delete", "reference-check"]);
-});
-
-test("scoped empty lookup cannot override remaining authoritative references", async () => {
-  const ctx = setup({ states: [state(true), state(true)] });
-  await assert.rejects(ctx.run(), /Storage references remain/);
-  assert.deepEqual(ctx.calls, ["reference-check", "lookup", "reference-check"]);
-});
-
-test("cleanup never deletes a row appearing in the scoped lookup", async () => {
-  const ctx = setup({ rows: [row], states: [absent()] });
-  assert.equal((await ctx.run({ onlyIfUnreferenced: true })).skipped, true);
-  assert.deepEqual(ctx.calls, ["reference-check", "lookup"]);
-});
-
-test("cleanup skips references appearing by the second authoritative check", async () => {
-  const ctx = setup({ states: [absent(), state(true)] });
-  assert.equal((await ctx.run({ onlyIfUnreferenced: true })).skipped, true);
-  assert.deepEqual(ctx.calls, ["reference-check", "lookup", "reference-check"]);
-});
 
 const uncertain = [
   { data: null, error: { code: "PGRST202", message: "RPC missing" } },
@@ -188,66 +217,25 @@ const uncertain = [
   { data: [{ ...absent().data[0], has_protected_references: null }] },
   { data: [{ ...absent().data[0], has_protected_references: "false" }] },
   { data: [{ has_document_references: false, may_delete_document_references: true }] },
-  // The old RPC shape must never be accepted as an aggregate absence result.
   { data: [{ has_references: false, may_delete_references: true }] },
   { data: null, error: { code: "42P01", message: "missing relation" } },
   state(false, false),
 ];
 for (const [index, result] of uncertain.entries()) {
-  test(`uncertain reference response ${index} fails closed at both checkpoints`, async () => {
-    const initial = setup({ states: [result] });
-    await assert.rejects(initial.run(), /Cannot verify storage references/);
-    assert.deepEqual(initial.calls, ["reference-check"]);
-    const final = setup({ rows: [row], states: [state(true), result] });
-    await assert.rejects(final.run(), /Cannot verify storage references/);
-    assert.deepEqual(final.calls, ["reference-check", "lookup", "metadata-delete", "reference-check"]);
+  test(`uncertain reference response ${index} fails closed before any request`, async () => {
+    const ctx = setup({ states: [result] });
+    await assert.rejects(ctx.run(), /Cannot verify storage references/);
+    assert.deepEqual(ctx.calls, ["reference-check"]);
   });
 }
 
 for (const roleResult of [{ data: false }, { data: null }, { data: "true" }, { data: true, error: { message: "uncertain" } }]) {
-  test(`uncertain/unauthorized admin result ${JSON.stringify(roleResult)} blocks reference access`, async () => {
+  test(`uncertain/unauthorized admin result ${JSON.stringify(roleResult)} blocks all work`, async () => {
     const ctx = setup({ userId: "another-user", roleResult });
     await assert.rejects(ctx.run(), /Not allowed/);
     assert.deepEqual(ctx.calls, ["authorize"]);
   });
 }
-
-for (const lookup of [{ data: null, error: null }, { data: [], error: { message: "read failed" } }]) {
-  test("scoped metadata lookup failures still fail closed", async () => {
-    const ctx = setup({ lookup });
-    await assert.rejects(ctx.run(), /Cannot verify document references/);
-    assert.deepEqual(ctx.calls, ["reference-check", "lookup"]);
-  });
-}
-
-test("metadata deletion failure stops before the second check and R2", async () => {
-  const ctx = setup({ rows: [row], deleteError: new Error("delete failed") });
-  await assert.rejects(ctx.run(), /delete failed/);
-  assert.deepEqual(ctx.calls, ["reference-check", "lookup", "metadata-delete"]);
-});
-
-for (const status of [403, 404, 500]) {
-  test(`R2 HTTP ${status} remains a failure after authoritative absence`, async () => {
-    const ctx = setup({ status });
-    await assert.rejects(ctx.run(), { message: `Storage deletion failed (${status}).` });
-    assert.deepEqual(ctx.calls, ["reference-check", "lookup", "reference-check", "sign", "r2-delete", "quota-resync"]);
-  });
-}
-
-for (const options of [{ signError: true }, { networkError: true }, { networkError: true, resyncError: true }]) {
-  test(`signing/network errors stay generic ${JSON.stringify(options)}`, async () => {
-    const ctx = setup(options);
-    await assert.rejects(ctx.run(), { message: "Storage deletion failed." });
-    assert.equal(ctx.calls.at(-1), "quota-resync");
-  });
-}
-
-test("canonical validation and cleanup boolean validation precede reference calls", async () => {
-  const ctx = setup();
-  await assert.rejects(ctx.run({ key: `${owner}/..\\victim/x` }));
-  await assert.rejects(ctx.run({ onlyIfUnreferenced: "true" }));
-  assert.deepEqual(ctx.calls, []);
-});
 
 // Source labels describe mocked aggregate RPC responses, not executed SQL.
 // The separate SQL contract suite pins each real table/column predicate.
@@ -259,20 +247,19 @@ const protectedSources = [
   ["payment_events.receipt_key", "receipts"],
 ];
 for (const [sourceName, folder] of protectedSources) {
-  test(`${sourceName}: hidden protected reference blocks explicit deletion and skips cleanup for owner/admin`, async () => {
+  test(`${sourceName}: hidden protected reference blocks deletion and cleanup for owner/admin`, async () => {
     for (const userId of [owner, "admin-user"]) {
-      for (const rows of [[], [row]]) {
+      for (const rowIds of [[], ["doc-1"]]) {
         for (const onlyIfUnreferenced of [false, true]) {
           const ctx = setup({
-            key: `${owner}/${folder}/existing-file.pdf`, userId, rows,
-            states: [state(rows.length > 0, true, true)],
+            key: `${owner}/${folder}/existing-file.pdf`, userId, rowIds,
+            states: [state(rowIds.length > 0, true, true)],
           });
           if (onlyIfUnreferenced) {
             assert.equal((await ctx.run({ onlyIfUnreferenced })).skipped, true);
           } else {
             await assert.rejects(ctx.run(), /File is still in use/);
           }
-          // Even visible, deletable documents must be preserved in these cases.
           assert.deepEqual(ctx.calls, userId === owner ? ["reference-check"] : ["authorize", "reference-check"]);
         }
       }
@@ -280,27 +267,384 @@ for (const [sourceName, folder] of protectedSources) {
   });
 }
 
-test("new protected reference at final check blocks R2 after authorized metadata removal", async () => {
-  const ctx = setup({ rows: [row], states: [state(true), state(false, true, true)] });
-  await assert.rejects(ctx.run(), /Storage references remain/);
-  assert.deepEqual(ctx.calls, ["reference-check", "lookup", "metadata-delete", "reference-check"]);
-});
+// --- Durable lifecycle ordering ------------------------------------------
 
-test("cleanup skips a newly observed non-document reference before signing", async () => {
-  const ctx = setup({ states: [absent(), state(false, true, true)] });
-  assert.equal((await ctx.run({ onlyIfUnreferenced: true })).skipped, true);
-  assert.deepEqual(ctx.calls, ["reference-check", "lookup", "reference-check"]);
-});
-
-test("non-primary gallery photo deletion no longer reads or clears profile pointers", async () => {
-  const ctx = setup({ key: `${owner}/photo/gallery.jpg`, rows: [{ ...row, doc_type: "photo" }] });
+test("explicit own-document deletion: intent, confirmed R2, then transactional finalize", async () => {
+  const ctx = setup({ rowIds: ["doc-1"] });
   assert.equal((await ctx.run()).ok, true);
-  assert.deepEqual(ctx.calls, ["reference-check", "lookup", "metadata-delete", "reference-check", "sign", "r2-delete", "quota-resync"]);
-  assert.doesNotMatch(source.slice(start, end), /\.from\("profiles"\)|photo_url:\s*null/);
+  assert.deepEqual(ctx.calls, [
+    "reference-check", "request-deletion", "claim", "recheck",
+    "sign", "r2-delete", "confirm", "finalize", "quota-resync", "quota-mark",
+  ]);
 });
 
-test("protected references cannot be bypassed using another folder", async () => {
-  const ctx = setup({ key, states: [state(false, true, true)] });
+test("admin explicit deletion authorizes then follows the same lifecycle", async () => {
+  const ctx = setup({ userId: "admin-user", rowIds: ["doc-1", "doc-2"] });
+  assert.equal((await ctx.run()).ok, true);
+  assert.deepEqual(ctx.calls, [
+    "authorize", "reference-check", "request-deletion", "claim", "recheck",
+    "sign", "r2-delete", "confirm", "finalize", "quota-resync", "quota-mark",
+  ]);
+});
+
+for (const onlyIfUnreferenced of [false, true]) {
+  test(`true orphan can be deleted (cleanup=${onlyIfUnreferenced})`, async () => {
+    const ctx = setup();
+    assert.equal((await ctx.run({ onlyIfUnreferenced })).ok, true);
+    assert.deepEqual(ctx.calls, [
+      "reference-check", "request-deletion", "claim", "recheck",
+      "sign", "r2-delete", "confirm", "finalize", "quota-resync", "quota-mark",
+    ]);
+  });
+}
+
+test("protected reference appearing before dispatch blocks R2 and keeps metadata", async () => {
+  const ctx = setup({
+    rowIds: ["doc-1"],
+    recheck: { has_protected_references: true, current_document_ids: ["doc-1"] },
+  });
   await assert.rejects(ctx.run(), /File is still in use/);
-  assert.deepEqual(ctx.calls, ["reference-check"]);
+  assert.deepEqual(ctx.calls, ["reference-check", "request-deletion", "claim", "recheck", "block"]);
+});
+
+test("document id not captured at request time blocks deletion before R2", async () => {
+  const ctx = setup({
+    rowIds: ["doc-1"],
+    recheck: { has_protected_references: false, current_document_ids: ["doc-1", "doc-2"] },
+  });
+  await assert.rejects(ctx.run(), /File is still in use/);
+  assert.deepEqual(ctx.calls, ["reference-check", "request-deletion", "claim", "recheck", "block"]);
+});
+
+test("document id captured at request time but since removed still proceeds", async () => {
+  const ctx = setup({
+    rowIds: ["doc-1"],
+    recheck: { has_protected_references: false, current_document_ids: [] },
+  });
+  assert.equal((await ctx.run()).ok, true);
+  assert.deepEqual(ctx.calls, [
+    "reference-check", "request-deletion", "claim", "recheck",
+    "sign", "r2-delete", "confirm", "finalize", "quota-resync", "quota-mark",
+  ]);
+});
+
+// --- Failure and uncertainty (metadata must stay intact) -----------------
+
+for (const status of [403, 500]) {
+  test(`R2 HTTP ${status} leaves metadata intact and records a durable failure`, async () => {
+    const ctx = setup({ rowIds: ["doc-1"], status });
+    await assert.rejects(ctx.run(), { message: `Storage deletion failed (${status}).` });
+    assert.deepEqual(ctx.calls, ["reference-check", "request-deletion", "claim", "recheck", "sign", "r2-delete", "failure"]);
+  });
+}
+
+for (const options of [{ networkError: true }, { signError: true }]) {
+  test(`uncertain R2 outcome ${JSON.stringify(options)} never finalizes or reports success`, async () => {
+    const ctx = setup({ rowIds: ["doc-1"], ...options });
+    await assert.rejects(ctx.run(), { message: "Storage deletion failed." });
+    assert.equal(ctx.calls.includes("finalize"), false);
+    assert.equal(ctx.calls.at(-1), "failure");
+  });
+}
+
+test("already-absent R2 object (404) is idempotent success", async () => {
+  const ctx = setup({ status: 404 });
+  assert.equal((await ctx.run()).ok, true);
+  assert.deepEqual(ctx.calls, [
+    "reference-check", "request-deletion", "claim", "recheck",
+    "sign", "r2-delete", "confirm", "finalize", "quota-resync", "quota-mark",
+  ]);
+});
+
+test("missing request RPC fails closed before any R2 work", async () => {
+  const ctx = setup({ rowIds: ["doc-1"], requestError: { code: "PGRST202", message: "missing" } });
+  await assert.rejects(ctx.run(), /Cannot record storage deletion/);
+  assert.deepEqual(ctx.calls, ["reference-check", "request-deletion"]);
+});
+
+test("missing claim RPC fails closed and never touches R2", async () => {
+  const ctx = setup({ claimError: { code: "PGRST202", message: "missing" } });
+  await assert.rejects(ctx.run(), /will be retried/);
+  assert.deepEqual(ctx.calls, ["reference-check", "request-deletion", "claim"]);
+});
+
+test("malformed service reference re-check blocks before R2", async () => {
+  const ctx = setup({ recheckError: { message: "missing" } });
+  await assert.rejects(ctx.run(), /Cannot verify storage references/);
+  assert.deepEqual(ctx.calls, ["reference-check", "request-deletion", "claim", "recheck", "block"]);
+});
+
+// --- Lease/CAS and finalization recovery ---------------------------------
+
+test("R2 confirmed but finalization fails: metadata intact and retry finalizes", async () => {
+  const first = setup({ rowIds: ["doc-1"], finalizeResult: false });
+  await assert.rejects(first.run(), /will be retried/);
+  assert.deepEqual(first.calls, [
+    "reference-check", "request-deletion", "claim", "recheck",
+    "sign", "r2-delete", "confirm", "finalize",
+  ]);
+  assert.equal(first.calls.includes("quota-resync"), false);
+
+  // Retry pass: R2 is already confirmed, so only DB finalization runs.
+  const retry = setup({
+    claim: {
+      id: REQUEST_ID, storage_key: key, owner_id: owner, lease_token: "lease-2",
+      status: "finalizing", r2_state: "confirmed_absent", finalize_state: "pending",
+      document_row_ids: ["doc-1"], attempt_count: 1,
+    },
+  });
+  assert.equal((await retry.process({ requestId: REQUEST_ID })).processed, 1);
+  assert.deepEqual(retry.calls, ["claim", "finalize", "quota-resync", "quota-mark", "quota-resync-list"]);
+});
+
+test("stale worker: CAS-rejected confirm stops before finalize", async () => {
+  const ctx = setup({ rowIds: ["doc-1"], confirmResult: false });
+  await assert.rejects(ctx.run(), /will be retried/);
+  assert.deepEqual(ctx.calls, ["reference-check", "request-deletion", "claim", "recheck", "sign", "r2-delete", "confirm"]);
+  assert.equal(ctx.calls.includes("finalize"), false);
+});
+
+test("stale worker: CAS-rejected finalize never resyncs or reports success", async () => {
+  const ctx = setup({ rowIds: ["doc-1"], finalizeResult: false });
+  await assert.rejects(ctx.run(), /will be retried/);
+  assert.equal(ctx.calls.includes("quota-resync"), false);
+  assert.equal(ctx.calls.includes("quota-mark"), false);
+});
+
+test("batch worker claims queued requests and finalizes after R2 confirmation", async () => {
+  const claim = {
+    id: REQUEST_ID, storage_key: key, owner_id: owner, lease_token: "lease-b",
+    status: "deleting", r2_state: "uncertain", finalize_state: "pending",
+    document_row_ids: [], attempt_count: 2,
+  };
+  const ctx = setup({ claim, claims: [claim] });
+  assert.equal((await ctx.process()).processed, 1);
+  assert.deepEqual(ctx.calls, [
+    "claim-batch", "recheck", "sign", "r2-delete", "confirm", "finalize", "quota-resync", "quota-mark",
+    "quota-resync-list",
+  ]);
+});
+
+test("quota resync failure does not fail an otherwise-confirmed deletion", async () => {
+  const ctx = setup({ rowIds: ["doc-1"], resyncError: true });
+  assert.equal((await ctx.run()).ok, true);
+  assert.deepEqual(ctx.calls, [
+    "reference-check", "request-deletion", "claim", "recheck",
+    "sign", "r2-delete", "confirm", "finalize", "quota-resync",
+  ]);
+  assert.equal(ctx.calls.includes("quota-mark"), false);
+});
+
+test("repeat deletion reuses the server-issued request id (no client-side id)", async () => {
+  const ctx = setup({ requestId: "server-issued-1" });
+  await ctx.run();
+  await ctx.run();
+  assert.equal(ctx.calls.filter((c) => c === "request-deletion").length, 2);
+  assert.equal(ctx.calls.filter((c) => c === "claim").length, 2);
+});
+
+// --- Item 3: one-hour backoff on blocked deletion requests -----------------
+// The backoff itself lives in SQL (pinned by the SQL contract suite). These
+// tests prove the processor behaves safely whether the claim path returns a
+// blocked row (after backoff) or no row at all (during backoff). Real RLS,
+// SQL execution and concurrency are NOT simulated here.
+
+const blockedClaim = (overrides = {}) => ({
+  id: REQUEST_ID, storage_key: key, owner_id: owner, lease_token: "lease-back",
+  status: "deleting", r2_state: "uncertain", finalize_state: "pending",
+  document_row_ids: [], attempt_count: 2, ...overrides,
+});
+
+test("immediate reclaim of a blocked request is rejected and performs no work", async () => {
+  // The database refuses to claim a just-blocked row, so both claim paths
+  // return nothing and the worker must not re-check, delete or finalize.
+  const single = setup({ claimEmpty: true });
+  await assert.rejects(single.run(), /will be retried/);
+  assert.deepEqual(single.calls, ["reference-check", "request-deletion", "claim"]);
+  for (const forbidden of ["recheck", "sign", "r2-delete", "confirm", "finalize", "block"]) {
+    assert.equal(single.calls.includes(forbidden), false, `throttled single reclaim must not ${forbidden}`);
+  }
+
+  const batch = setup({ claims: [] });
+  const result = await batch.process();
+  assert.equal(result.processed, 0);
+  for (const forbidden of ["recheck", "sign", "r2-delete", "confirm", "finalize", "block"]) {
+    assert.equal(batch.calls.includes(forbidden), false, `throttled batch reclaim must not ${forbidden}`);
+  }
+});
+
+test("blocked request is eligible after backoff and re-checks references before R2", async () => {
+  const ctx = setup({ claims: [blockedClaim()] });
+  assert.equal((await ctx.process()).processed, 1);
+  assert.deepEqual(ctx.calls, [
+    "claim-batch", "recheck", "sign", "r2-delete", "confirm", "finalize", "quota-resync", "quota-mark",
+    "quota-resync-list",
+  ]);
+});
+
+test("post-backoff reclaim still blocks when the reference is protected", async () => {
+  const ctx = setup({
+    claims: [blockedClaim({ document_row_ids: ["doc-1"] })],
+    recheck: { has_protected_references: true, current_document_ids: ["doc-1"] },
+  });
+  await ctx.process();
+  assert.deepEqual(ctx.calls, ["claim-batch", "recheck", "block", "quota-resync-list"]);
+  assert.equal(ctx.calls.includes("r2-delete"), false);
+});
+
+test("post-backoff reclaim fails closed when the reference-check RPC is unavailable", async () => {
+  const ctx = setup({ claims: [blockedClaim()], recheckError: { message: "missing" } });
+  await ctx.process();
+  assert.deepEqual(ctx.calls, ["claim-batch", "recheck", "block", "quota-resync-list"]);
+  assert.equal(ctx.calls.includes("r2-delete"), false);
+});
+
+test("non-blocked states keep their existing lease recovery behavior", async () => {
+  // Pending/deleting rows proceed exactly as before (no client-side backoff).
+  const deleting = setup({ claims: [blockedClaim({ status: "deleting", r2_state: "not_attempted", attempt_count: 1 })] });
+  assert.equal((await deleting.process()).processed, 1);
+  assert.deepEqual(deleting.calls, [
+    "claim-batch", "recheck", "sign", "r2-delete", "confirm", "finalize", "quota-resync", "quota-mark",
+    "quota-resync-list",
+  ]);
+
+  // A confirmed_absent finalizing row still only finalizes: no R2 call at all.
+  const finalizing = setup({
+    claims: [blockedClaim({ status: "finalizing", r2_state: "confirmed_absent", document_row_ids: ["doc-1"] })],
+  });
+  assert.equal((await finalizing.process()).processed, 1);
+  assert.deepEqual(finalizing.calls, ["claim-batch", "finalize", "quota-resync", "quota-mark", "quota-resync-list"]);
+  assert.equal(finalizing.calls.includes("r2-delete"), false);
+});
+
+// --- Item 4: 15-minute cooldown after a failed deletion request ------------
+// The cooldown itself is enforced in request_storage_deletion under a per-key
+// advisory lock (pinned by the SQL contract suite). These tests prove the
+// caller surfaces a refused request safely, still proceeds once the window has
+// passed, and never conflates a cancelled request with a failed one. SQL, RLS
+// execution and concurrency are NOT simulated here.
+
+test("a request refused by the failed-request cooldown performs no claim or R2 work", async () => {
+  const ctx = setup({
+    rowIds: ["doc-1"],
+    requestError: { code: "22023", message: "A recent deletion attempt for this file failed." },
+  });
+  await assert.rejects(ctx.run(), /Cannot record storage deletion/);
+  assert.deepEqual(ctx.calls, ["reference-check", "request-deletion"]);
+  for (const forbidden of ["claim", "recheck", "sign", "r2-delete", "confirm", "finalize", "block", "failure", "quota-resync"]) {
+    assert.equal(ctx.calls.includes(forbidden), false, `a cooled-down request must not ${forbidden}`);
+  }
+});
+
+test("once the cooldown elapsed a fresh request is accepted and follows the lifecycle", async () => {
+  // The server now issues a brand-new request id instead of cooling the caller
+  // down, so the full confirmed-R2-before-metadata ordering runs again.
+  const ctx = setup({ rowIds: ["doc-1"], requestId: "recreated-after-cooldown" });
+  assert.equal((await ctx.run()).ok, true);
+  assert.deepEqual(ctx.calls, [
+    "reference-check", "request-deletion", "claim", "recheck",
+    "sign", "r2-delete", "confirm", "finalize", "quota-resync", "quota-mark",
+  ]);
+});
+
+test("recreation after a cancellation is accepted (cancelled is not cooled down)", async () => {
+  // A prior request that was cancelled must not block recreation the way a
+  // failed one does: the server issues a fresh id and work proceeds normally.
+  const ctx = setup({ requestId: "recreated-after-cancel" });
+  assert.equal((await ctx.run()).ok, true);
+  assert.equal(ctx.calls.includes("request-deletion"), true);
+  assert.equal(ctx.calls.includes("claim"), true);
+  for (const forbidden of ["block", "failure"]) {
+    assert.equal(ctx.calls.includes(forbidden), false, `post-cancellation recreation must not ${forbidden}`);
+  }
+});
+
+// --- Item 2: recovery of completed deletions missing their quota stamp ----
+// These exercise the real processStorageDeletionRequests recovery pass against
+// a mocked service-role boundary. SQL/RLS execution and concurrency are NOT
+// simulated here; the separate SQL contract suite pins the listing definition.
+
+const resyncRecord = (id) => ({ id, storage_key: key, owner_id: owner, finalized_at: "2026-01-01T00:00:00.000Z" });
+
+test("completed deletion missing its quota stamp is recovered without touching R2 or metadata", async () => {
+  const ctx = setup({ claims: [], resyncRecords: [resyncRecord("r-1")] });
+  const result = await ctx.process();
+  assert.equal(result.processed, 0);
+  assert.equal(result.quotaResyncs, 1);
+  assert.deepEqual(ctx.calls, ["claim-batch", "quota-resync-list", "quota-resync", "quota-mark"]);
+  // Recovery must never re-run R2 deletion or document finalization.
+  for (const forbidden of ["sign", "r2-delete", "confirm", "finalize", "recheck", "failure", "block"]) {
+    assert.equal(ctx.calls.includes(forbidden), false, `recovery must not ${forbidden}`);
+  }
+});
+
+test("failed quota recovery leaves the record outstanding for a later pass", async () => {
+  const ctx = setup({ claims: [], resyncRecords: [resyncRecord("r-2")], resyncFailCount: 1 });
+  const first = await ctx.process();
+  assert.equal(first.quotaResyncs, 0);
+  assert.equal(ctx.calls.includes("quota-mark"), false, "a failed resync must not record completion");
+  // The record is still unstamped, so the next pass retries and succeeds.
+  const second = await ctx.process();
+  assert.equal(second.quotaResyncs, 1);
+  assert.deepEqual(ctx.calls, [
+    "claim-batch", "quota-resync-list", "quota-resync",
+    "claim-batch", "quota-resync-list", "quota-resync", "quota-mark",
+  ]);
+});
+
+test("repeated recovery is idempotent: a stamped record is never resynced again", async () => {
+  const ctx = setup({ claims: [], resyncRecords: [resyncRecord("r-3")] });
+  await ctx.process();
+  await ctx.process();
+  assert.equal(ctx.calls.filter((c) => c === "quota-resync").length, 1);
+  assert.equal(ctx.calls.filter((c) => c === "quota-mark").length, 1);
+});
+
+test("a database error on the recovery mark is not treated as a successful resync", async () => {
+  const ctx = setup({ claims: [], resyncRecords: [resyncRecord("r-4")], markError: { message: "db down" } });
+  const result = await ctx.process();
+  assert.equal(result.quotaResyncs, 0, "an errored mark must not count as recovered");
+  assert.equal(ctx.calls.filter((c) => c === "quota-mark").length, 1);
+  // quota_resynced_at stays NULL, so the record is re-listed and retried.
+  await ctx.process();
+  assert.equal(ctx.calls.filter((c) => c === "quota-resync").length, 2);
+});
+
+test("missing recovery listing RPC recovers nothing and does not fail the pass", async () => {
+  const ctx = setup({ claims: [], resyncListError: { code: "PGRST202", message: "missing" } });
+  const result = await ctx.process();
+  assert.equal(result.processed, 0);
+  assert.equal(result.quotaResyncs, 0);
+  assert.equal(ctx.calls.includes("quota-resync"), false);
+  assert.equal(ctx.calls.includes("quota-mark"), false);
+});
+
+const malformedResyncListings = [
+  undefined, null, "nope", {}, [null], [{}], [{ id: 1, owner_id: owner }],
+  [{ id: "r", owner_id: 2 }], [{ id: "", owner_id: owner }],
+];
+for (const [index, listing] of malformedResyncListings.entries()) {
+  test(`malformed recovery listing ${index} is ignored without resync or mark`, async () => {
+    const ctx = setup({ claims: [], resyncListData: listing });
+    const result = await ctx.process();
+    assert.equal(result.quotaResyncs, 0);
+    assert.equal(ctx.calls.includes("quota-resync"), false);
+    assert.equal(ctx.calls.includes("quota-mark"), false);
+  });
+}
+
+// --- Findings 1-3 invariants and moved authorization ----------------------
+
+test("canonical and boolean validation precede every call", async () => {
+  const ctx = setup();
+  await assert.rejects(ctx.run({ key: `${owner}/..\\victim/x` }));
+  await assert.rejects(ctx.run({ onlyIfUnreferenced: "true" }));
+  assert.deepEqual(ctx.calls, []);
+});
+
+test("client-side code no longer deletes document metadata or profile pointers", () => {
+  const slice = source.slice(start, end);
+  assert.doesNotMatch(slice, /\.from\("documents"\)|\.from\("profiles"\)|photo_url:\s*null/);
+  assert.match(slice, /request_storage_deletion/);
+  assert.match(slice, /finalize_storage_deletion/);
 });

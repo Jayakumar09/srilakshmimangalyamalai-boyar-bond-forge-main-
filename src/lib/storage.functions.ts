@@ -224,6 +224,24 @@ async function quotaAdminClient(): Promise<SupabaseClient<Database>> {
 }
 
 /**
+ * Service-role RPC boundary for the storage-deletion lifecycle.
+ *
+ * Every claim/confirm/finalize/block/failure transition is gated to
+ * `service_role` in SQL and must never be reachable with a member JWT. This is
+ * the single server-only seam the lifecycle uses, so the orchestration can be
+ * exercised offline by substituting this function.
+ */
+async function storageDeletionServiceRpc<T = unknown>(
+  name: string,
+  args: Record<string, unknown>,
+): Promise<{ data: T; error: unknown }> {
+  const admin = await quotaAdminClient();
+  return (admin as unknown as {
+    rpc: (fn: string, params: Record<string, unknown>) => Promise<{ data: T; error: unknown }>;
+  }).rpc(name, args);
+}
+
+/**
  * Atomically claim one upload's worth of profile quota, before anything is
  * stored.
  *
@@ -425,10 +443,225 @@ const zStorageKey = z
     message: "Invalid key.",
   });
 
+/** Maximum R2 attempts before a durable request is parked as failed. */
+const STORAGE_DELETION_MAX_ATTEMPTS = 5;
+
+type DeletionClaim = {
+  id: string;
+  storage_key: string;
+  owner_id: string;
+  lease_token: string;
+  r2_state: "not_attempted" | "uncertain" | "confirmed_absent";
+  finalize_state: string;
+  document_row_ids: string[];
+  attempt_count: number;
+};
+
+/** Reads one durable request row, rejecting any unexpected shape. */
+function readDeletionClaim(value: unknown): DeletionClaim | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const r2 = row["r2_state"];
+  if (typeof row["id"] !== "string"
+    || typeof row["storage_key"] !== "string"
+    || typeof row["owner_id"] !== "string"
+    || typeof row["lease_token"] !== "string"
+    || (r2 !== "not_attempted" && r2 !== "uncertain" && r2 !== "confirmed_absent")
+    || typeof row["finalize_state"] !== "string"
+    || !Array.isArray(row["document_row_ids"])
+    || !(row["document_row_ids"] as unknown[]).every((id) => typeof id === "string")
+    || typeof row["attempt_count"] !== "number") {
+    return null;
+  }
+  return {
+    id: row["id"] as string,
+    storage_key: row["storage_key"] as string,
+    owner_id: row["owner_id"] as string,
+    lease_token: row["lease_token"] as string,
+    r2_state: r2,
+    finalize_state: row["finalize_state"] as string,
+    document_row_ids: row["document_row_ids"] as string[],
+    attempt_count: row["attempt_count"] as number,
+  };
+}
+
+/** Reads the service-role reference re-check, rejecting any unexpected shape. */
+function readReferenceRecheck(value: unknown): {
+  hasProtectedReferences: boolean;
+  currentDocumentIds: string[];
+} | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const ids = row["current_document_ids"];
+  if (typeof row["has_protected_references"] !== "boolean"
+    || !Array.isArray(ids)
+    || !ids.every((id) => typeof id === "string")) {
+    return null;
+  }
+  return { hasProtectedReferences: row["has_protected_references"], currentDocumentIds: ids as string[] };
+}
+
+/** Reads one outstanding quota-resync record, rejecting any unexpected shape. */
+function readQuotaResyncRecord(value: unknown): { id: string; owner_id: string } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  if (typeof row["id"] !== "string" || row["id"].length === 0
+    || typeof row["owner_id"] !== "string" || row["owner_id"].length === 0) {
+    return null;
+  }
+  return { id: row["id"], owner_id: row["owner_id"] };
+}
+
+type DeletionPassResult =
+  | { status: "deleted" }
+  | { status: "blocked"; reason: string }
+  | { status: "failed"; r2Status?: number; error?: string };
+
+/** Service-role-only RPC boundary; see `storageDeletionServiceRpc`. */
+function deletionRpc<T = unknown>(name: string, args: Record<string, unknown>) {
+  return storageDeletionServiceRpc<T>(name, args);
+}
+
+async function releaseBlockedLease(requestId: string, leaseToken: string, reason: string): Promise<void> {
+  try {
+    await deletionRpc<boolean>("block_storage_deletion", {
+      p_request_id: requestId,
+      p_lease_token: leaseToken,
+      p_reason: reason,
+    });
+  } catch {
+    // The lease expires on its own and the request stays reclaimable.
+  }
+}
+
 /**
- * Deletes an owner/admin-authorized file and its deletable document metadata.
- * Any payment, report, support, receipt or primary-photo reference protects the
- * object, even from admin deletion. Cleanup preserves document references too.
+ * Executes one already-claimed deletion pass. Service-role only.
+ *
+ * Ordering is deliberate: a fresh authoritative reference re-check runs BEFORE
+ * any R2 DELETE, and document metadata is removed only AFTER R2 confirms the
+ * object is absent. A 2xx or 404 is idempotent success; any other outcome is
+ * `uncertain` and leaves the durable request (and all metadata) intact.
+ *
+ * This does NOT prevent a reference inserted after the re-check. That race is
+ * Finding 5 and is not solved here.
+ */
+async function executeStorageDeletion(claim: DeletionClaim): Promise<DeletionPassResult> {
+  if (claim.finalize_state === "done") return { status: "deleted" };
+
+  if (claim.r2_state !== "confirmed_absent") {
+    // The Findings 2-3 RPCs reject service_role, so the worker uses its own
+    // read-only check. Missing/failing checks are a safe stop.
+    let recheck: ReturnType<typeof readReferenceRecheck> = null;
+    try {
+      const result = await deletionRpc<unknown[]>("check_storage_deletion_references", {
+        p_storage_key: claim.storage_key,
+      });
+      recheck = result.error
+        ? null
+        : readReferenceRecheck(Array.isArray(result.data) ? result.data[0] : null);
+    } catch {
+      recheck = null;
+    }
+    if (!recheck) {
+      await releaseBlockedLease(claim.id, claim.lease_token, "reference_check_unavailable");
+      return { status: "blocked", reason: "reference_check_unavailable" };
+    }
+
+    // Any document id not captured at request time is a newly inserted
+    // reference: never delete the object out from under it.
+    const unexpected = recheck.currentDocumentIds.some((id) => !claim.document_row_ids.includes(id));
+    if (recheck.hasProtectedReferences || unexpected) {
+      const reason = recheck.hasProtectedReferences ? "protected_reference" : "document_set_changed";
+      await releaseBlockedLease(claim.id, claim.lease_token, reason);
+      return { status: "blocked", reason };
+    }
+
+    let r2Status: number | null = null;
+    let confirmed = false;
+    try {
+      const deleteUrl = await signR2(claim.storage_key, "DELETE");
+      const response = await fetch(deleteUrl, { method: "DELETE" });
+      r2Status = response.status;
+      confirmed = response.ok || response.status === 404;
+    } catch {
+      confirmed = false;
+    }
+
+    if (!confirmed) {
+      try {
+        await deletionRpc<unknown>("record_storage_deletion_failure", {
+          p_request_id: claim.id,
+          p_lease_token: claim.lease_token,
+          p_error: r2Status === null ? "Storage deletion failed." : `Storage deletion failed (${r2Status}).`,
+          p_max_attempts: STORAGE_DELETION_MAX_ATTEMPTS,
+        });
+      } catch {
+        // The lease expires and the request stays reclaimable for a retry.
+      }
+      return r2Status === null
+        ? { status: "failed", error: "Storage deletion failed." }
+        : { status: "failed", r2Status };
+    }
+
+    const confirmedResult = await deletionRpc<boolean>("set_r2_confirmed_absent", {
+      p_request_id: claim.id,
+      p_lease_token: claim.lease_token,
+    });
+    if (confirmedResult.error || confirmedResult.data !== true) {
+      // Stale lease or unavailable RPC: never assume success.
+      return { status: "failed", error: "Storage deletion could not be completed and will be retried." };
+    }
+  }
+
+  // Database-only finalization: deletes ONLY the captured ids, transactionally.
+  const finalizeResult = await deletionRpc<boolean>("finalize_storage_deletion", {
+    p_request_id: claim.id,
+    p_lease_token: claim.lease_token,
+  });
+  if (finalizeResult.error || finalizeResult.data !== true) {
+    // R2 is already absent; metadata stays intact and finalization is retried.
+    return { status: "failed", error: "Storage deletion could not be completed and will be retried." };
+  }
+
+  // Quota counters are a cache of the bucket; refresh best-effort and record it.
+  try {
+    await resyncProfileQuota(claim.owner_id);
+    await deletionRpc("mark_storage_deletion_quota_resynced", { p_request_id: claim.id });
+  } catch {
+    // Counter drifts high and self-heals on the next delete/upload/resync.
+  }
+
+  return { status: "deleted" };
+}
+
+/** Claims one durable request by id and runs a pass. Service-role only. */
+async function claimAndRunStorageDeletion(requestId: string): Promise<DeletionPassResult> {
+  try {
+    const { data, error } = await deletionRpc<unknown[]>("claim_storage_deletion_request", {
+      p_request_id: requestId,
+    });
+    const claim = error ? null : readDeletionClaim(Array.isArray(data) ? data[0] : null);
+    if (!claim) {
+      return { status: "failed", error: "Storage deletion could not be completed and will be retried." };
+    }
+    return await executeStorageDeletion(claim);
+  } catch {
+    return { status: "failed", error: "Storage deletion could not be completed and will be retried." };
+  }
+}
+
+/**
+ * Deletes an owner/admin-authorized file through a durable deletion lifecycle.
+ *
+ * A durable request is written BEFORE any R2 operation, document metadata is
+ * removed only after R2 confirms the object is absent, and any R2 failure or
+ * uncertainty leaves the request (and the metadata) intact for retry. Any
+ * payment, report, support, receipt or primary-photo reference protects the
+ * object, even from admin deletion.
+ *
+ * Never reports success unless deletion was confirmed; otherwise it throws so
+ * callers do not show a false success. Read-then-delete remains non-atomic:
+ * a reference inserted after the final check is not prevented (Finding 5).
  */
 export const deleteUpload = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -474,60 +707,136 @@ export const deleteUpload = createServerFn({ method: "POST" })
     if (before.has_protected_references) throw new Error("File is still in use and cannot be deleted.");
     if (!before.may_delete_document_references) throw new Error("Not allowed");
 
-    const { data: rows, error: lookupError } = await context.supabase
-      .from("documents")
-      .select("user_id, doc_type")
-      .eq("storage_key", data.key);
-    if (lookupError || !rows) throw new Error("Cannot verify document references.");
-    const row = rows?.[0];
-
-    // Cleanup never removes document metadata, including a reference that became
-    // visible after the first authoritative snapshot.
-    if (data.onlyIfUnreferenced && row) return { ok: true, skipped: true };
-    if (row) {
-      const { error: delError } = await context.supabase
-        .from("documents")
-        .delete()
-        .eq("storage_key", data.key);
-      if (delError) throw delError;
-    }
-
-    // A successful RLS-scoped DELETE can affect zero rows. Require authoritative
-    // absence before proceeding. This remains a snapshot, NOT an insert lock;
-    // cross-system atomicity and durable retries belong to Findings 4–5.
-    const after = await referenceState();
-    if (after.has_document_references || after.has_protected_references) {
-      if (data.onlyIfUnreferenced) return { ok: true, skipped: true };
-      throw new Error("Storage references remain.");
-    }
-
-    // Report an R2 failure after the best-effort quota resync below.
-    let r2DeleteError: Error | null = null;
+    // Durable intent FIRST, before any R2 operation. The RPC re-validates and
+    // captures exactly the document rows authorized for deletion now.
+    let requestId: string;
     try {
-      const delUrl = await signR2(data.key, "DELETE");
-      const response = await fetch(delUrl, { method: "DELETE" });
-      if (!response.ok) r2DeleteError = new Error(`Storage deletion failed (${response.status}).`);
+      const { data: created, error } = await context.supabase.rpc(
+        "request_storage_deletion", { p_storage_key: data.key },
+      );
+      if (error || typeof created !== "string" || created.length === 0) {
+        throw new Error("Invalid deletion request.");
+      }
+      requestId = created;
     } catch {
-      // Do not expose a signed URL or credentials from a signing/network error.
-      r2DeleteError = new Error("Storage deletion failed.");
+      throw new Error("Cannot record storage deletion.");
     }
 
-    // The counters are a cache of what is in the bucket, so a delete has to
-    // refresh them or the freed slot stays consumed forever. Best-effort: the
-    // object is already gone at this point, and failing the delete would be
-    // worse than drifting high, which the next delete or upload repairs.
-    const owner = data.key.split("/")[0] ?? "";
-    if (owner) {
-      try {
-        await resyncProfileQuota(owner);
-      } catch {
-        // Quota stays conservative until the next successful resync.
+    const outcome = await claimAndRunStorageDeletion(requestId);
+    if (outcome.status === "deleted") return { ok: true };
+    if (outcome.status === "blocked") {
+      if (data.onlyIfUnreferenced) return { ok: true, skipped: true };
+      if (outcome.reason === "reference_check_unavailable") {
+        throw new Error("Cannot verify storage references.");
+      }
+      throw new Error("File is still in use and cannot be deleted.");
+    }
+    // Not confirmed: the durable request is retained and retried. Never report
+    // success for an unconfirmed deletion.
+    if (outcome.r2Status !== undefined) {
+      throw new Error(`Storage deletion failed (${outcome.r2Status}).`);
+    }
+    throw new Error(outcome.error ?? "Storage deletion failed.");
+  });
+
+/**
+ * Recovery pass for completed deletions whose quota re-stamp never ran.
+ *
+ * `finalize_storage_deletion` and the quota re-measurement are separate calls,
+ * so a crash, timeout or lost response between them leaves a `deleted` request
+ * with `quota_resynced_at IS NULL` that the claim filters never select again;
+ * the counters would stay high indefinitely. This pass only re-runs the
+ * idempotent re-measurement and records completion. It never issues an R2
+ * DELETE and never finalizes document metadata, so it cannot remove a file or a
+ * document row.
+ *
+ * A failed re-measurement leaves `quota_resynced_at` NULL (the mark is skipped)
+ * so a later pass retries; a mark failure only delays the record. Both stay safe
+ * because each retry is a fresh R2 measurement, not a decrement. A database
+ * error is never mistaken for a successful resync, and a concurrent worker can
+ * only ever stamp a row it actually re-measured.
+ */
+async function recoverStorageDeletionQuotaResyncs(limit: number): Promise<number> {
+  let records: Array<{ id: string; owner_id: string }> = [];
+  try {
+    const result = await storageDeletionServiceRpc<unknown[]>("list_storage_deletion_quota_resyncs", {
+      p_limit: limit,
+    });
+    if (!result.error && Array.isArray(result.data)) {
+      records = result.data
+        .map(readQuotaResyncRecord)
+        .filter((record): record is { id: string; owner_id: string } => record !== null);
+    }
+  } catch {
+    // Listing unavailable: nothing to recover this pass.
+    return 0;
+  }
+
+  let recovered = 0;
+  for (const record of records) {
+    try {
+      await resyncProfileQuota(record.owner_id);
+    } catch {
+      // Failed resync keeps quota_resynced_at NULL for a later pass.
+      continue;
+    }
+    try {
+      const marked = await deletionRpc("mark_storage_deletion_quota_resynced", { p_request_id: record.id });
+      if (!marked.error) recovered++;
+    } catch {
+      // Mark failure only delays the record; resync is idempotent on retry.
+    }
+  }
+  return recovered;
+}
+
+/**
+ * Processes queued storage deletions. Service-role only; must run in a server
+ * context. No scheduler is wired here — a runtime caller is added separately.
+ *
+ * Each pass re-checks references and removes document metadata only after R2
+ * confirms the object is absent. A crash, timeout or lost response leaves a
+ * durable, reclaimable request; finalization is idempotent and lease-guarded.
+ * After the claim pass it runs a separate, bounded recovery pass for completed
+ * deletions whose quota re-stamp never ran (see below). Neither pass can remove
+ * an object or metadata that the other has already finalized.
+ * This does NOT prevent a reference inserted after the last check (Finding 5).
+ */
+export async function processStorageDeletionRequests(
+  options: { requestId?: string; limit?: number } = {},
+): Promise<{ processed: number; quotaResyncs: number }> {
+  const claims: DeletionClaim[] = [];
+  try {
+    const result = options.requestId
+      ? await deletionRpc<unknown[]>("claim_storage_deletion_request", { p_request_id: options.requestId })
+      : await deletionRpc<unknown[]>("claim_storage_deletion_requests", { p_limit: options.limit ?? 25 });
+    if (!result.error && Array.isArray(result.data)) {
+      for (const raw of result.data) {
+        const claim = readDeletionClaim(raw);
+        if (claim) claims.push(claim);
       }
     }
+  } catch {
+    // Service-role boundary unavailable; nothing was claimed.
+  }
 
-    if (r2DeleteError) throw r2DeleteError;
-    return { ok: true };
-  });
+  let processed = 0;
+  for (const claim of claims) {
+    try {
+      await executeStorageDeletion(claim);
+    } catch {
+      // One failed pass must not stop the others; the lease expires.
+    }
+    processed++;
+  }
+
+  // Separate, bounded recovery pass for completed deletions whose quota
+  // re-stamp never ran. Re-measures counters and records completion only --
+  // never an R2 DELETE, never a metadata finalize.
+  const quotaResyncs = await recoverStorageDeletionQuotaResyncs(options.limit ?? 25);
+
+  return { processed, quotaResyncs };
+}
 
 /**
  * Best-effort removal of objects this attempt uploaded but never persisted.
