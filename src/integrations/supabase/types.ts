@@ -379,6 +379,7 @@ export type Database = {
           date_of_birth: string | null
           education_detail: string | null
           education_level: string | null
+          elite_eligible: boolean
           email: string | null
           family_details: string | null
           family_status: string | null
@@ -443,6 +444,7 @@ export type Database = {
           date_of_birth?: string | null
           education_detail?: string | null
           education_level?: string | null
+          elite_eligible?: boolean
           email?: string | null
           family_details?: string | null
           family_status?: string | null
@@ -507,6 +509,7 @@ export type Database = {
           date_of_birth?: string | null
           education_detail?: string | null
           education_level?: string | null
+          elite_eligible?: boolean
           email?: string | null
           family_details?: string | null
           family_status?: string | null
@@ -718,6 +721,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      get_document_storage_reference_state: {
+        Args: { p_storage_key: string }
+        Returns: { has_references: boolean; may_delete_references: boolean }[]
+      }
       can_message: { Args: { _user_id: string }; Returns: boolean }
       has_role: {
         Args: {
@@ -891,8 +898,8 @@ export const Constants = {
     Enums: {
       app_role: ["admin", "client"],
       approval_status: ["pending", "approved", "rejected"],
-      membership_plan: ["free", "standard", "premium"],
-      payment_item: ["standard", "premium", "jathagam"],
+      membership_plan: ["free", "standard", "premium", "elite"],
+      payment_item: ["standard", "premium", "elite", "jathagam"],
       payment_status: ["submitted", "verified", "rejected"],
     },
   },

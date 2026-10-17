@@ -15,7 +15,6 @@ import {
 } from "@/lib/compress";
 import { keysSafeToDelete } from "@/lib/screening";
 import { assertCanonicalStorageKey, isCanonicalStorageKey, storageObjectUrl } from "@/lib/storage-key";
-import { supabase } from "@/integrations/supabase/client";
 
 /**
  * Files belong to whoever owns them so the member can always open their own
@@ -434,17 +433,43 @@ const zStorageKey = z
  */
 export const deleteUpload = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => z.object({ key: zStorageKey }).parse(input))
+  .inputValidator((input: unknown) => z.object({
+    key: zStorageKey,
+    onlyIfUnreferenced: z.boolean().optional().default(false),
+  }).parse(input))
   .handler(async ({ data, context }) => {
     let allowed = data.key.startsWith(`${context.userId}/`);
     if (!allowed) {
-      const { data: isAdmin } = await context.supabase.rpc("has_role", {
+      const { data: isAdmin, error: roleError } = await context.supabase.rpc("has_role", {
         _user_id: context.userId,
         _role: "admin",
       });
-      allowed = !!isAdmin;
+      allowed = !roleError && isAdmin === true;
     }
     if (!allowed) throw new Error("Not allowed");
+
+    // The RPC sees references hidden by caller RLS. Never fall back to a scoped
+    // empty SELECT if the RPC is missing, fails, or returns an uncertain result.
+    const referenceState = async () => {
+      try {
+        const { data: states, error } = await context.supabase.rpc(
+          "get_document_storage_reference_state", { p_storage_key: data.key },
+        );
+        const state = Array.isArray(states) && states.length === 1 ? states[0] : null;
+        if (error || !state || Array.isArray(state)
+          || typeof state.has_references !== "boolean"
+          || typeof state.may_delete_references !== "boolean"
+          || (!state.has_references && !state.may_delete_references)) {
+          throw new Error("Invalid reference state.");
+        }
+        return state;
+      } catch {
+        throw new Error("Cannot verify document references.");
+      }
+    };
+    const before = await referenceState();
+    if (data.onlyIfUnreferenced && before.has_references) return { ok: true, skipped: true };
+    if (!before.may_delete_references) throw new Error("Not allowed");
 
     const { data: rows, error: lookupError } = await context.supabase
       .from("documents")
@@ -453,12 +478,23 @@ export const deleteUpload = createServerFn({ method: "POST" })
     if (lookupError || !rows) throw new Error("Cannot verify document references.");
     const row = rows?.[0];
 
+    // Cleanup never removes document metadata, including a reference that became
+    // visible after the first authoritative snapshot.
+    if (data.onlyIfUnreferenced && row) return { ok: true, skipped: true };
     if (row) {
       const { error: delError } = await context.supabase
         .from("documents")
         .delete()
         .eq("storage_key", data.key);
       if (delError) throw delError;
+    }
+
+    // A successful RLS-scoped DELETE can affect zero rows. Require authoritative
+    // absence before proceeding. This remains a snapshot, NOT an insert lock;
+    // cross-system atomicity and durable retries belong to Findings 4–5.
+    if ((await referenceState()).has_references) {
+      if (data.onlyIfUnreferenced) return { ok: true, skipped: true };
+      throw new Error("Document references remain.");
     }
 
     // Clear a dangling profile photo pointer. Checked even when there was no
@@ -519,15 +555,11 @@ export const deleteUpload = createServerFn({ method: "POST" })
  * persistence are BOTH verified before deleting: only keys owned by `ownerId`
  * (the member whose prefix the upload used -- for an admin-on-behalf upload that
  * is the CLIENT's id, never the admin's) and that no stored document references
- * are removed. That is what keeps cleanup from ever deleting a persisted
- * document -- for example the screened photo/ID pair a registration retry is
- * about to reuse -- or another member's object.
+ * are removed. The server skips referenced keys, including rows hidden by RLS.
  *
- * Runs against the caller's own RLS-scoped client, so a member sees only their
- * own rows and an admin only what their role allows. Read-then-delete is not
- * atomic; a key that gets persisted between the read and the delete is not
- * expected here because the keys are per-attempt and uniquely generated, and the
- * caller only invokes this on a failed attempt.
+ * Reference verification runs server-side through the authoritative RPC, never
+ * through a browser-visible absence check. Read-then-delete remains non-atomic:
+ * a concurrent insert after the last reference check is not prevented here.
  *
  * Never throws: a cleanup failure must not replace the original error the
  * caller is about to report.
@@ -538,15 +570,11 @@ export async function cleanupOrphanedUploads(
 ): Promise<void> {
   if (!ownerId || keys.length === 0) return;
   try {
-    const { data: rows, error } = await supabase
-      .from("documents")
-      .select("storage_key")
-      .in("storage_key", [...keys]);
-    if (error || !rows) return;
-    const referenced = rows.map((row) => row.storage_key);
-    for (const key of keysSafeToDelete(keys, referenced, ownerId)) {
+    // Client-side filtering is only an optimization. The server independently
+    // authorizes each key and enforces authoritative orphan-only deletion.
+    for (const key of keysSafeToDelete(keys, [], ownerId)) {
       try {
-        await deleteUpload({ data: { key } });
+        await deleteUpload({ data: { key, onlyIfUnreferenced: true } });
       } catch {
         /* best-effort: one failed delete must not stop the others */
       }
