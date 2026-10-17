@@ -12,7 +12,8 @@
 // in particular when a reservation is released:
 //
 //   reserveProfileQuota                     (before anything is dispatched)
-//   try { assertValidMagicBytes; signR2 }   -> on failure: release, rethrow
+//   try { assertStorageKeyNotFenced; assertValidMagicBytes; signR2 }
+//                                           -> on failure: release, rethrow
 //   fetch PUT                               -> throw propagates: reservation retained
 //   !res.ok                                 -> any status: retain, throw
 //
@@ -146,6 +147,14 @@ function setup(options = {}) {
       calls.push("release");
       if (options.releaseError) throw new Error("mock release failure");
     },
+    // Finding 5 object-creation safety net. The real helper probes
+    // is_storage_key_fenced and throws unless the key is unfenced; here the
+    // generated key is always fresh, so it only records the ordered call.
+    assertStorageKeyNotFenced: async (key) => {
+      calls.push("fence");
+      assert.ok(key.startsWith(`${OWNER}/${folder}/`), "fence probe must use the generated key");
+      if (options.fenceProbeFails) throw new Error("Cannot verify storage key availability.");
+    },
     signR2: async (key, method, ct) => {
       calls.push("sign");
       assert.equal(method, "PUT");
@@ -185,20 +194,20 @@ test("successful PUT retains the profile quota reservation [confirms existing be
   assert.equal(result.fileName, "example.png");
   assert.equal(result.sizeBytes, PNG_BYTES.length);
   // reserve, then the stored PUT: no release at all.
-  assert.deepEqual(ctx.calls, ["type-check", "owner", "reserve", "magic-check", "sign", "put"]);
+  assert.deepEqual(ctx.calls, ["type-check", "owner", "reserve", "fence", "magic-check", "sign", "put"]);
 });
 
 test("invalid magic bytes release the reservation [confirms existing behavior]", async () => {
   // Real invalid bytes (not a forced throw): image/png whose header matches nothing.
   const ctx = setup({ bytes: JUNK_BYTES, contentType: "image/png" });
   await assert.rejects(ctx.run(), /Invalid file contents/);
-  assert.deepEqual(ctx.calls, ["type-check", "owner", "reserve", "magic-check", "release"]);
+  assert.deepEqual(ctx.calls, ["type-check", "owner", "reserve", "fence", "magic-check", "release"]);
 });
 
 test("signing failure releases the reservation [confirms existing behavior]", async () => {
   const ctx = setup({ signError: true });
   await assert.rejects(ctx.run(), /mock signing failure/);
-  assert.deepEqual(ctx.calls, ["type-check", "owner", "reserve", "magic-check", "sign", "release"]);
+  assert.deepEqual(ctx.calls, ["type-check", "owner", "reserve", "fence", "magic-check", "sign", "release"]);
 });
 
 test("reservation failure prevents the PUT and any release [confirms existing behavior]", async () => {
@@ -218,7 +227,7 @@ for (const status of [400, 403, 404, 413, 500, 502, 503]) {
   test(`explicit ${status} PUT response retains the reservation [fail-closed fix]`, async () => {
     const ctx = setup({ status });
     await assert.rejects(ctx.run(), new RegExp(`Upload failed \\(${status}\\)`));
-    assert.deepEqual(ctx.calls, ["type-check", "owner", "reserve", "magic-check", "sign", "put"]);
+    assert.deepEqual(ctx.calls, ["type-check", "owner", "reserve", "fence", "magic-check", "sign", "put"]);
     assert.ok(!ctx.calls.includes("release"), "a non-2xx response must not release the reservation");
   });
 }
@@ -235,7 +244,7 @@ test("explicit 4xx retains the reservation even when a release helper is availab
   );
   assert.match(error.message, /Upload failed \(403\)/);
   assert.ok(!/release failure/.test(error.message), "no release failure may surface");
-  assert.deepEqual(ctx.calls, ["type-check", "owner", "reserve", "magic-check", "sign", "put"]);
+  assert.deepEqual(ctx.calls, ["type-check", "owner", "reserve", "fence", "magic-check", "sign", "put"]);
 });
 
 test("ambiguous network failure after the PUT begins retains the reservation [fail-closed fix]", async (t) => {
@@ -244,7 +253,7 @@ test("ambiguous network failure after the PUT begins retains the reservation [fa
   // the response was lost", so it must not release the reservation.
   const ctx = setup({ networkError: true });
   await assert.rejects(ctx.run(), /mock network failure/);
-  assert.deepEqual(ctx.calls, ["type-check", "owner", "reserve", "magic-check", "sign", "put"]);
+  assert.deepEqual(ctx.calls, ["type-check", "owner", "reserve", "fence", "magic-check", "sign", "put"]);
   assert.ok(!ctx.calls.includes("release"), "a dispatched PUT with a lost response must retain the reservation");
   t.diagnostic(
     "FIXED (fail-closed): the PUT was dispatched but its outcome is unknown, so the reservation is retained. " +
@@ -266,7 +275,7 @@ test("failed quota release cannot mask the original upload error [confirms exist
   );
   assert.match(error.message, /Invalid file contents/);
   assert.ok(!/release failure/.test(error.message), "the release failure must not surface");
-  assert.deepEqual(ctx.calls, ["type-check", "owner", "reserve", "magic-check", "release"]);
+  assert.deepEqual(ctx.calls, ["type-check", "owner", "reserve", "fence", "magic-check", "release"]);
 });
 
 test("non-profile upload bypasses profile quota reservation [confirms existing behavior]", async () => {
@@ -274,5 +283,16 @@ test("non-profile upload bypasses profile quota reservation [confirms existing b
   const result = await ctx.run();
   assert.ok(result.key.startsWith(`${OWNER}/payment_proof/`));
   // No reserve and no release: non-profile folders carry no profile quota.
-  assert.deepEqual(ctx.calls, ["type-check", "owner", "magic-check", "sign", "put"]);
+  assert.deepEqual(ctx.calls, ["type-check", "owner", "fence", "magic-check", "sign", "put"]);
+});
+
+test("a fenced key refuses the upload and releases the reservation [Finding 5]", async () => {
+  // The fence probe is the object-creation safety net: if the generated key is
+  // already tombstoned (or the probe is unavailable) nothing is dispatched and
+  // the reservation is handed back.
+  const ctx = setup({ fenceProbeFails: true });
+  await assert.rejects(ctx.run(), /Cannot verify storage key availability/);
+  assert.deepEqual(ctx.calls, ["type-check", "owner", "reserve", "fence", "release"]);
+  assert.ok(!ctx.calls.includes("put"), "no PUT may be attempted for a fenced key");
+  assert.ok(!ctx.calls.includes("magic-check"), "the probe runs before any content validation");
 });

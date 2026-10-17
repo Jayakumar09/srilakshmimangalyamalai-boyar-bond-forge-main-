@@ -319,6 +319,23 @@ async function resyncProfileQuota(owner: string): Promise<void> {
   if (error) throwQuotaError(error);
 }
 
+/**
+ * Refuses an upload whose literal key has already been fenced for deletion.
+ *
+ * uploadFile always mints a fresh `${owner}/${folder}/${Date.now()}-<uuid-v4>`
+ * key, so this cannot trigger for a normal upload; it is the object-creation
+ * safety net for a reused or caller-supplied key, and it is the only point that
+ * could recreate an object at a tombstoned key. Fail closed: an unavailable
+ * probe must never let an object be written over a tombstone.
+ */
+async function assertStorageKeyNotFenced(key: string): Promise<void> {
+  const admin = await quotaAdminClient();
+  const { data, error } = await admin.rpc("is_storage_key_fenced", { p_storage_key: key });
+  if (error || data !== false) {
+    throw new Error("Cannot verify storage key availability.");
+  }
+}
+
 const FOLDERS = [
   "photo",
   "govt_id",
@@ -394,10 +411,11 @@ export const uploadFile = createServerFn({ method: "POST" })
       }
     };
 
-    // Both of these run before the PUT is dispatched, so a failure here stored
+    // All three run before the PUT is dispatched, so a failure here stored
     // nothing and the reservation can safely be given back.
     let uploadUrl: string;
     try {
+      await assertStorageKeyNotFenced(key);
       assertValidMagicBytes(contentType, body);
       uploadUrl = await signR2(key, "PUT", contentType);
     } catch (err) {
@@ -485,20 +503,20 @@ function readDeletionClaim(value: unknown): DeletionClaim | null {
   };
 }
 
-/** Reads the service-role reference re-check, rejecting any unexpected shape. */
-function readReferenceRecheck(value: unknown): {
-  hasProtectedReferences: boolean;
-  currentDocumentIds: string[];
-} | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const row = value as Record<string, unknown>;
-  const ids = row["current_document_ids"];
-  if (typeof row["has_protected_references"] !== "boolean"
-    || !Array.isArray(ids)
-    || !ids.every((id) => typeof id === "string")) {
-    return null;
-  }
-  return { hasProtectedReferences: row["has_protected_references"], currentDocumentIds: ids as string[] };
+/** The only outcomes `fence_storage_key_for_deletion` may report. */
+const FENCE_OUTCOMES = [
+  "fenced",
+  "blocked_protected_reference",
+  "blocked_document_set_changed",
+  "not_claimed",
+] as const;
+type FenceOutcome = (typeof FENCE_OUTCOMES)[number];
+
+/** Reads the service-role fence outcome, rejecting any unexpected shape. */
+function readFenceOutcome(value: unknown): FenceOutcome | null {
+  return typeof value === "string" && (FENCE_OUTCOMES as readonly string[]).includes(value)
+    ? (value as FenceOutcome)
+    : null;
 }
 
 /** Reads one outstanding quota-resync record, rejecting any unexpected shape. */
@@ -537,44 +555,53 @@ async function releaseBlockedLease(requestId: string, leaseToken: string, reason
 /**
  * Executes one already-claimed deletion pass. Service-role only.
  *
- * Ordering is deliberate: a fresh authoritative reference re-check runs BEFORE
- * any R2 DELETE, and document metadata is removed only AFTER R2 confirms the
- * object is absent. A 2xx or 404 is idempotent success; any other outcome is
- * `uncertain` and leaves the durable request (and all metadata) intact.
+ * Ordering is deliberate: a durable per-key fence is committed BEFORE any R2
+ * DELETE, and document metadata is removed only AFTER R2 confirms the object is
+ * absent. A 2xx or 404 is idempotent success; any other outcome is `uncertain`
+ * and leaves the durable request (and all metadata) intact.
  *
- * This does NOT prevent a reference inserted after the re-check. That race is
- * Finding 5 and is not solved here.
+ * The fence (Finding 5) is what makes the ordering safe under concurrency: it is
+ * written in its own committed transaction under the per-key lock, after an
+ * authoritative re-check, and every later reference INSERT/UPDATE for that key
+ * is rejected by a database trigger. The R2 DELETE runs only in a later
+ * transaction, so a reference can no longer slip in between the last check and
+ * the delete. A missing or failed fence blocks the pass rather than deleting.
  */
 async function executeStorageDeletion(claim: DeletionClaim): Promise<DeletionPassResult> {
   if (claim.finalize_state === "done") return { status: "deleted" };
 
-  if (claim.r2_state !== "confirmed_absent") {
-    // The Findings 2-3 RPCs reject service_role, so the worker uses its own
-    // read-only check. Missing/failing checks are a safe stop.
-    let recheck: ReturnType<typeof readReferenceRecheck> = null;
-    try {
-      const result = await deletionRpc<unknown[]>("check_storage_deletion_references", {
-        p_storage_key: claim.storage_key,
-      });
-      recheck = result.error
-        ? null
-        : readReferenceRecheck(Array.isArray(result.data) ? result.data[0] : null);
-    } catch {
-      recheck = null;
-    }
-    if (!recheck) {
-      await releaseBlockedLease(claim.id, claim.lease_token, "reference_check_unavailable");
-      return { status: "blocked", reason: "reference_check_unavailable" };
-    }
+  // Establish (or reuse) the durable deletion fence before any R2 DELETE. The
+  // RPC takes the per-key lock, re-checks all six reference sources and, only
+  // when they are clean, commits a permanent fence row that makes every later
+  // reference write to this key fail. It is idempotent, so a retry after a lease
+  // expiry, a crash or an R2 failure reuses the committed fence.
+  let fence: FenceOutcome | null = null;
+  try {
+    const result = await deletionRpc<unknown>("fence_storage_key_for_deletion", {
+      p_request_id: claim.id,
+      p_lease_token: claim.lease_token,
+    });
+    fence = result.error ? null : readFenceOutcome(result.data);
+  } catch {
+    fence = null;
+  }
+  if (fence === null) {
+    // A missing or failing fence is a safe stop: no fence means no authorization
+    // to delete, so R2 is never touched.
+    await releaseBlockedLease(claim.id, claim.lease_token, "reference_check_unavailable");
+    return { status: "blocked", reason: "reference_check_unavailable" };
+  }
+  if (fence === "not_claimed") {
+    // The lease was lost between claim and fence; another worker owns it now.
+    return { status: "failed", error: "Storage deletion could not be completed and will be retried." };
+  }
+  if (fence === "blocked_protected_reference" || fence === "blocked_document_set_changed") {
+    const reason = fence === "blocked_protected_reference" ? "protected_reference" : "document_set_changed";
+    await releaseBlockedLease(claim.id, claim.lease_token, reason);
+    return { status: "blocked", reason };
+  }
 
-    // Any document id not captured at request time is a newly inserted
-    // reference: never delete the object out from under it.
-    const unexpected = recheck.currentDocumentIds.some((id) => !claim.document_row_ids.includes(id));
-    if (recheck.hasProtectedReferences || unexpected) {
-      const reason = recheck.hasProtectedReferences ? "protected_reference" : "document_set_changed";
-      await releaseBlockedLease(claim.id, claim.lease_token, reason);
-      return { status: "blocked", reason };
-    }
+  if (claim.r2_state !== "confirmed_absent") {
 
     let r2Status: number | null = null;
     let confirmed = false;
@@ -660,8 +687,10 @@ async function claimAndRunStorageDeletion(requestId: string): Promise<DeletionPa
  * object, even from admin deletion.
  *
  * Never reports success unless deletion was confirmed; otherwise it throws so
- * callers do not show a false success. Read-then-delete remains non-atomic:
- * a reference inserted after the final check is not prevented (Finding 5).
+ * callers do not show a false success. The read-then-delete is bounded by the
+ * durable fence (Finding 5): reference inserts that race the worker are rejected
+ * at the database, so a reference can no longer be inserted after the final
+ * check.
  */
 export const deleteUpload = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

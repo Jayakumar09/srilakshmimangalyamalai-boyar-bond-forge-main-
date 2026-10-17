@@ -29,6 +29,7 @@ export const OFFLINE_SUITES = Object.freeze([
   { file: "slmm-document-reference-contract-tests.mjs", runner: "node-test" },
   { file: "slmm-storage-reference-contract-tests.mjs", runner: "node-test" },
   { file: "slmm-storage-deletion-sql-contract-tests.mjs", runner: "node-test" },
+  { file: "slmm-storage-fence-sql-contract-tests.mjs", runner: "node-test" },
   { file: "slmm-storage-key-tests.mjs", runner: "node-test" },
   { file: "slmm-orphan-cleanup-tests.mjs", runner: "node-test" },
   { file: "slmm-quota-release-tests.mjs", runner: "node-test" },

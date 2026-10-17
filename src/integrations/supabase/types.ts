@@ -612,6 +612,24 @@ export type Database = {
         }
         Relationships: []
       }
+      storage_deletion_fences: {
+        Row: {
+          fenced_at: string
+          request_id: string | null
+          storage_key: string
+        }
+        Insert: {
+          fenced_at?: string
+          request_id?: string | null
+          storage_key: string
+        }
+        Update: {
+          fenced_at?: string
+          request_id?: string | null
+          storage_key?: string
+        }
+        Relationships: []
+      }
       storage_deletion_requests: {
         Row: {
           attempt_count: number
@@ -857,6 +875,14 @@ export type Database = {
           owner_id: string
           finalized_at: string
         }[]
+      }
+      fence_storage_key_for_deletion: {
+        Args: { p_request_id: string; p_lease_token: string }
+        Returns: string
+      }
+      is_storage_key_fenced: {
+        Args: { p_storage_key: string }
+        Returns: boolean
       }
       get_storage_reference_state: {
         Args: { p_storage_key: string }
