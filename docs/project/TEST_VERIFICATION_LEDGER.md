@@ -192,3 +192,21 @@ Source: `E2E_PRODUCTION_CONTROLLED_UPLOAD_REPORT.md`.
   - **[OPEN — ops/isolation]** `.output` is currently a **production** build and `supabase/config.toml` `project_id` is **production** (`sxpkutjkqfekqwpabgrk`); do not deploy `.output` to TEST and do not run CLI commands against production. Evidence: `TEST_EVIDENCE.md` **E-007**.
 - **§7 (Wrangler dry-run):** unchanged — still no on-disk artifact located; still UNVERIFIED.
 - **Level:** documentation-only for this addendum; the fresh 497/497 and `tsc` results are local-only (offline). No build, live harness, remote access, or `.env` read occurred.
+
+---
+
+## Addendum - 2026-10-18 - T3 live TEST claim-RPC verification PASS
+
+> **Append-only; scope-limited.** Supersedes section 4's "no current live TEST integration success" statement only for T3 claim-RPC verification. All unrelated historical entries and unverified behaviors remain unchanged.
+
+- **Target:** TEST Supabase `nqadtfqyurkpmxcodswc`; explicitly authorized rollback-only execution, not production.
+- **Committed scripts:** `test-harness/slmm-storage-deletion-t3-live-test.sql` and `test-harness/slmm-storage-deletion-t3-residue.sql`; checkpoint commit `4f1be4f` (`test(storage): preserve rollback-only T3 lifecycle verification scripts`).
+- **Script SHA-256 (live / residue):** `bf53a30c8003cddfed8f9951bea4965a5404d540cbda5f308a728f07d8f59a1c` / `159004c184cb9852cca48cfaeeb3d773560a00a94bdf9c10686c8c6717fa52ca`.
+- **Observed JSON results:** `overall_verdict = PASS`; **14/14 cases PASS (C1-C14)**; **11/11 complete-row final-state checks PASS**, independently confirmed by equality of each actual and expected row object; `claim_count = 5`; `fence_difference_count = 0`.
+- **Authorization results:** C1/C2 returned expected SQLSTATE `42501` for both claim RPCs; C3-C14 returned `00000`. C1 exercised the authenticated SQL role; positive probes used transaction-local service-role JWT simulation with a privileged SQL caller, not end-to-end service-role transport.
+- **Isolation and guards:** existing `REPEATABLE READ` transaction and mandatory final `ROLLBACK` retained. Complete global eligible-ID sets were compared with exact INSERT-returned synthetic IDs before claim operations. JSON reported `safety_guards = Completed without uncaught exception`; no foreign-ID guard or serialization failure was reported and no safeguard was bypassed. A foreign eligible request was not injected as a negative test.
+- **Post-rollback residue:** separate read-only query returned `residue_verdict = PASS`, **0 synthetic deletion requests**, **0 synthetic fences**, and empty request/fence residue arrays. T3 and residue CLI exit codes were both **0**; explicit JSON PASS and zero residue, not exit status alone, establish success.
+- **Limits:** actual R2 deletion/object absence and parallel-worker contention remain **UNTESTED**. `confirmed_absent` was only a synthetic state-machine fixture. This does not establish end-to-end Worker, R2, quota-finalization or concurrent-worker correctness. T4 was not run.
+- **Raw sources reviewed locally:** `%TEMP%/opencode/slmm-t3-live-2026-10-18T15-08-58-396Z-stdout.json` and `%TEMP%/opencode/slmm-t3-residue-2026-10-18T15-09-33-642Z-stdout.json`, plus their corresponding `-execution.json` metadata. Raw outputs remain outside Git; temporary-file retention is not guaranteed.
+- **Raw-evidence SHA-256 (T3 / residue):** `4669f86b7286965ad498565c100c213e67e9e8c926c72f19dc4943c1f46bd2fc` / `103bbb9c4969aca3b7decda145121ef93056b1940118d36c16b37e3a6963346c`.
+- **Sanitization and scope:** no credentials, JWT values, lease tokens, fixture/person identifiers, object keys or sensitive raw payloads are included. Preparing this entry repeated no tests or remote operations and authorizes no further testing, deployment or Git operations.
