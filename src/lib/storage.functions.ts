@@ -85,12 +85,43 @@ function assertValidMagicBytes(contentType: string, buf: Uint8Array) {
   }
 }
 
-async function signR2(key: string, method: "PUT" | "GET" | "DELETE", contentType?: string) {
+/**
+ * Explicit credential source for storage operations.
+ *
+ * The storage-deletion scheduler validates a target environment (TEST only)
+ * and then hands that exact, already-validated view to the deletion processor
+ * so the guard and the processor provably operate on the same credentials.
+ *
+ * When a source IS supplied it is the ONLY one consulted: a caller that has
+ * validated a target must never silently pick up credentials from anywhere
+ * else. When it is omitted — the normal HTTP client/admin path — credentials
+ * come from `process.env` exactly as they always have, so existing verified
+ * upload/delete/view behaviour is unchanged.
+ *
+ * This is a plain, read-only record passed by parameter. There is no module
+ * level mutable credential context and `process.env` is never written to.
+ */
+export type StorageCredentials = Readonly<Record<string, string | undefined>>;
+
+/** Reads one credential from the explicit source, else from `process.env`. */
+function readCredential(
+  credentials: StorageCredentials | undefined,
+  key: string,
+): string | undefined {
+  return credentials ? credentials[key] : process.env[key];
+}
+
+async function signR2(
+  key: string,
+  method: "PUT" | "GET" | "DELETE",
+  contentType?: string,
+  credentials?: StorageCredentials,
+) {
   assertCanonicalStorageKey(key);
-  const accountId = process.env["R2_ACCOUNT_ID"];
-  const accessKeyId = process.env["R2_ACCESS_KEY_ID"];
-  const secretAccessKey = process.env["R2_SECRET_ACCESS_KEY"];
-  const bucket = process.env["R2_BUCKET_NAME"];
+  const accountId = readCredential(credentials, "R2_ACCOUNT_ID");
+  const accessKeyId = readCredential(credentials, "R2_ACCESS_KEY_ID");
+  const secretAccessKey = readCredential(credentials, "R2_SECRET_ACCESS_KEY");
+  const bucket = readCredential(credentials, "R2_BUCKET_NAME");
   if (!accountId || !accessKeyId || !secretAccessKey || !bucket) {
     throw new Error("Cloud storage is not configured yet.");
   }
@@ -127,15 +158,15 @@ async function signR2(key: string, method: "PUT" | "GET" | "DELETE", contentType
  * `reserveProfileQuota`, which can be made atomic because it writes to Postgres
  * rather than to R2.
  */
-async function r2OwnerUsage(owner: string): Promise<{
+async function r2OwnerUsage(owner: string, credentials?: StorageCredentials): Promise<{
   totalBytes: number;
   photoCount: number;
   docCount: number;
 }> {
-  const accountId = process.env["R2_ACCOUNT_ID"];
-  const accessKeyId = process.env["R2_ACCESS_KEY_ID"];
-  const secretAccessKey = process.env["R2_SECRET_ACCESS_KEY"];
-  const bucket = process.env["R2_BUCKET_NAME"];
+  const accountId = readCredential(credentials, "R2_ACCOUNT_ID");
+  const accessKeyId = readCredential(credentials, "R2_ACCESS_KEY_ID");
+  const secretAccessKey = readCredential(credentials, "R2_SECRET_ACCESS_KEY");
+  const bucket = readCredential(credentials, "R2_BUCKET_NAME");
   if (!accountId || !accessKeyId || !secretAccessKey || !bucket) {
     throw new Error("Cloud storage is not configured yet.");
   }
@@ -213,9 +244,9 @@ function throwQuotaError(error: unknown): never {
  * runs, so the service role is only widening which *verified* owner may be
  * charged. Imported lazily so this module can never reach a client bundle.
  */
-async function quotaAdminClient(): Promise<SupabaseClient<Database>> {
-  const url = process.env["SUPABASE_URL"];
-  const key = process.env["SUPABASE_SERVICE_ROLE_KEY"];
+async function quotaAdminClient(credentials?: StorageCredentials): Promise<SupabaseClient<Database>> {
+  const url = readCredential(credentials, "SUPABASE_URL");
+  const key = readCredential(credentials, "SUPABASE_SERVICE_ROLE_KEY");
   if (!url || !key) throw new Error("Server is not configured yet.");
   const { createClient } = await import("@supabase/supabase-js");
   return createClient<Database>(url, key, {
@@ -234,8 +265,9 @@ async function quotaAdminClient(): Promise<SupabaseClient<Database>> {
 async function storageDeletionServiceRpc<T = unknown>(
   name: string,
   args: Record<string, unknown>,
+  credentials?: StorageCredentials,
 ): Promise<{ data: T; error: unknown }> {
-  const admin = await quotaAdminClient();
+  const admin = await quotaAdminClient(credentials);
   return (admin as unknown as {
     rpc: (fn: string, params: Record<string, unknown>) => Promise<{ data: T; error: unknown }>;
   }).rpc(name, args);
@@ -307,9 +339,9 @@ async function releaseProfileQuota(
  * to trust a number the member controls. Re-measuring also repairs drift, and
  * the delete path stays correct even for an object with no `documents` row.
  */
-async function resyncProfileQuota(owner: string): Promise<void> {
-  const admin = await quotaAdminClient();
-  const usage = await r2OwnerUsage(owner);
+async function resyncProfileQuota(owner: string, credentials?: StorageCredentials): Promise<void> {
+  const admin = await quotaAdminClient(credentials);
+  const usage = await r2OwnerUsage(owner, credentials);
   const { error } = await admin.rpc("resync_upload_quota", {
     p_user_id: owner,
     p_photo: usage.photoCount,
@@ -536,17 +568,26 @@ type DeletionPassResult =
   | { status: "failed"; r2Status?: number; error?: string };
 
 /** Service-role-only RPC boundary; see `storageDeletionServiceRpc`. */
-function deletionRpc<T = unknown>(name: string, args: Record<string, unknown>) {
-  return storageDeletionServiceRpc<T>(name, args);
+function deletionRpc<T = unknown>(
+  name: string,
+  args: Record<string, unknown>,
+  credentials?: StorageCredentials,
+) {
+  return storageDeletionServiceRpc<T>(name, args, credentials);
 }
 
-async function releaseBlockedLease(requestId: string, leaseToken: string, reason: string): Promise<void> {
+async function releaseBlockedLease(
+  requestId: string,
+  leaseToken: string,
+  reason: string,
+  credentials?: StorageCredentials,
+): Promise<void> {
   try {
     await deletionRpc<boolean>("block_storage_deletion", {
       p_request_id: requestId,
       p_lease_token: leaseToken,
       p_reason: reason,
-    });
+    }, credentials);
   } catch {
     // The lease expires on its own and the request stays reclaimable.
   }
@@ -567,7 +608,10 @@ async function releaseBlockedLease(requestId: string, leaseToken: string, reason
  * transaction, so a reference can no longer slip in between the last check and
  * the delete. A missing or failed fence blocks the pass rather than deleting.
  */
-async function executeStorageDeletion(claim: DeletionClaim): Promise<DeletionPassResult> {
+async function executeStorageDeletion(
+  claim: DeletionClaim,
+  credentials?: StorageCredentials,
+): Promise<DeletionPassResult> {
   if (claim.finalize_state === "done") return { status: "deleted" };
 
   // Establish (or reuse) the durable deletion fence before any R2 DELETE. The
@@ -580,7 +624,7 @@ async function executeStorageDeletion(claim: DeletionClaim): Promise<DeletionPas
     const result = await deletionRpc<unknown>("fence_storage_key_for_deletion", {
       p_request_id: claim.id,
       p_lease_token: claim.lease_token,
-    });
+    }, credentials);
     fence = result.error ? null : readFenceOutcome(result.data);
   } catch {
     fence = null;
@@ -588,7 +632,7 @@ async function executeStorageDeletion(claim: DeletionClaim): Promise<DeletionPas
   if (fence === null) {
     // A missing or failing fence is a safe stop: no fence means no authorization
     // to delete, so R2 is never touched.
-    await releaseBlockedLease(claim.id, claim.lease_token, "reference_check_unavailable");
+    await releaseBlockedLease(claim.id, claim.lease_token, "reference_check_unavailable", credentials);
     return { status: "blocked", reason: "reference_check_unavailable" };
   }
   if (fence === "not_claimed") {
@@ -597,7 +641,7 @@ async function executeStorageDeletion(claim: DeletionClaim): Promise<DeletionPas
   }
   if (fence === "blocked_protected_reference" || fence === "blocked_document_set_changed") {
     const reason = fence === "blocked_protected_reference" ? "protected_reference" : "document_set_changed";
-    await releaseBlockedLease(claim.id, claim.lease_token, reason);
+    await releaseBlockedLease(claim.id, claim.lease_token, reason, credentials);
     return { status: "blocked", reason };
   }
 
@@ -606,7 +650,7 @@ async function executeStorageDeletion(claim: DeletionClaim): Promise<DeletionPas
     let r2Status: number | null = null;
     let confirmed = false;
     try {
-      const deleteUrl = await signR2(claim.storage_key, "DELETE");
+      const deleteUrl = await signR2(claim.storage_key, "DELETE", undefined, credentials);
       const response = await fetch(deleteUrl, { method: "DELETE" });
       r2Status = response.status;
       confirmed = response.ok || response.status === 404;
@@ -621,7 +665,7 @@ async function executeStorageDeletion(claim: DeletionClaim): Promise<DeletionPas
           p_lease_token: claim.lease_token,
           p_error: r2Status === null ? "Storage deletion failed." : `Storage deletion failed (${r2Status}).`,
           p_max_attempts: STORAGE_DELETION_MAX_ATTEMPTS,
-        });
+        }, credentials);
       } catch {
         // The lease expires and the request stays reclaimable for a retry.
       }
@@ -633,7 +677,7 @@ async function executeStorageDeletion(claim: DeletionClaim): Promise<DeletionPas
     const confirmedResult = await deletionRpc<boolean>("set_r2_confirmed_absent", {
       p_request_id: claim.id,
       p_lease_token: claim.lease_token,
-    });
+    }, credentials);
     if (confirmedResult.error || confirmedResult.data !== true) {
       // Stale lease or unavailable RPC: never assume success.
       return { status: "failed", error: "Storage deletion could not be completed and will be retried." };
@@ -644,7 +688,7 @@ async function executeStorageDeletion(claim: DeletionClaim): Promise<DeletionPas
   const finalizeResult = await deletionRpc<boolean>("finalize_storage_deletion", {
     p_request_id: claim.id,
     p_lease_token: claim.lease_token,
-  });
+  }, credentials);
   if (finalizeResult.error || finalizeResult.data !== true) {
     // R2 is already absent; metadata stays intact and finalization is retried.
     return { status: "failed", error: "Storage deletion could not be completed and will be retried." };
@@ -652,8 +696,8 @@ async function executeStorageDeletion(claim: DeletionClaim): Promise<DeletionPas
 
   // Quota counters are a cache of the bucket; refresh best-effort and record it.
   try {
-    await resyncProfileQuota(claim.owner_id);
-    await deletionRpc("mark_storage_deletion_quota_resynced", { p_request_id: claim.id });
+    await resyncProfileQuota(claim.owner_id, credentials);
+    await deletionRpc("mark_storage_deletion_quota_resynced", { p_request_id: claim.id }, credentials);
   } catch {
     // Counter drifts high and self-heals on the next delete/upload/resync.
   }
@@ -785,39 +829,85 @@ export const deleteUpload = createServerFn({ method: "POST" })
  * error is never mistaken for a successful resync, and a concurrent worker can
  * only ever stamp a row it actually re-measured.
  */
-async function recoverStorageDeletionQuotaResyncs(limit: number): Promise<number> {
+async function recoverStorageDeletionQuotaResyncs(
+  limit: number,
+  credentials?: StorageCredentials,
+): Promise<{ recovered: number; listing: "ok" | "unavailable" }> {
   let records: Array<{ id: string; owner_id: string }> = [];
+  let listing: "ok" | "unavailable" = "unavailable";
   try {
     const result = await storageDeletionServiceRpc<unknown[]>("list_storage_deletion_quota_resyncs", {
       p_limit: limit,
-    });
+    }, credentials);
     if (!result.error && Array.isArray(result.data)) {
+      listing = "ok";
       records = result.data
         .map(readQuotaResyncRecord)
         .filter((record): record is { id: string; owner_id: string } => record !== null);
     }
   } catch {
-    // Listing unavailable: nothing to recover this pass.
-    return 0;
+    // Listing unavailable: nothing to recover this pass. Reported to the caller
+    // so a transport failure is distinguishable from an empty recovery queue.
+    return { recovered: 0, listing: "unavailable" };
   }
 
   let recovered = 0;
   for (const record of records) {
     try {
-      await resyncProfileQuota(record.owner_id);
+      await resyncProfileQuota(record.owner_id, credentials);
     } catch {
       // Failed resync keeps quota_resynced_at NULL for a later pass.
       continue;
     }
     try {
-      const marked = await deletionRpc("mark_storage_deletion_quota_resynced", { p_request_id: record.id });
+      const marked = await deletionRpc(
+        "mark_storage_deletion_quota_resynced",
+        { p_request_id: record.id },
+        credentials,
+      );
       if (!marked.error) recovered++;
     } catch {
       // Mark failure only delays the record; resync is idempotent on retry.
     }
   }
-  return recovered;
+  return { recovered, listing };
 }
+
+/**
+ * How a batch claim was resolved. Distinguishes an EMPTY queue from a claim that
+ * FAILED, which matters for a scheduler: `processed === 0` alone cannot tell
+ * "nothing to do" from "could not ask".
+ *
+ *   empty            claim RPC answered successfully with no rows
+ *   claimed          claim RPC answered successfully with >=1 valid row
+ *   malformed        claim RPC answered, but the payload was not a valid row array
+ *   rpc_error        claim RPC answered with an error (e.g. missing function)
+ *   transport_error  claim RPC threw before answering
+ */
+export type StorageDeletionClaimState = "empty" | "claimed" | "malformed" | "rpc_error" | "transport_error";
+
+/**
+ * Per-pass counts, additive to the legacy `{ processed, quotaResyncs }` shape so
+ * existing callers are unaffected. Counts and enum codes only: no ids, keys or
+ * upstream messages, so this is safe to log verbatim.
+ */
+export type StorageDeletionDiagnostics = {
+  claim: StorageDeletionClaimState;
+  claimed: number;
+  deleted: number;
+  blocked: number;
+  /** Passes blocked only because the reference check was unavailable (retryable). */
+  blockedUnavailable: number;
+  failed: number;
+  quotaResyncListing: "ok" | "unavailable";
+  /**
+   * True when the pass completed without an infrastructure failure: the claim
+   * answered, no pass failed, and no pass was blocked on an unavailable
+   * reference check. A `blocked` outcome from a protected reference is a
+   * deliberate, safe stop and does not clear this flag.
+   */
+  ok: boolean;
+};
 
 /**
  * Processes queued storage deletions. Service-role only; must run in a server
@@ -832,29 +922,68 @@ async function recoverStorageDeletionQuotaResyncs(limit: number): Promise<number
  * This does NOT prevent a reference inserted after the last check (Finding 5).
  */
 export async function processStorageDeletionRequests(
-  options: { requestId?: string; limit?: number } = {},
-): Promise<{ processed: number; quotaResyncs: number }> {
+  options: {
+    requestId?: string;
+    limit?: number;
+    /**
+     * Explicit credential source for this pass. The scheduler supplies the
+     * exact environment its guard already validated (TEST only); every RPC and
+     * R2 call in the pass then uses those same credentials and never consults
+     * `process.env`, so the validated target and the operated target cannot
+     * diverge. When omitted (the existing synchronous/manual path) credentials
+     * come from `process.env` unchanged.
+     */
+    credentials?: StorageCredentials;
+  } = {},
+): Promise<{ processed: number; quotaResyncs: number; diagnostics: StorageDeletionDiagnostics }> {
+  const credentials = options.credentials;
   const claims: DeletionClaim[] = [];
+  let claimState: StorageDeletionClaimState;
   try {
     const result = options.requestId
-      ? await deletionRpc<unknown[]>("claim_storage_deletion_request", { p_request_id: options.requestId })
-      : await deletionRpc<unknown[]>("claim_storage_deletion_requests", { p_limit: options.limit ?? 25 });
-    if (!result.error && Array.isArray(result.data)) {
+      ? await deletionRpc<unknown[]>(
+          "claim_storage_deletion_request",
+          { p_request_id: options.requestId },
+          credentials,
+        )
+      : await deletionRpc<unknown[]>(
+          "claim_storage_deletion_requests",
+          { p_limit: options.limit ?? 25 },
+          credentials,
+        );
+    if (result.error) {
+      claimState = "rpc_error";
+    } else if (!Array.isArray(result.data)) {
+      claimState = "malformed";
+    } else {
       for (const raw of result.data) {
-        const claim = readDeletionClaim(raw);
-        if (claim) claims.push(claim);
+        const parsed = readDeletionClaim(raw);
+        if (parsed) claims.push(parsed);
       }
+      // A non-empty payload that yields no valid row is a claim failure, not an
+      // empty queue: reporting `empty` there would hide a shape regression.
+      claimState = claims.length > 0 ? "claimed" : result.data.length > 0 ? "malformed" : "empty";
     }
   } catch {
     // Service-role boundary unavailable; nothing was claimed.
+    claimState = "transport_error";
   }
 
   let processed = 0;
+  let deleted = 0;
+  let blocked = 0;
+  let blockedUnavailable = 0;
+  let failed = 0;
   for (const claim of claims) {
     try {
-      await executeStorageDeletion(claim);
+      const outcome = await executeStorageDeletion(claim, credentials);
+      if (outcome.status === "deleted") deleted++;
+      else if (outcome.status === "failed") failed++;
+      else if (outcome.reason === "reference_check_unavailable") blockedUnavailable++;
+      else blocked++;
     } catch {
       // One failed pass must not stop the others; the lease expires.
+      failed++;
     }
     processed++;
   }
@@ -862,9 +991,23 @@ export async function processStorageDeletionRequests(
   // Separate, bounded recovery pass for completed deletions whose quota
   // re-stamp never ran. Re-measures counters and records completion only --
   // never an R2 DELETE, never a metadata finalize.
-  const quotaResyncs = await recoverStorageDeletionQuotaResyncs(options.limit ?? 25);
+  const recovery = await recoverStorageDeletionQuotaResyncs(options.limit ?? 25, credentials);
 
-  return { processed, quotaResyncs };
+  const diagnostics: StorageDeletionDiagnostics = {
+    claim: claimState,
+    claimed: claims.length,
+    deleted,
+    blocked,
+    blockedUnavailable,
+    failed,
+    quotaResyncListing: recovery.listing,
+    ok:
+      (claimState === "empty" || claimState === "claimed") &&
+      failed === 0 &&
+      blockedUnavailable === 0,
+  };
+
+  return { processed, quotaResyncs: recovery.recovered, diagnostics };
 }
 
 /**
