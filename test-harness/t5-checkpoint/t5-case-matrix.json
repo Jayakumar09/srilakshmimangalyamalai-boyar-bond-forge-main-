@@ -1,0 +1,573 @@
+{
+  "test": "T5",
+  "scope": "storage deletion lifecycle (Findings 4-5)",
+  "environment": "TEST ONLY",
+  "project_ref": "nqadtfqyurkpmxcodswc",
+  "checkpoint": {
+    "repo": "D:\\DevProjects\\Working\\srilakshmimangalyamalai(boyar-bond-forge-main)",
+    "branch": "main",
+    "head": "1ba43516447704364aa37222659e782de15322ad"
+  },
+  "owner_id": "f3b42871-9f60-4d7a-bd70-7c62f13ab3f0",
+  "isolation": {
+    "tx_isolation": "REPEATABLE READ",
+    "mandatory_rollback": true,
+    "separate_residue_readonly": true,
+    "synthetic_ids": true
+  },
+  "honesty": {
+    "historical_t5_result": "89/89 (reported, artifacts lost)",
+    "historical_not_rerun": true
+  },
+  "pins": {
+    "t3_anchors_validated": {
+      "claim_storage_deletion_request(uuid)": "ca2d313afeab415ee946dbe6937b7d8b",
+      "claim_storage_deletion_requests(integer)": "367b363648b8fd457fc37adbfad7ac35"
+    },
+    "t5_pins": {
+      "request_storage_deletion(text)": "901ca9300b271f352a7b363f37e51dcb",
+      "cancel_storage_deletion(uuid)": "c2e48b0f107ac242e191c9bdd2386133",
+      "record_storage_deletion_failure(uuid,uuid,text,integer)": "12a965130212b9698995b4b9f81036f0",
+      "check_storage_deletion_references(text)": "cf3285a4bfc7ba3bbf39125f4a3ef923",
+      "block_storage_deletion(uuid,uuid,text)": "c2f7bddfdcaf151b77def518a00f9fb7",
+      "set_r2_confirmed_absent(uuid,uuid)": "5a63fbd22c45a30be3873192ea7ba623",
+      "finalize_storage_deletion(uuid,uuid)": "b94615e59b820ca251eecd676da95c82",
+      "mark_storage_deletion_quota_resynced(uuid)": "65b6302eb1e8034d2ae78c504525af75",
+      "list_storage_deletion_quota_resyncs(integer)": "693ebf9c15509a5c6c859b69b22724a2"
+    }
+  },
+  "runtime_verification_groups": [
+    {
+      "id": 1,
+      "name": "cooldown_blocked_timing",
+      "items": [
+        "15m failed cooldown on creation (shared advisory lock with failure)",
+        "1h blocked cooldown before reclaim",
+        "per-key advisory xact lock on creation"
+      ],
+      "status": "PENDING REVIEW"
+    },
+    {
+      "id": 2,
+      "name": "lease_lifecycle_cas",
+      "items": [
+        "5m lease expiry",
+        "lease_token required when leased",
+        "CAS on (lease_token, lease_expires_at>now)",
+        "expired leases reclaimable"
+      ],
+      "status": "PENDING REVIEW"
+    },
+    {
+      "id": 3,
+      "name": "reference_predicate_identity",
+      "items": [
+        "6-source list identical across check_storage_deletion_references, fence recheck, tests"
+      ],
+      "status": "PENDING REVIEW"
+    },
+    {
+      "id": 4,
+      "name": "finalization_safety",
+      "items": [
+        "DELETE only captured document_row_ids with matching storage_key",
+        "existence check after DELETE (not row-count)",
+        "abort if any captured still references key",
+        "fail-closed"
+      ],
+      "status": "PENDING REVIEW"
+    },
+    {
+      "id": 5,
+      "name": "fence_semantics",
+      "items": [
+        "returns fenced|blocked_protected_reference|blocked_document_set_changed|not_claimed",
+        "BEFORE triggers on 6 tables with advisory lock",
+        "fence permanent (no DELETE)"
+      ],
+      "status": "PENDING REVIEW"
+    },
+    {
+      "id": 6,
+      "name": "auth_acl_hardening",
+      "items": [
+        "service_role-only except request/cancel (authenticated)",
+        "SET search_path=pg_catalog,pg_temp",
+        "SET row_security=off",
+        "OWNER TO postgres",
+        "trusted-owner visibility + effective DELETE checks"
+      ],
+      "status": "PENDING REVIEW"
+    }
+  ],
+  "reference_sources_6": [
+    "public.payments.proof_key",
+    "public.jathagam_requests.report_key",
+    "public.support_messages.attachment_key",
+    "public.profiles.photo_url",
+    "public.payment_events.receipt_key",
+    "public.documents.storage_key"
+  ],
+  "case_groups": [
+    {
+      "group": "A",
+      "name": "creation_cooldowns",
+      "count": 7,
+      "status": "PENDING REVIEW",
+      "cases": [
+        {
+          "id": "A1",
+          "title": "create_ok",
+          "expected_behavior": "no live, no failed<15m -> create request; idempotent reuse",
+          "setup": "clean namespace",
+          "assertions": ["returns id", "live-key uniqueness"],
+          "unresolved": ["timing window"]
+        },
+        {
+          "id": "A2",
+          "title": "reuse_live",
+          "expected_behavior": "returns existing live id",
+          "setup": "live exists",
+          "assertions": ["same id"],
+          "unresolved": []
+        },
+        {
+          "id": "A3",
+          "title": "cooldown_block",
+          "expected_behavior": "failed<15m -> exception",
+          "setup": "failed recent",
+          "assertions": ["exception with cooldown semantics"],
+          "unresolved": ["exact error text not specified"]
+        },
+        {
+          "id": "A4",
+          "title": "cooldown_expired",
+          "expected_behavior": "failed>15m -> allowed",
+          "setup": "failed old",
+          "assertions": ["allowed"],
+          "unresolved": ["clock boundary"]
+        },
+        {
+          "id": "A5",
+          "title": "blocked_protected",
+          "expected_behavior": "has_protected_references true -> blocked",
+          "setup": "protected ref exists",
+          "assertions": ["blocked"],
+          "unresolved": []
+        },
+        {
+          "id": "A6",
+          "title": "blocked_maydelete",
+          "expected_behavior": "may_delete false -> blocked",
+          "setup": "non-own doc refs",
+          "assertions": ["blocked"],
+          "unresolved": []
+        },
+        {
+          "id": "A7",
+          "title": "snapshot_docids",
+          "expected_behavior": "capture current document_row_ids only",
+          "setup": "docs present",
+          "assertions": ["snapshot used at finalization"],
+          "unresolved": []
+        }
+      ]
+    },
+    {
+      "group": "B",
+      "name": "claims",
+      "count": 8,
+      "status": "PENDING REVIEW",
+      "cases": [
+        {
+          "id": "B1",
+          "title": "claim_pending_to_deleting",
+          "expected_behavior": "increments attempt_count (r2 not confirmed), sets lease, status deleting",
+          "setup": "pending",
+          "assertions": ["attempt_count==1", "lease set", "status deleting"],
+          "unresolved": []
+        },
+        {
+          "id": "B2",
+          "title": "claim_confirmed_to_finalizing",
+          "expected_behavior": "attempt_count unchanged, status finalizing",
+          "setup": "confirmed_absent pending",
+          "assertions": ["attempt_count unchanged", "finalizing"],
+          "unresolved": []
+        },
+        {
+          "id": "B3",
+          "title": "claim_active_lease",
+          "expected_behavior": "returns 0, row unchanged",
+          "setup": "active lease",
+          "assertions": ["count 0", "no change"],
+          "unresolved": []
+        },
+        {
+          "id": "B4",
+          "title": "batch_limit_le0",
+          "expected_behavior": "returns 0",
+          "setup": "eligible exist",
+          "assertions": ["0 rows"],
+          "unresolved": []
+        },
+        {
+          "id": "B5",
+          "title": "batch_oldest_n",
+          "expected_behavior": "oldest eligible by created_at, shared batch token",
+          "setup": "multiple eligible",
+          "assertions": ["correct ids", "shared token"],
+          "unresolved": ["order stability details"]
+        },
+        {
+          "id": "B6",
+          "title": "blocked_lt1h",
+          "expected_behavior": "not claimable",
+          "setup": "blocked recently",
+          "assertions": ["no claim"],
+          "unresolved": []
+        },
+        {
+          "id": "B7",
+          "title": "blocked_ge1h",
+          "expected_behavior": "reclaimable if lease expired",
+          "setup": "blocked >1h",
+          "assertions": ["claimable when eligible"],
+          "unresolved": ["boundary precision"]
+        },
+        {
+          "id": "B8",
+          "title": "expired_lease_reclaim",
+          "expected_behavior": "reclaimable",
+          "setup": "expired lease",
+          "assertions": ["reclaimed"],
+          "unresolved": []
+        }
+      ]
+    },
+    {
+      "group": "C",
+      "name": "block_fail_confirm",
+      "count": 12,
+      "status": "PENDING REVIEW",
+      "cases": [
+        {
+          "id": "C1",
+          "title": "block_ok",
+          "expected_behavior": "blocked, clears lease, clips reason<=200, attempts preserved; returns true",
+          "setup": "live lease",
+          "assertions": ["true", "blocked", "lease cleared", "reason clipped"],
+          "unresolved": []
+        },
+        {
+          "id": "C2",
+          "title": "block_replay",
+          "expected_behavior": "false, unchanged",
+          "setup": "already blocked",
+          "assertions": ["false"],
+          "unresolved": []
+        },
+        {
+          "id": "C3",
+          "title": "block_confirmed",
+          "expected_behavior": "rejected (confirmed_absent) -> false",
+          "setup": "confirmed state",
+          "assertions": ["false"],
+          "unresolved": []
+        },
+        {
+          "id": "C4",
+          "title": "fail_below_max",
+          "expected_behavior": "pending, uncertain, lease cleared, error<=500, attempt_count not incremented by failure",
+          "setup": "below max",
+          "assertions": ["status pending", "r2 uncertain", "clip<=500"],
+          "unresolved": []
+        },
+        {
+          "id": "C5",
+          "title": "fail_ge_max_clamp",
+          "expected_behavior": "becomes failed (GREATEST clamp to 1)",
+          "setup": "at/above/max/zero/neg",
+          "assertions": ["failed", "clamp correct"],
+          "unresolved": ["exact clamp behavior"]
+        },
+        {
+          "id": "C6",
+          "title": "fail_replay",
+          "expected_behavior": "returns SQL NULL",
+          "setup": "replay",
+          "assertions": ["NULL"],
+          "unresolved": []
+        },
+        {
+          "id": "C7",
+          "title": "fail_confirmed",
+          "expected_behavior": "rejected -> NULL",
+          "setup": "confirmed",
+          "assertions": ["NULL"],
+          "unresolved": []
+        },
+        {
+          "id": "C8",
+          "title": "confirm_ok",
+          "expected_behavior": "confirmed_absent, finalizing, last_error cleared",
+          "setup": "live lease",
+          "assertions": ["true", "confirmed_absent", "finalizing"],
+          "unresolved": []
+        },
+        {
+          "id": "C9",
+          "title": "confirm_replay",
+          "expected_behavior": "true under same live lease",
+          "setup": "replay",
+          "assertions": ["true"],
+          "unresolved": []
+        },
+        {
+          "id": "C10",
+          "title": "stale_expired",
+          "expected_behavior": "CAS fails (token/expiry)",
+          "setup": "expired/stale",
+          "assertions": ["CAS fail"],
+          "unresolved": []
+        },
+        {
+          "id": "C11",
+          "title": "null_token",
+          "expected_behavior": "all ops reject",
+          "setup": "null token",
+          "assertions": ["rejected"],
+          "unresolved": []
+        },
+        {
+          "id": "C12",
+          "title": "wrong_token",
+          "expected_behavior": "all ops reject",
+          "setup": "wrong token",
+          "assertions": ["rejected"],
+          "unresolved": []
+        }
+      ]
+    },
+    {
+      "group": "D",
+      "name": "finalization",
+      "count": 10,
+      "status": "PENDING REVIEW",
+      "cases": [
+        {
+          "id": "D1",
+          "title": "preconfirm_fail",
+          "expected_behavior": "returns false, docs unchanged",
+          "setup": "not confirmed",
+          "assertions": ["false", "no delete"],
+          "unresolved": []
+        },
+        {
+          "id": "D2",
+          "title": "finalize_ok",
+          "expected_behavior": "deletes only captured ids with matching key; done/deleted; lease cleared",
+          "setup": "confirmed with captured docs",
+          "assertions": ["true", "correct deletes", "done/deleted"],
+          "unresolved": []
+        },
+        {
+          "id": "D3",
+          "title": "finalize_replay",
+          "expected_behavior": "false, unchanged",
+          "setup": "already done",
+          "assertions": ["false"],
+          "unresolved": []
+        },
+        {
+          "id": "D4",
+          "title": "selective",
+          "expected_behavior": "captured present deleted; captured moved-key survives; uncaptured same-key survives; missing captured allowed",
+          "setup": "mixed docs",
+          "assertions": ["selective correct"],
+          "unresolved": []
+        },
+        {
+          "id": "D5",
+          "title": "stale_cannot",
+          "expected_behavior": "lease/token CAS blocks",
+          "setup": "stale lease",
+          "assertions": ["blocked"],
+          "unresolved": []
+        },
+        {
+          "id": "D6",
+          "title": "done_protected",
+          "expected_behavior": "confirm/fail/block cannot mutate done state appropriately",
+          "setup": "done state",
+          "assertions": ["no mutation"],
+          "unresolved": []
+        },
+        {
+          "id": "D7",
+          "title": "existence_check_abort",
+          "expected_behavior": "if any captured still references key after DELETE -> abort, request never marked done",
+          "setup": "controlled hook",
+          "assertions": ["abort", "not marked done"],
+          "unresolved": ["precise test hook/method"]
+        },
+        {
+          "id": "D8",
+          "title": "done_replay",
+          "expected_behavior": "false",
+          "setup": "done",
+          "assertions": ["false"],
+          "unresolved": []
+        },
+        {
+          "id": "D9",
+          "title": "missing_captured_ok",
+          "expected_behavior": "allowed (already absent)",
+          "setup": "captured missing",
+          "assertions": ["allowed"],
+          "unresolved": []
+        },
+        {
+          "id": "D10",
+          "title": "scope_only_docs",
+          "expected_behavior": "only documents deleted",
+          "setup": "other tables present",
+          "assertions": ["no other deletes"],
+          "unresolved": []
+        }
+      ]
+    },
+    {
+      "group": "E",
+      "name": "fence_interactions",
+      "count": 6,
+      "status": "PENDING REVIEW",
+      "cases": [
+        {
+          "id": "E1",
+          "title": "fence_first",
+          "expected_behavior": "fenced",
+          "setup": "under lock",
+          "assertions": ["fenced"],
+          "unresolved": []
+        },
+        {
+          "id": "E2",
+          "title": "fence_idem",
+          "expected_behavior": "fenced if already present",
+          "setup": "already fenced",
+          "assertions": ["fenced"],
+          "unresolved": []
+        },
+        {
+          "id": "E3",
+          "title": "fence_blocked_protected",
+          "expected_behavior": "blocked_protected_reference if any of 6 sources has key",
+          "setup": "protected ref exists",
+          "assertions": ["blocked_protected_reference"],
+          "unresolved": []
+        },
+        {
+          "id": "E4",
+          "title": "fence_blocked_docset",
+          "expected_behavior": "blocked_document_set_changed if doc with key not in captured set",
+          "setup": "uncaptured doc same key",
+          "assertions": ["blocked_document_set_changed"],
+          "unresolved": []
+        },
+        {
+          "id": "E5",
+          "title": "fence_not_claimed",
+          "expected_behavior": "lease expired/stale or status not live -> not_claimed",
+          "setup": "invalid claim state",
+          "assertions": ["not_claimed"],
+          "unresolved": []
+        },
+        {
+          "id": "E6",
+          "title": "triggers_reject",
+          "expected_behavior": "BEFORE INSERT/UPDATE on any of 6 tables setting fenced key rejected (advisory lock)",
+          "setup": "fenced key exists",
+          "assertions": ["rejected"],
+          "unresolved": ["trigger timing"]
+        }
+      ]
+    },
+    {
+      "group": "F",
+      "name": "quota_listing_cancel_recreation",
+      "count": 6,
+      "status": "PENDING REVIEW",
+      "cases": [
+        {
+          "id": "F1",
+          "title": "cancel_ok",
+          "expected_behavior": "pending, not_attempted, attempt_count==0, finalize pending; requester or admin",
+          "setup": "pending clean",
+          "assertions": ["cancelled"],
+          "unresolved": []
+        },
+        {
+          "id": "F2",
+          "title": "cancel_reject",
+          "expected_behavior": "any fails or wrong actor",
+          "setup": "various invalid",
+          "assertions": ["not cancelled"],
+          "unresolved": []
+        },
+        {
+          "id": "F3",
+          "title": "quota_resync_mark",
+          "expected_behavior": "only when deleted and null",
+          "setup": "deleted row",
+          "assertions": ["marked"],
+          "unresolved": []
+        },
+        {
+          "id": "F4",
+          "title": "quota_resync_list",
+          "expected_behavior": "deleted+done+confirmed_absent, quota_resynced_at NULL, ordered by finalized_at NULLS LAST,id, limited",
+          "setup": "multiple",
+          "assertions": ["correct set/order"],
+          "unresolved": []
+        },
+        {
+          "id": "F5",
+          "title": "recreation",
+          "expected_behavior": "failed>15m allows new; failed<15m blocked (shared advisory lock)",
+          "setup": "failed rows",
+          "assertions": ["blocked vs allowed"],
+          "unresolved": ["timing boundaries"]
+        },
+        {
+          "id": "F6",
+          "title": "global_eligible_guard",
+          "expected_behavior": "complete predicate (no owner filter) matches exactly",
+          "setup": "mixed state",
+          "assertions": ["exact set"],
+          "unresolved": []
+        }
+      ]
+    }
+  ],
+  "total_cases": 49,
+  "approval_boundaries": {
+    "approved_now": [
+      "docs/project/CONTINUATION_CHECKPOINT_2026-10-19.md",
+      "test-harness/t5-checkpoint/README.md",
+      "test-harness/t5-checkpoint/t5-case-matrix.json"
+    ],
+    "not_approved": [
+      "executable SQL",
+      "harness registry edits",
+      "staging/commits/pushes",
+      "T5 execution",
+      "TEST DB writes",
+      "R2 operations",
+      "Cloudflare changes",
+      "migrations",
+      "deploys",
+      "production access"
+    ]
+  }
+}
