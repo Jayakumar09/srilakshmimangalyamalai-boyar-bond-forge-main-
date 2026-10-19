@@ -1,6 +1,8 @@
 -- LOCAL THROWAWAY LAB SCHEMA. Not TEST, not PRODUCTION. For offline SQL validation only.
 -- Mimics only the objects the storage-deletion lifecycle / fence code touches.
 -- The four real migrations (20261017120000..150000) are applied verbatim on top of this.
+-- The payments method/UTR constraints from 20261004120000 are embedded below so the
+-- lab mirrors the real TEST payments CHECK constraints (source of truth: that migration).
 
 CREATE ROLE anon NOLOGIN;
 CREATE ROLE authenticated NOLOGIN;
@@ -86,6 +88,35 @@ CREATE TABLE public.payments (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Payment-method constraints, taken from the committed migration
+-- supabase/migrations/20261004120000_payment_method_utr_constraints.sql.
+-- The local lab previously omitted them, which hid the invalid E6 method
+-- fixture ('t5') that the real TEST schema rejects with 23514.
+ALTER TABLE public.payments
+ADD CONSTRAINT payments_method_allowed
+CHECK (method IN ('online', 'upi', 'bank_transfer'));
+
+ALTER TABLE public.payments
+ADD CONSTRAINT payments_utr_reference_maxlen
+CHECK (utr_reference IS NULL OR length(utr_reference) <= 120);
+
+ALTER TABLE public.payments
+ADD CONSTRAINT payments_manual_utr_required
+CHECK (
+  method NOT IN ('upi', 'bank_transfer')
+  OR (utr_reference IS NOT NULL AND trim(utr_reference) <> '')
+);
+
+CREATE UNIQUE INDEX payments_manual_utr_user_item_uniq
+ON public.payments (user_id, item, upper(trim(utr_reference)))
+WHERE method IN ('upi', 'bank_transfer')
+  AND utr_reference IS NOT NULL;
+
+CREATE UNIQUE INDEX payments_manual_submitted_user_item_uniq
+ON public.payments (user_id, item)
+WHERE method IN ('upi', 'bank_transfer')
+  AND status = 'submitted';
 
 CREATE TABLE public.jathagam_requests (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

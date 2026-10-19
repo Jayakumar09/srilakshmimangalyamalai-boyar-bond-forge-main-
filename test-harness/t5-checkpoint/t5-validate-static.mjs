@@ -113,7 +113,70 @@ if (res) {
   check("residue: no write/DDL statements", !/^\s*(insert|update|delete|create|alter|drop|truncate|grant|revoke)\b/im.test(stripComments(res)));
   check("residue: covers all ten relations", ["storage_deletion_requests","storage_deletion_fences","documents","profiles","user_roles","payments","jathagam_requests","support_threads","support_messages","payment_events"].every((r) => res.includes(`public.${r}`)));
   check("residue: never names the production ref", !res.includes(PROD_PROJECT));
+  check("residue: payments detected by synthetic owner id (NULL proof_key safe)",
+    res.includes("'payments', (SELECT count(*) FROM public.payments p")
+    && res.includes("p.user_id IN (v_owner,v_other,v_admin) OR p.proof_key LIKE v_prefix"));
 }
+
+// ---- E6 payment fixtures + fence-assertion hardening ----------------------
+// Guards the two defects found in the first T5 execution: an invalid synthetic
+// payment method ('t5') rejected by payments_method_allowed, and fence
+// assertions that accepted any SQLSTATE 23514 regardless of who raised it.
+const MIG_PAY = join(repo, "supabase", "migrations", "20261004120000_payment_method_utr_constraints.sql");
+const MIG_FENCE = join(repo, "supabase", "migrations", "20261017150000_storage_deletion_fence.sql");
+const LAB = join(repo, "test-harness", "t5-checkpoint", "lab", "lab-schema.sql");
+const migPay = slurp(MIG_PAY);
+const migFence = slurp(MIG_FENCE);
+const lab = slurp(LAB);
+check("payments migration: readable", migPay !== null, MIG_PAY);
+const allowedMethods = migPay
+  ? [...(migPay.match(/CHECK\s*\(\s*method\s+IN\s*\(([^)]*)\)/i)?.[1] || "").matchAll(/'([^']+)'/g)].map((m) => m[1])
+  : [];
+check("payments migration: allowed method set derived from source", allowedMethods.length === 3, allowedMethods.join(","));
+check("fence migration: readable", migFence !== null, MIG_FENCE);
+const fenceMsg = migFence ? (migFence.match(/RAISE EXCEPTION '([^']+)' USING ERRCODE = '23514'/) || [])[1] : null;
+check("fence migration: 23514 rejection message readable", !!fenceMsg, fenceMsg || "");
+if (live) {
+  const plainLive = stripComments(live);
+  const payInserts = [...plainLive.matchAll(/INSERT\s+INTO\s+public\.payments\b/g)];
+  check("live: synthetic payments fixtures present", payInserts.length >= 2, `payments INSERTs: ${payInserts.length}`);
+  const badMethod = payInserts.filter((m) => {
+    const win = plainLive.slice(m.index, m.index + 500);
+    return !allowedMethods.some((a) => win.includes(`'${a}'`));
+  });
+  check("live: every payments INSERT uses a migration-allowed method",
+    allowedMethods.length === 3 && badMethod.length === 0,
+    badMethod.length ? `offsets ${badMethod.map((m) => m.index).join(", ")}` : `${payInserts.length} insert(s) checked`);
+  check("live: no disallowed 't5' payment method literal remains", !/'t5'/.test(plainLive));
+  const methodLiterals = [...plainLive.matchAll(/'standard',\s*1\s*,\s*'([^']+)'/g)].map((m) => m[1]);
+  check("live: every E6 amount-1 payment row uses a migration-allowed method literal",
+    allowedMethods.length === 3 && methodLiterals.length >= 3
+    && methodLiterals.every((v) => allowedMethods.includes(v)),
+    `literals: ${[...new Set(methodLiterals)].join(",") || "(none)"}`);
+  const fencedCalls = (plainLive.match(/PERFORM\s+pg_temp\.t5_must_fail_fenced\(/g) || []).length;
+  check("live: E6 fence assertions use the message-checked helper (8 + 1 probe)", fencedCalls === 9, `t5_must_fail_fenced call sites: ${fencedCalls}`);
+  const codeOnly23514 = [...plainLive.matchAll(/pg_temp\.t5_must_fail\(/g)]
+    .map((m) => plainLive.slice(m.index, plainLive.indexOf(";", m.index) + 1))
+    .filter((s) => s.includes("'23514'"));
+  check("live: no SQLSTATE-only 23514 assertion remains", codeOnly23514.length === 0, `${codeOnly23514.length} code-only 23514 assertion(s)`);
+  if (fenceMsg) {
+    check("live: fence helper pins the migration's exact fence message",
+      plainLive.includes(`v_expect CONSTANT text := '${fenceMsg}'`), fenceMsg);
+    check("live: fence helper requires SQLSTATE 23514 AND the fence message",
+      /v_state IS DISTINCT FROM '23514' OR v_msg IS DISTINCT FROM v_expect/.test(plainLive));
+    check("live: unrelated-23514 fail-closed self-test present",
+      plainLive.includes("got SQLSTATE 23514") && plainLive.includes("T5 fence assertion accepted"));
+  } else {
+    check("live: fence helper pins the migration's exact fence message", false, "fence message unavailable");
+    check("live: fence helper requires SQLSTATE 23514 AND the fence message", false, "fence message unavailable");
+    check("live: unrelated-23514 fail-closed self-test present", false, "fence message unavailable");
+  }
+}
+check("lab: payments method CHECK aligned with the committed migration",
+  lab !== null && allowedMethods.length === 3
+  && /ADD CONSTRAINT payments_method_allowed/.test(lab)
+  && allowedMethods.every((a) => lab.includes(`'${a}'`)),
+  LAB);
 
 // ---- Registry classification (report only; never modified here) -----------
 const registry = slurp(REGISTRY);

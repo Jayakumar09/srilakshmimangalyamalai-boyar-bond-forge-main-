@@ -376,6 +376,30 @@ BEGIN
 END;
 $body$;
 
+-- Like t5_must_fail, but only a storage-fence rejection satisfies it: the
+-- SQLSTATE must be 23514 AND the message must be the fence trigger's own
+-- rejection text. An unrelated 23514 (for example a table CHECK constraint)
+-- must fail closed instead of satisfying the assertion.
+CREATE FUNCTION pg_temp.t5_must_fail_fenced(p_sql text) RETURNS text LANGUAGE plpgsql AS $body$
+DECLARE v_state text; v_msg text;
+  v_expect CONSTANT text := 'Storage key is fenced for deletion.';
+BEGIN
+  BEGIN
+    EXECUTE p_sql;
+    v_state := '00000';
+    v_msg := NULL;
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_state = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
+    IF v_state IN ('40001','40P01','55P03','57014') THEN RAISE; END IF;
+  END;
+  IF v_state IS DISTINCT FROM '23514' OR v_msg IS DISTINCT FROM v_expect THEN
+    RAISE EXCEPTION 'T5 fence assertion rejected: expected SQLSTATE 23514 fence rejection, got SQLSTATE % (%)',
+      v_state, coalesce(v_msg, '<no message>');
+  END IF;
+  RETURN v_state;
+END;
+$body$;
+
 CREATE FUNCTION pg_temp.t5_assert_state() RETURNS void LANGUAGE plpgsql AS $body$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_temp.t5_requests f LEFT JOIN public.storage_deletion_requests r ON r.id=f.id
@@ -1093,32 +1117,46 @@ BEGIN
   INSERT INTO public.support_threads(user_id) VALUES (m.owner_id) RETURNING id INTO v_thread;
   PERFORM pg_temp.t5_ref('e6thread','support_threads', v_thread);
   INSERT INTO public.payments(user_id,item,amount_inr,method)
-  VALUES (m.owner_id,'standard',1,'t5') RETURNING id INTO v_pay;
+  VALUES (m.owner_id,'standard',1,'online') RETURNING id INTO v_pay;
   PERFORM pg_temp.t5_ref('e6pay','payments', v_pay);
   INSERT INTO public.profiles(id) VALUES (gen_random_uuid()) RETURNING id INTO v_p6;
   PERFORM pg_temp.t5_ref('e6prof','profiles', v_p6);
 
-  PERFORM pg_temp.t5_must_fail(format(
+  PERFORM pg_temp.t5_must_fail_fenced(format(
     'INSERT INTO public.documents(user_id,doc_type,storage_key) VALUES (%L::uuid,%L,%L)',
-    m.owner_id,'govt_id',v_key), '23514');
-  PERFORM pg_temp.t5_must_fail(format(
-    'INSERT INTO public.profiles(id,photo_url) VALUES (gen_random_uuid(),%L)', v_key), '23514');
-  PERFORM pg_temp.t5_must_fail(format(
+    m.owner_id,'govt_id',v_key));
+  PERFORM pg_temp.t5_must_fail_fenced(format(
+    'INSERT INTO public.profiles(id,photo_url) VALUES (gen_random_uuid(),%L)', v_key));
+  PERFORM pg_temp.t5_must_fail_fenced(format(
     'INSERT INTO public.payments(user_id,item,amount_inr,method,proof_key) VALUES (%L::uuid,%L::public.payment_item,%s,%L,%L)',
-    m.owner_id,'standard',1,'t5',v_key), '23514');
-  PERFORM pg_temp.t5_must_fail(format(
+    m.owner_id,'standard',1,'online',v_key));
+  PERFORM pg_temp.t5_must_fail_fenced(format(
     'INSERT INTO public.jathagam_requests(user_id,birth_date,birth_time,birth_place,report_key) VALUES (%L::uuid,%L::date,%L,%L,%L)',
-    m.owner_id,'2000-01-01','00:00','T5',v_key), '23514');
-  PERFORM pg_temp.t5_must_fail(format(
+    m.owner_id,'2000-01-01','00:00','T5',v_key));
+  PERFORM pg_temp.t5_must_fail_fenced(format(
     'INSERT INTO public.support_messages(thread_id,sender_id,body,attachment_key) VALUES (%L::uuid,%L::uuid,%L,%L)',
-    v_thread, m.owner_id, 'T5', v_key), '23514');
-  PERFORM pg_temp.t5_must_fail(format(
+    v_thread, m.owner_id, 'T5', v_key));
+  PERFORM pg_temp.t5_must_fail_fenced(format(
     'INSERT INTO public.payment_events(payment_id,user_id,item,amount_inr,verified_at,receipt_key) VALUES (%L::uuid,%L::uuid,%L::public.payment_item,%s,now(),%L)',
-    v_pay, m.owner_id,'standard',1,v_key), '23514');
-  PERFORM pg_temp.t5_must_fail(format(
-    'UPDATE public.documents SET storage_key=%L WHERE id=%L::uuid', v_key, v_unc), '23514');
-  PERFORM pg_temp.t5_must_fail(format(
-    'UPDATE public.profiles SET photo_url=%L WHERE id=%L::uuid', v_key, v_p6), '23514');
+    v_pay, m.owner_id,'standard',1,v_key));
+  PERFORM pg_temp.t5_must_fail_fenced(format(
+    'UPDATE public.documents SET storage_key=%L WHERE id=%L::uuid', v_key, v_unc));
+  PERFORM pg_temp.t5_must_fail_fenced(format(
+    'UPDATE public.profiles SET photo_url=%L WHERE id=%L::uuid', v_key, v_p6));
+  -- Negative self-test: an unrelated SQLSTATE 23514 (the UTR-length CHECK) must
+  -- NOT satisfy the fence assertion. Fail-closed if the helper accepts it, or if
+  -- the helper rejects with anything other than SQLSTATE 23514 (schema drift).
+  BEGIN
+    PERFORM pg_temp.t5_must_fail_fenced(format(
+      'INSERT INTO public.payments(user_id,item,amount_inr,method,utr_reference) VALUES (%L::uuid,%L,%s,%L,%L)',
+      m.owner_id,'standard',1,'online', repeat('x',121)));
+    RAISE EXCEPTION 'T5 fence assertion accepted an unrelated 23514';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM NOT LIKE 'T5 fence assertion rejected%'
+       OR SQLERRM NOT LIKE '%got SQLSTATE 23514%' THEN
+      RAISE;
+    END IF;
+  END;
   PERFORM pg_temp.t5_guard();
   PERFORM pg_temp.t5_case(43,'E6','EXECUTABLE',true,
     'all six tables rejected the fenced key on INSERT; documents and profiles rejected it on UPDATE');

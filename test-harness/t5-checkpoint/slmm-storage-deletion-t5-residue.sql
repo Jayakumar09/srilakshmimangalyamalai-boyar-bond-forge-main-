@@ -27,7 +27,8 @@ BEGIN
     'profiles', (SELECT count(*) FROM public.profiles p
        WHERE p.id IN (v_owner,v_other,v_admin) OR p.photo_url LIKE v_prefix || '%'),
     'user_roles', (SELECT count(*) FROM public.user_roles ur WHERE ur.user_id IN (v_owner,v_other,v_admin)),
-    'payments', (SELECT count(*) FROM public.payments p WHERE p.proof_key LIKE v_prefix || '%'),
+    'payments', (SELECT count(*) FROM public.payments p
+       WHERE p.user_id IN (v_owner,v_other,v_admin) OR p.proof_key LIKE v_prefix || '%'),
     'jathagam_requests', (SELECT count(*) FROM public.jathagam_requests j WHERE j.report_key LIKE v_prefix || '%'),
     'support_threads', (SELECT count(*) FROM public.support_threads st WHERE st.user_id IN (v_owner,v_other,v_admin)),
     'support_messages', (SELECT count(*) FROM public.support_messages m WHERE m.attachment_key LIKE v_prefix || '%'),
