@@ -144,3 +144,56 @@
 10. **Deployment occurred:** no.
 11. **Risks/limitations:** the new quota-contract suite is **static** (does not prove runtime DB enforcement); both live harnesses still read the repo-root `.env` (not `.env.test`); `.output` is a production artifact (stamp `2026-10-16T14:34:43.764Z`); `supabase/config.toml` targets production (Supabase CLI isolation gap); `scripts/check-build-target.mjs` and `test-harness/slmm-elite-code-tests.mjs` remain untracked.
 12. **Next recommended step:** obtain explicit approval, then create the narrow documentation checkpoint.
+
+---
+
+## 2026-10-17 (checkpoint) — local commit `9d810a9` created
+
+> **Supersedes** the "Commit ID: none / HEAD remains `ff1abb1`" lines (steps 8) and the "remain untracked" notes (step 11) in the two entries above.
+
+1. **Date/time:** 2026-10-17 (checkpoint).
+2. **Task title/objective:** Create the narrow local checkpoint for the offline-suite + documentation work.
+3. **Environment:** TEST only; offline (no live harness, no remote access, no `.env` reads).
+4. **Committed:** `9d810a9` — `A`: six `docs/project/*.md`, `scripts/check-build-target.mjs`, `.config/nitro.config.mjs`, `test-harness/slmm-elite-code-tests.mjs`, `test-harness/slmm-quota-sql-contract-tests.mjs`, `test-harness/slmm-upload-cap-tests.mjs`; `M`: `test-harness/harness-registry.mjs`. **No** production application code, migration, `wrangler.toml`, or `supabase/config.toml` was changed.
+5. **Implementation:** none (records an existing commit).
+6. **Commands:** read-only `git` checks; `npm run test:offline`; `npx tsc --noEmit`.
+7. **Test results (freshly observed):** `npm run test:offline` -> **exit 0**, `TOTAL tests=497 pass=497 fail=0 skip=0 suites=15 failing_suites=0`; `npx tsc --noEmit` -> **exit 0**.
+8. **Commit ID:** `9d810a9` (`test(offline): add quota SQL-contract and upload-cap suites; track build-target gate`). HEAD = `9d810a9`; `origin/main` is **9 behind**.
+9. **Remote TEST resources modified:** none.
+10. **Deployment occurred:** no.
+11. **Risks/limitations:** **not pushed**. Residual OPEN items remain: both live harnesses read the repo-root `.env` (not `.env.test`); `.output` is a production build; `supabase/config.toml` targets production; TEST `R2_BUCKET_NAME` binding unverified. Working tree still holds **37 modified tracked + 69 untracked** files (preserve).
+12. **Next recommended step:** obtain explicit approval before any push; resolve the residual `.env`/isolation items before any live run.
+
+---
+
+## 2026-10-17 (security) — R2 storage-key + reference-integrity hardening; fresh 578/578
+
+1. **Date/time:** 2026-10-17 (later still).
+2. **Task title/objective:** Record the R2 storage-key canonicalisation and document/storage reference-integrity commits, with their offline contract coverage, and re-verify the full offline set.
+3. **Environment:** TEST only; offline (no live harness, no remote access, no `.env` reads).
+4. **Committed:** `0bb3836`, `4e9e1c0`, `92804e0` — added `src/lib/storage-key.ts`, `supabase/migrations/20261017120000_document_storage_reference_state.sql`, `supabase/migrations/20261017130000_storage_reference_state.sql`, and offline suites `slmm-storage-key-tests.mjs`, `slmm-document-reference-contract-tests.mjs`, `slmm-storage-reference-contract-tests.mjs`; updated `slmm-delete-upload-tests.mjs`, `slmm-orphan-cleanup-tests.mjs`, `slmm-screened-pair-quota-tests.mjs`. **No** production deploy config was changed.
+5. **Implementation:** see the commits (R2 key canonicalisation; verify document references before deletion; protect non-document references).
+6. **Commands executed:** `npm run test:offline`; `npx tsc --noEmit`; read-only `git` checks. **No build, no live harness, no remote access.**
+7. **Test results (freshly observed, working tree):** `npm run test:offline` -> **exit 0**, `TOTAL tests=578 pass=578 fail=0 skip=0 suites=19 failing_suites=0`; `npx tsc --noEmit` -> **exit 0**.
+8. **Commit ID:** HEAD = `92804e0`; `origin/main` is **12 behind**; **not pushed**.
+9. **Remote TEST resources modified:** none.
+10. **Deployment occurred:** no.
+11. **Risks/limitations:** reference-integrity suites are **static** (no runtime R2/DB proof); residual OPEN items unchanged (root `.env` reads; production `.output`; production `supabase/config.toml`; unverified TEST `R2_BUCKET_NAME`). Working tree holds **44 modified tracked + 71 untracked** (preserve).
+12. **Next recommended step:** obtain approval before any push; one working-tree change (`harness-registry.mjs` + untracked `slmm-storage-deletion-sql-contract-tests.mjs`) remains uncommitted.
+
+---
+
+## 2026-10-19 — Project-wide task management & handover system (INFRA-001); T6 blocked
+
+1. **Date/time:** 2026-10-19 (local, ~23:35).
+2. **Task title/objective:** INFRA-001 — create a project-wide, persistent task-management and handover system (deliberately **not** restricted to T6) and seed it with the current verified project state and the blocked T6 task record.
+3. **Environment:** TEST-only; **documentation-only**. No database connection, no live/local harness run, no build, no deploy, no commit/push.
+4. **Files created:** `docs/project/CURRENT_HANDOVER.md`, `docs/project/TASK_INDEX.md`; `project-tasks/README.md`; `project-tasks/{active,pending,completed}/README.md`; `project-tasks/_TEMPLATE/{TASK,PROGRESS,TEST_REPORT,ARTIFACT_MANIFEST}.md`; `project-tasks/active/T6-group-l-concurrency-runner/*.md`; `project-tasks/completed/T3-storage-deletion-claim-rpc/*.md`, `.../T4-storage-deletion-state-transitions/*.md`, `.../T5-storage-deletion-lifecycle-and-fence/*.md`. **Not modified:** all pre-existing `docs/project/*.md` (extended only by this appended entry).
+5. **Implementation/config change:** the four-file per-task record; status↔folder mapping (ACTIVE/PENDING/COMPLETED folders; BLOCKED tasks live in `active/`); a task may be marked `COMPLETED` only once committed, pushed and verified on GitHub.
+6. **Commands executed:** read-only `git` (`rev-parse HEAD`, `status --porcelain --untracked-files=all`, `ls-files --others`, `rev-list --count`), `Get-FileHash -Algorithm SHA256`, `Get-NetTCPConnection`, and filesystem reads. No build.
+7. **Test results:** N/A (documentation task). Verified at entry: HEAD `eef9b2e607346f3560af5baf1f170932455a9b44`; `origin/main` **in sync (0 ahead / 0 behind)**; working tree **42 modified / 69 untracked / 0 staged / 0 deletions** (preserved).
+8. **Commit ID:** none (awaiting separate approval per the user's workflow).
+9. **Remote TEST resources modified:** none.
+10. **Deployment occurred:** no.
+11. **Risks/limitations:** **T6 remains BLOCKED** — (a) `t6-runner.ps1` SHA-256 `abd83227…c6701b` ≠ approved `fac7926d…20894c`; (b) `127.0.0.1:15432` has a listener (PID 2676) where none is required; (c) `%TEMP%\opencode\t6lab` pre-exists with an ownership marker (`pid=5480`) that does not match the live server (`2676`). No prerequisite-clearing action was taken (PID 2676 and the lab directory remain untouched). `T1`/`T2` are undocumented and were not invented. The offline suite (578/578) was **not** re-run. Nothing is committed.
+12. **Next recommended step:** review the new handover/task structure; if accepted, approve a **focused** commit of the added files; separately decide the T6 blockers (confirm/replace the `.ps1` hash; stop PID 2676 and/or remove `%TEMP%\opencode\t6lab`). A follow-up should also point `PROJECT_STATUS.md` §9 (recovery steps) at `CURRENT_HANDOVER.md`.
