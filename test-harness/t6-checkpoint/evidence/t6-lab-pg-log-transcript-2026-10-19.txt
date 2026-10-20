@@ -1,0 +1,28 @@
+2026-10-19 22:58:42.749 IST [9988] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35223, 64-bit
+2026-10-19 22:58:42.750 IST [9988] LOG:  listening on IPv4 address "127.0.0.1", port 15432
+2026-10-19 22:58:42.931 IST [11092] LOG:  database system was shut down at 2026-10-19 22:58:42 IST
+2026-10-19 22:58:42.953 IST [9988] LOG:  database system is ready to accept connections
+2026-10-19 23:03:42.926 IST [7468] LOG:  checkpoint starting: time
+2026-10-19 23:03:45.286 IST [7468] LOG:  checkpoint complete: wrote 20 buffers (0.1%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=2.335 s, sync=0.014 s, total=2.362 s; sync files=10, longest=0.007 s, average=0.002 s; distance=123 kB, estimate=123 kB; lsn=0/180B4B8, redo lsn=0/180B428
+2026-10-19 23:04:43.089 IST [9988] LOG:  autovacuum worker (PID 2192) was terminated by exception 0xC0000142
+2026-10-19 23:04:43.089 IST [9988] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
+2026-10-19 23:04:43.090 IST [9988] LOG:  terminating any other active server processes
+2026-10-19 23:04:43.106 IST [9988] LOG:  all server processes terminated; reinitializing
+2026-10-19 23:04:43.161 IST [9988] LOG:  startup process (PID 2176) was terminated by exception 0xC0000142
+2026-10-19 23:04:43.161 IST [9988] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
+2026-10-19 23:04:43.161 IST [9988] LOG:  aborting startup due to startup process failure
+2026-10-19 23:04:43.163 IST [9988] LOG:  database system is shut down
+2026-10-19 23:08:13.202 IST [11852] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35223, 64-bit
+2026-10-19 23:08:13.206 IST [11852] LOG:  listening on IPv4 address "127.0.0.1", port 15432
+2026-10-19 23:08:13.357 IST [628] LOG:  database system was shut down at 2026-10-19 23:08:12 IST
+2026-10-19 23:08:13.369 IST [11852] LOG:  database system is ready to accept connections
+2026-10-19 23:13:13.340 IST [3056] LOG:  checkpoint starting: time
+2026-10-19 23:13:17.647 IST [3056] LOG:  checkpoint complete: wrote 37 buffers (0.2%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=4.286 s, sync=0.014 s, total=4.308 s; sync files=11, longest=0.006 s, average=0.002 s; distance=278 kB, estimate=278 kB; lsn=0/1831E00, redo lsn=0/1831D70
+2026-10-19 23:14:13.630 IST [11852] LOG:  autovacuum worker (PID 1320) was terminated by exception 0xC0000142
+2026-10-19 23:14:13.630 IST [11852] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
+2026-10-19 23:14:13.630 IST [11852] LOG:  terminating any other active server processes
+2026-10-19 23:14:13.645 IST [11852] LOG:  all server processes terminated; reinitializing
+2026-10-19 23:14:13.694 IST [11852] LOG:  startup process (PID 12420) was terminated by exception 0xC0000142
+2026-10-19 23:14:13.694 IST [11852] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
+2026-10-19 23:14:13.694 IST [11852] LOG:  aborting startup due to startup process failure
+2026-10-19 23:14:13.696 IST [11852] LOG:  database system is shut down

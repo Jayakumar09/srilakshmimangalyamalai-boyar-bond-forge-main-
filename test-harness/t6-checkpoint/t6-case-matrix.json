@@ -1,0 +1,224 @@
+{
+  "t6": "storage-deletion concurrency and lock-serialization verification",
+  "status": "PLANNED - NOT EXECUTED",
+  "target_project": "nqadtfqyurkpmxcodswc",
+  "checkpoint": "eef9b2e607346f3560af5baf1f170932455a9b44",
+  "planned_date": "2026-10-19",
+  "environments": {
+    "L": "local disposable PostgreSQL 18 cluster (initdb/pg_ctl present; committed fixtures allowed; no residue risk beyond the temp cluster)",
+    "R": "TEST Supabase, two concurrent psql sessions, ZERO-COMMIT rollback-only (no committed fixture may ever be relied upon)",
+    "C": "TEST Supabase, committed synthetic fixtures + explicit cleanup + residue proof - BLOCKED pending separate operator approval"
+  },
+  "namespaces": {
+    "t3_owner": "e17a398c-41c8-4cce-8b8e-6e830f5ac913",
+    "t4_owner": "b426ac5e-2d91-4c83-99c4-1ddfe9876e32",
+    "t5_owner": "f3b42871-9f60-4d7a-bd70-7c62f13ab3f0",
+    "t5_other": "a1c9e6d2-7b34-4f8a-9c01-2d5e7f9a1b34",
+    "t5_admin": "b2d0f7e3-8c45-4a9b-8d12-3e6f8a0b2c45",
+    "t6_owner": "5d8f1c62-9a37-4e0b-b1f4-7c0e2a6d9f41",
+    "t6_other": "9a4b7e20-6c15-4d38-82fa-1e5b9c07d3aa",
+    "t6_admin": "c3f7b518-2e64-4a90-b7d5-84f2e6a10c79",
+    "t6_key_prefix": "5d8f1c62-9a37-4e0b-b1f4-7c0e2a6d9f41/t6/",
+    "collision_rule": "preflight aborts if ANY t6 id or key prefix is already present in any touched relation"
+  },
+  "isolation": {
+    "session_isolation": "READ COMMITTED",
+    "rationale": "the Worker/PostgREST path runs READ COMMITTED; the claim UPDATE race resolves by EvalPlanQual re-check after the row-lock wait (exactly-one-winner), whereas REPEATABLE READ would abort one session with 40001 and the fence/trigger post-wait reads would use a stale snapshot. T5's REPEATABLE READ was a single-session determinism device and must not be carried over.",
+    "deviation_from_t3_t5": "documented and deliberate; the harness guard must assert read committed, not repeatable read"
+  },
+  "cases": [
+    {
+      "id": "T6-L01", "group": "G1 single-row claim race", "env": "L",
+      "title": "two sessions claim the same pending request concurrently",
+      "setup": "committed fixture: one pending request, lease NULL",
+      "sync": "barrier then simultaneous claim_storage_deletion_request(id)",
+      "pass": "exactly one session receives the row; the other receives 0 rows; final attempt_count = initial+1 (never +2); exactly one distinct lease_token present; lease_expires_at within now()+5m +/- 2s",
+      "blocked_or_fail": "0 or 2 winners, SQLSTATE 40001/55P03 anywhere, both sessions returning the same token, attempt_count +2"
+    },
+    {
+      "id": "T6-L02", "group": "G1 single-row claim race", "env": "L",
+      "title": "expired-lease reclaim race",
+      "setup": "committed fixture: status deleting, lease_expires_at backdated 10m, attempt_count 2",
+      "sync": "barrier then simultaneous claim",
+      "pass": "exactly one winner; loser gets 0 rows; final attempt_count = 3; token replaced exactly once",
+      "blocked_or_fail": "two winners, 40001, attempt_count 4 or unchanged"
+    },
+    {
+      "id": "T6-L03", "group": "G2 stale-worker CAS", "env": "L",
+      "title": "racing loser cannot transition state with its stale token",
+      "setup": "L01/L02 loser holds no lease; it attempts block_storage_deletion with the token it hoped for / the pre-race token",
+      "sync": "after L01/L02 completes, still inside loser session",
+      "pass": "block returns false (and fail/confirm return NULL/false as documented) AND a full-row before/after snapshot of the row is byte-identical",
+      "blocked_or_fail": "any state mutated by the stale token"
+    },
+    {
+      "id": "T6-L04", "group": "G2 stale-worker CAS", "env": "L",
+      "title": "stale confirm after reclaim is rejected",
+      "setup": "A claims (token1); lease backdated; B claims (token2); A calls set_r2_confirmed_absent with token1",
+      "sync": "sequential with barrier between claims",
+      "pass": "A's confirm returns false; row retains token2, r2_state unchanged by A; final row equals B's snapshot",
+      "blocked_or_fail": "A succeeds, row r2_state changed to confirmed_absent by stale worker"
+    },
+    {
+      "id": "T6-L05", "group": "G3 batch / SKIP LOCKED", "env": "L",
+      "title": "two simultaneous batch claims partition the eligible set",
+      "setup": "6 committed eligible pending requests in the t6 namespace",
+      "sync": "barrier then both call claim_storage_deletion_requests(6)",
+      "pass": "intersection of returned id sets is empty; every returned id was in the eligible set; no id returned twice across sessions; no error; claim completes below lock_timeout",
+      "blocked_or_fail": "any duplicate id, any ineligible id, any error; union size is INFO ONLY and is never required to equal 6 (timing-dependent)"
+    },
+    {
+      "id": "T6-L06", "group": "G3 batch / SKIP LOCKED", "env": "L",
+      "title": "batch claim skips a row held by an open transaction",
+      "setup": "session A holds SELECT ... FOR UPDATE on eligible row X; 3 other eligible rows",
+      "sync": "A locks X, signals via pg_locks-visible state, then B batch-claims",
+      "pass": "B returns the other rows, does NOT return X, and completes without waiting (elapsed < lock_timeout); after A ROLLBACKs a follow-up claim returns X",
+      "blocked_or_fail": "B blocked until timeout, B returned X, or X permanently unclaimable"
+    },
+    {
+      "id": "T6-L07", "group": "G3 batch / SKIP LOCKED", "env": "L",
+      "title": "blocked-backoff rows are not claimable under contention",
+      "setup": "2 committed blocked rows (updated_at 30m ago), 1 blocked row (updated_at 2h ago)",
+      "sync": "barrier then simultaneous batch claims",
+      "pass": "both sessions return only the >=1h row's complement (i.e. the 30m rows never returned by anyone); the 2h row claimed exactly once across both sessions",
+      "blocked_or_fail": "a 30m-blocked row claimed, or the 2h row claimed twice"
+    },
+    {
+      "id": "T6-L08a", "group": "G4 duplicate creation", "env": "L",
+      "title": "second creator reuses the committed live request id (idempotent path)",
+      "setup": "A creates a request and COMMITs; B creates for the same key",
+      "sync": "sequential",
+      "pass": "B returns A's id; exactly one live row for the key after both",
+      "blocked_or_fail": "duplicate live rows, or B raises"
+    },
+    {
+      "id": "T6-L08b", "group": "G4 duplicate creation", "env": "L",
+      "title": "uncommitted creator serialises the competing creator on the per-key lock + live-key unique index",
+      "setup": "A begins and creates for key K (uncommitted); B creates for K with lock_timeout",
+      "sync": "B waits, A holds, then A ROLLBACKs",
+      "pass": "B blocks (wait observed in pg_locks), then after A's rollback B creates its own row successfully; exactly 1 live row; no error other than none",
+      "blocked_or_fail": "B raised a uniqueness/serialization error instead of waiting, deadlock 40P01, or two live rows"
+    },
+    {
+      "id": "T6-L09", "group": "G5 session crash recovery", "env": "L",
+      "title": "claimer backend terminated after commit is reclaimable",
+      "setup": "A claims a committed row and COMMITs; A's backend is pg_terminate_backend'd",
+      "sync": "sequential, then lease backdated",
+      "pass": "no lock remains for that row; B reclaims with attempt+1 and a new token",
+      "blocked_or_fail": "row stuck/unclaimable, orphan row lock, attempt not incremented"
+    },
+    {
+      "id": "T6-L10", "group": "G5 session crash recovery", "env": "L",
+      "title": "claimer backend terminated mid-transaction leaves no state",
+      "setup": "A begins, claims (uncommitted), then is terminated",
+      "sync": "sequential",
+      "pass": "row is byte-identical to pre-race snapshot; B claims immediately and succeeds",
+      "blocked_or_fail": "any persisted lease/attempt from A's dead session"
+    },
+    {
+      "id": "T6-L11", "group": "G6 bounded waits", "env": "L",
+      "title": "opposite-order two-key lock attempts time out instead of deadlocking",
+      "setup": "A locks K1 then K2, B locks K2 then K1, both with lock_timeout=2s",
+      "sync": "barrier then opposite orders",
+      "pass": "zero SQLSTATE 40P01; at least one 55P03 lock_timeout observed; both sessions end in ROLLBACK with no held locks",
+      "blocked_or_fail": "any deadlock (40P01), any session left open, any lock retained",
+      "note": "production code paths take exactly ONE advisory lock per operation (static evidence), so this case only bounds the general risk"
+    },
+    {
+      "id": "T6-R01", "group": "G7 fence vs reference write", "env": "R",
+      "title": "documents reference INSERT waits for an in-flight fence, then succeeds after fence ROLLBACK",
+      "setup": "A (own txn): create own request for key K (self-visible), claim it, call fence_storage_key_for_deletion -> holds per-key advisory xact lock and an uncommitted fence row. B (own txn): INSERT documents row with storage_key K (own row).",
+      "sync": "state-based, in-database: A polls pg_locks joined to pg_stat_activity (application_name tags slmm-t6-a / slmm-t6-b) for B waiting on A's held advisory lock; B first polls for A's GRANTED advisory lock before issuing the INSERT; all polls bounded by statement_timeout",
+      "pass": "A observes exactly one waiter for its key lock; after A ROLLBACKs B's INSERT completes successfully (B sees no committed fence); both sessions end in ROLLBACK; T6-R08 residue clean",
+      "blocked_or_fail": "pg_locks/pg_stat_activity introspection unavailable (BLOCKED), B raised 23514 (implies a committed fence -> pre-existing residue, fail closed), B hit lock_timeout before A released (sync failure -> BLOCKED), any COMMIT"
+    },
+    {
+      "id": "T6-R02", "group": "G7 fence vs reference write", "env": "R",
+      "title": "same serialisation proven for a second source (payments.proof_key INSERT)",
+      "setup": "identical to R01 with payments fixture inserted by B",
+      "sync": "same pg_locks state protocol",
+      "pass": "as R01; additionally B's insert row would have carried method constraints satisfied (use the corrected 'online' fixture value from b25555e)",
+      "blocked_or_fail": "as R01; also 23514 from payments_method_allowed indicates fixture drift -> BLOCKED (not a fence result)"
+    },
+    {
+      "id": "T6-R03", "group": "G7 fence vs reference write", "env": "R",
+      "title": "fence waits for an in-flight reference writer and re-checks freshly (returns fenced)",
+      "setup": "B (own txn) INSERTs documents row for key K and holds its transaction open (trigger holds the per-key lock). A (own txn) creates+claims its own request for K and calls fence -> blocks at the advisory lock. B polls pg_locks for A as waiter, then ROLLBACKs.",
+      "sync": "state-based: B detects A waiting; A never proceeds before B's rollback",
+      "pass": "waiter A observed by B; after B rollback A's fence returns 'fenced' (fresh post-wait snapshot under READ COMMITTED, per the documented behaviour at migration 20261017150000 lines 92-96); both sessions ROLLBACK; residue clean",
+      "blocked_or_fail": "A returned blocked_* (would mean a committed reference exists -> residue/fail closed), A never blocked (sync failure), any COMMIT"
+    },
+    {
+      "id": "T6-R04", "group": "G8 bounded waits", "env": "R",
+      "title": "lock_timeout produces a bounded, fail-closed wait (55P03), never an open-ended hang",
+      "setup": "A holds the per-key advisory xact lock (via its own fence on its own request); B sets lock_timeout='3s' and attempts the documents INSERT",
+      "sync": "B pre-waits for A's granted lock (state poll), then attempts",
+      "pass": "B fails with SQLSTATE 55P03 after ~3s (no 40P01), B's wrapper issues ROLLBACK, A observes the waiter then ROLLBACKs, residue clean",
+      "blocked_or_fail": "deadlock 40P01, wait longer than lock_timeout without error, session left open"
+    },
+    {
+      "id": "T6-R05", "group": "G9 duplicate creation serialisation", "env": "R",
+      "title": "two sessions creating a request for the same fresh key serialise on the per-key advisory lock",
+      "setup": "A (authenticated identity for t6 owner) begins and calls request_storage_deletion(K) (own row uncommitted); B calls it for the same K",
+      "sync": "A polls pg_locks for B waiting; A ROLLBACKs; B completes",
+      "pass": "B's wait observed; after A's rollback B creates its own request (no committed duplicate exists); both ROLLBACK; residue clean",
+      "blocked_or_fail": "B raised before waiting, deadlock, any COMMIT, residue nonzero",
+      "note": "cross-session uniqueness/idempotency under COMMIT is L08a/L08b, not testable rollback-only"
+    },
+    {
+      "id": "T6-R06", "group": "G10 session hygiene", "env": "R",
+      "title": "zero-commit enforcement (statement allowlist)",
+      "setup": "runner inspects its own statement log for both sessions",
+      "sync": "n/a - continuous",
+      "pass": "no COMMIT statement ever issued in either session; only BEGIN/SET/SELECT/INSERT/UPDATE/DELETE/DO/ROLLBACK present",
+      "blocked_or_fail": "any COMMIT anywhere -> immediate case-set FAIL + residue"
+    },
+    {
+      "id": "T6-R07", "group": "G10 session hygiene", "env": "R",
+      "title": "no open transactions or retained advisory locks after all R cases",
+      "setup": "read-only query after both sessions closed",
+      "sync": "n/a",
+      "pass": "zero pg_stat_activity backends with application_name LIKE 'slmm-t6-%'; zero backends with xact_start NOT NULL among them; consequently zero advisory locks attributable to T6",
+      "blocked_or_fail": "any surviving backend or lock -> FAIL, and operator runs recovery (idle_in_transaction_session_timeout / pg_terminate_backend as last resort, recorded)"
+    },
+    {
+      "id": "T6-R08", "group": "G10 residue", "env": "R",
+      "title": "post-rollback zero-residue check over all relevant relations (separate READ ONLY session)",
+      "setup": "slmm-storage-deletion-t6-residue.sql: BEGIN ... READ ONLY; counts over the ten relations using t6 owner ids + key prefix, plus session/lock checks",
+      "sync": "runs last, after both sessions disconnected",
+      "pass": "all ten relation counts = 0 AND zero t6 backends AND zero t6-attributable advisory locks",
+      "blocked_or_fail": "any nonzero count -> fail-closed RAISE (never a PASS)"
+    },
+    {
+      "id": "T6-C01", "group": "G11 committed-fixture races on TEST", "env": "C",
+      "title": "L01 single-claim race repeated on TEST with committed fixture + cleanup",
+      "sync": "as L01",
+      "pass": "as L01 AND post-cleanup residue zero AND scheduler/cron confirmed inactive before and after",
+      "blocked_or_fail": "as L01, or cleanup leaves any row, or scheduler activity detected",
+      "status": "BLOCKED - requires separate approval to commit synthetic rows to TEST"
+    },
+    {
+      "id": "T6-C02", "group": "G11 committed-fixture races on TEST", "env": "C",
+      "title": "L05 batch disjointness repeated on TEST with committed fixtures + cleanup",
+      "sync": "as L05",
+      "pass": "as L05 AND cleanup residue zero",
+      "blocked_or_fail": "as L05",
+      "status": "BLOCKED - requires separate approval"
+    },
+    {
+      "id": "T6-C03", "group": "G11 committed-fixture races on TEST", "env": "C",
+      "title": "committed fence rejects a cross-session reference insert (the rejection outcome untestable rollback-only)",
+      "setup": "A commits a fence for key K (via fence_storage_key_for_deletion on its own claim, then COMMIT); B INSERTs a documents reference for K -> must raise 23514 with the exact fence message; then cleanup: explicit DELETE of the fence row + request row, verified, then residue",
+      "pass": "B rejected with exact SQLSTATE 23514 + exact message 'Storage key is fenced for deletion.'; cleanup verified; residue zero",
+      "blocked_or_fail": "insert succeeded (fence not enforced cross-session), wrong error, cleanup incomplete",
+      "status": "BLOCKED - requires separate approval (committed fence row on TEST, even transiently)"
+    }
+  ],
+  "rules": [
+    "A case that was not executed is 'NOT RUN' - never PASS.",
+    "BLOCKED is a terminal recorded outcome with a reason, not a failure and not a pass.",
+    "Every R-case result must be echoed as a single JSON line from each session and captured to a file with SHA-256 recorded (fixes the T5 evidence gap).",
+    "ON_ERROR_STOP=1 in both sessions; any unexpected SQLSTATE aborts the case set and triggers the residue check.",
+    "The verdict block raises an exception when any expected PASS condition is unmet (mirrors the T5 raise-on-false contract)."
+  ]
+}
