@@ -317,9 +317,11 @@ BLOCKED.**
 ### 8. Corrected candidate v3 prepared (2026-10-20) — NOT EXECUTION-APPROVED, NOT EXECUTED
 
 - **New file:** `test-harness/t6-checkpoint/t6-runner-candidate-v3.ps1`.
-  **Current (final) revision: SHA-256 `f4e10f765448811979bf9bbbc3d563b3b48d2d79dad08037e2e49308fde334e1`, 119524 bytes, 2189 lines.**
+  **Current (final) revision: SHA-256 `30e31c1d2c1f14f04bdff78cfd42fa466cb613efa923f099157a347a649ba97c`, 139325 bytes, 2520 lines.**
   The earlier v3 revisions (SHA-256 `5faae6ebc0a1e422b465b369ab37da8b3049f88190c81eb2f2a00794da21457a`, 95610 bytes / 1809 lines, and SHA-256
-  `deb84e0f09b56133e8b282adaae6f40e6f82e58b7f2becc6601b5a9a04228e8b`, 108466 bytes / 2016 lines) are superseded and are recorded in
+  `deb84e0f09b56133e8b282adaae6f40e6f82e58b7f2becc6601b5a9a04228e8b`, 108466 bytes / 2016 lines, and SHA-256
+  `f4e10f765448811979bf9bbbc3d563b3b48d2d79dad08037e2e49308fde334e1`, 119524 bytes / 2189 lines, and SHA-256
+  `c3b8151575d377f68cf64b7719b2c0807c7aeeedcd84c7f8fc8f36853b37d017`, 135905 bytes / 2469 lines) are superseded and are recorded in
   `ARTIFACT_MANIFEST.md` for provenance. Candidate **v1**
   (`7161bd7d…eec9cc`, 48231 bytes), candidate **v2**
   (`b5a90be2…55bce`, 54620 bytes) and the original recovered wrapper
@@ -453,10 +455,10 @@ corrected in the final revision.
   `fsync` and every other server parameter are untouched; the lab still uses
   initdb/pg_ctl defaults, and the option string is still exactly
   `"-p $Port -c listen_addresses=127.0.0.1 -c logging_collector=off"`.
-- **Static validation only:** PowerShell AST parse **0 errors / 13391
-  tokens**; the candidate's own `-SelfTest` mode reports **164/164 PASS, exit
+- **Static validation only:** PowerShell AST parse **0 errors / 15442
+  tokens**; the candidate's own `-SelfTest` mode reports **196/196 PASS, exit
   0** (the 62 v2 checks preserved + 68 new C2c/C2d/C2e/C2f checks + 34 new C2g
-  parameter-binding checks).
+  parameter-binding checks + 32 new C2h main-path-initialisation and parameter-binding checks).
   **No PostgreSQL was started, no database was contacted, the runner was not
   executed, port 15432 was never bound and the port-5432 service was
   untouched.**
@@ -516,13 +518,75 @@ corrected in the final revision.
   5. the remaining failures were consequences of the above and cleared with
      them.
 - **No assertion was removed or skipped.** All 34 C2g assertions pass.
-- **The self-test total is now 164/164 PASS, exit 0** (62 v2 checks
-  preserved + 68 C2c/C2d/C2e/C2f + 34 C2g). AST: **0 errors / 13391 tokens**.
+- **The self-test total is now 196/196 PASS, exit 0** (62 v2 checks
+  preserved + 68 C2c/C2d/C2e/C2f + 34 C2g + 32 C2h). AST: **0 errors / 15442 tokens**.
+
+### 8b. Main-path initialisation repair and the C2h regression block (2026-10-20)
+
+- **The one-shot execution attempt of 2026-10-20 20:15 IST ended with wrapper
+  exit code 2 (BLOCKED).** The `-EvidenceRoot` repair worked: the invocation
+  bound, the candidate body ran, and it created its evidence directory under
+  `D:\SLMM-T6-EVIDENCE\t6-run-20261020-201516-88ef8d45\`. The run then
+  aborted at the **first** step with
+  `FAILED: The variable '$script:ExitCodes' cannot be retrieved because it has
+  not been set.`
+- **Root cause.** `$script:ExitCodes` was **never initialised**. Under
+  `Set-StrictMode -Version Latest` the main path's first assignment
+  (`$script:ExitCodes["initdb"] = ...`) raised a terminating error, so the run
+  stopped **before `pg_ctl start`**. **No PostgreSQL cluster was ever started**,
+  port 15432 was never bound, and **all 12 Group-L cases remained NOT RUN**.
+  The candidate's ownership-verified teardown removed only its own disposable
+  lab tree. Evidence preserved under
+  `D:\SLMM-T6-EVIDENCE\launcher-20261020-201457-c2476264\` and
+  `D:\SLMM-T6-EVIDENCE\t6-run-20261020-201516-88ef8d45\`.
+- **Correction.** `$script:ExitCodes = @{}` was added to the script-scope
+  initialisation block, alongside `$script:stFail`, `$script:RunId`,
+  `$script:EvidenceDir`, `$script:LogPath`, `$script:LogLines` and
+  `$script:CaptureReady`. This is the **only functional change** to the
+  candidate; every other edit is inside the C2h self-test block.
+- **C2h REGRESSION BLOCK (new offline assertions).**
+  1. **An AST-based check** that every script-scope variable **read** in the
+     main execution path is **initialised before that read**. The proof
+     required is not a textual assignment somewhere in the file: an
+     initialisation counts only if it is an **unconditional, top-level
+     assignment whose position precedes the first read**. A variable assigned
+     **inside a function** (deliberately assigned during execution) is
+     accepted only because the mocked dry run below proves it is set before
+     it is read; a **conditional** initialisation is reported as unreliable.
+  2. **A mocked main-path dry run.** The candidate is copied to a scratch file
+     whose `Invoke-Native`, `Assert-PortFree`, `Get-LabClusterState`,
+     `Stop-LabClusterIfOwned` and `Remove-LabTree` are replaced by mocks, and
+     the child runs with `TEMP` redirected into a sandbox. The run therefore
+     exercises **parameter binding and the whole main path** -- including
+     `initdb`, `pg_ctl start`, `pg_isready`, the identity check, bootstrap,
+     preflight, the Node step, the residue re-check, the evidence copy, the
+     verdict and the teardown -- while **initdb, pg_ctl, psql, Node and every
+     database operation are never invoked** and no real process is started.
+     The dry run asserts that the main path reached the Node runner, that the
+     verdict was **PASS**, that only port **15432** was ever asked about
+     (**5432 was never requested**), that the teardown touched only the
+     sandbox laboratory, and that no `postgres.exe` process appeared.
+  3. **An explicit binding proof for every externally supported parameter.**
+     `-Confirm` is proven by a mocked run that is **refused** when the token is
+     omitted; `-Keep` is proven by a mocked run that **keeps** the laboratory
+     instead of tearing it down; `-EvidenceRoot` is proven by the dry run
+     honouring it; `-SelfTest` is proven by the fact that the self-test is
+     itself entered through it, and by the C2g parameter-surface assertions.
+     **All four parameters bind correctly.**
+- **Exhaustive audit for other main-path-only defects.** Every script-scope
+  variable read in the main path was classified: `EvidenceDir`, `LabRoot`,
+  `LogPath` and `RunId` are initialised at script scope before their first
+  read, and `ExitCodes` now is too. A per-scope scan of **every function** in
+  the file found **no local variable read before assignment**. **No unresolved
+  main-path-only defect was found.**
+- **All previously passing C2b-C2g assertions are preserved**, together with
+  the bounded capture, timeout, ownership, port, digest and evidence
+  protections.
 
 ### 9. Next action (single, concrete)
 
 Review `test-harness/t6-checkpoint/t6-runner-candidate-v3.ps1` (SHA-256
-`f4e10f765448811979bf9bbbc3d563b3b48d2d79dad08037e2e49308fde334e1`) and `ARTIFACT_MANIFEST.md` §1, then approve (or reject) that checksum
+`30e31c1d2c1f14f04bdff78cfd42fa466cb613efa923f099157a347a649ba97c`) and `ARTIFACT_MANIFEST.md` §1, then approve (or reject) that checksum
 as the executable artifact, and grant a fresh, separate one-shot execution
 approval with `-EvidenceRoot` pointing outside `%TEMP%`. Until then T6 stays
 **BLOCKED**.

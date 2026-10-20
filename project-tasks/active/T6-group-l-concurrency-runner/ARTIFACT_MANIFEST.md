@@ -213,15 +213,17 @@ initdb/pg_ctl defaults.
 | Item | Value |
 |---|---|
 | File | `test-harness/t6-checkpoint/t6-runner-candidate-v3.ps1` (new file) |
-| **Current (final) SHA-256** | `f4e10f765448811979bf9bbbc3d563b3b48d2d79dad08037e2e49308fde334e1` |
-| **Current bytes / lines** | **119524 bytes / 2189 lines** |
+| **Current (final) SHA-256** | `30e31c1d2c1f14f04bdff78cfd42fa466cb613efa923f099157a347a649ba97c` |
+| **Current bytes / lines** | **139325 bytes / 2520 lines** |
 | Historical v3 revision SHA-256 (a) | `5faae6ebc0a1e422b465b369ab37da8b3049f88190c81eb2f2a00794da21457a` (95610 bytes / 1809 lines) -- superseded, retained here for provenance |
 | Historical v3 revision SHA-256 (b) | `deb84e0f09b56133e8b282adaae6f40e6f82e58b7f2becc6601b5a9a04228e8b` (108466 bytes / 2016 lines) -- superseded, retained here for provenance |
+| Historical v3 revision SHA-256 (c) | `f4e10f765448811979bf9bbbc3d563b3b48d2d79dad08037e2e49308fde334e1` (119524 bytes / 2189 lines) -- superseded, retained here for provenance |
+| Historical v3 revision SHA-256 (d) | `c3b8151575d377f68cf64b7719b2c0807c7aeeedcd84c7f8fc8f36853b37d017` (135905 bytes / 2469 lines) -- superseded, retained here for provenance |
 | Derived from | candidate v2 `t6-runner-candidate-v2.ps1` (`b5a90be2…55bce`, 54620 bytes) — **unmodified**; candidate v1 (`7161bd7d…eec9cc`) and the original recovered `t6-runner.ps1` (`fac7926d…0894c`) are also **unmodified** |
 | Line delta vs. v2 -- historical v3 revision | 1040 → 1809 lines (59 removed, 828 added) |
-| Line delta vs. v2 -- current final revision | 1040 → 2189 lines (66 removed, 1215 added) |
-| Static validation | PowerShell AST parse: **0 errors / 13391 tokens**; `-SelfTest`: **164/164 PASS, exit 0** (the 62 v2 checks preserved + 68 new C2c/C2d/C2e/C2f checks + 34 new C2g parameter-binding checks) |
-| Mutation testing | 8/8 mutants **killed** (digest presence, digest validity, digest-vs-evidence, evidence byte-identity, capture-trust predicate, Node-step gate removal, Node-step gate always-throws, gate ordering) |
+| Line delta vs. v2 -- current final revision | 1040 → 2520 lines (66 removed, 1546 added) |
+| Static validation | PowerShell AST parse: **0 errors / 15442 tokens**; `-SelfTest`: **196/196 PASS, exit 0** (the 62 v2 checks preserved + 68 new C2c/C2d/C2e/C2f checks + 34 new C2g parameter-binding checks + 32 new C2h main-path-initialisation and parameter-binding checks) |
+| Mutation testing | 8/8 mutants **killed** (digest presence, digest validity, digest-vs-evidence, evidence byte-identity, capture-trust predicate, Node-step gate removal, Node-step gate always-throws, gate ordering), plus 4/4 C2h mutants **killed** (initialisation removed, initialisation moved after the main path, initialisation made conditional, initialisation given the wrong type) |
 | Status | **CANDIDATE v3 — awaiting review and a fresh checksum approval** |
 
 **Three corrections.** The first two are the defects found by the final
@@ -325,6 +327,38 @@ unbalanced brace (the extracted prefix is now **AST-verified balanced**); and
 two path expectations compared against the **8.3 short form** of `%TEMP%`
 while the candidate canonicalises with `GetFullPath` (both sides are now
 canonicalised). **No assertion was removed or skipped.**
+
+#### C2h -- main-path initialisation, and the BLOCKED execution it explains
+
+The one-shot execution attempt of 2026-10-20 20:15 IST **ended with wrapper
+exit code 2 (BLOCKED)**. The `-EvidenceRoot` repair worked -- the invocation
+bound and the candidate created its evidence directory under
+`D:\SLMM-T6-EVIDENCE\t6-run-20261020-201516-88ef8d45\` -- but the run then
+aborted at the **first** step with `FAILED: The variable '$script:ExitCodes'
+cannot be retrieved because it has not been set.`
+
+`$script:ExitCodes` was **never initialised**; under
+`Set-StrictMode -Version Latest` the main path's first assignment raised a
+terminating error, so the run stopped **before `pg_ctl start`**. **No
+PostgreSQL cluster was ever started**, port 15432 was never bound and **all 12
+Group-L cases remained NOT RUN**. The candidate's ownership-verified teardown
+removed only its own disposable lab tree. Evidence preserved under
+`D:\SLMM-T6-EVIDENCE\launcher-20261020-201457-c2476264\` and
+`D:\SLMM-T6-EVIDENCE\t6-run-20261020-201516-88ef8d45\`.
+
+| # | Correction | Effect |
+|---|---|---|
+| C2h-1 | `$script:ExitCodes = @{}` added to the script-scope initialisation block, beside `$script:stFail`, `$script:RunId`, `$script:EvidenceDir`, `$script:LogPath`, `$script:LogLines` and `$script:CaptureReady` | The main path can index the exit-code table. This is the **only functional change** to the candidate; every other edit is inside the C2h self-test block. |
+| C2h-2 | An **AST-based** assertion that every script-scope variable **read** in the main execution path is **initialised before that read** | A textual assignment somewhere in the file is **not** accepted as proof: the initialisation must be an **unconditional, top-level assignment whose position precedes the first read**. A variable assigned **inside a function** (deliberately assigned during execution) is accepted only because the mocked dry run proves it is set before it is read; a **conditional** initialisation is reported as unreliable. |
+| C2h-3 | A **mocked main-path dry run** | The candidate is copied to a scratch file whose `Invoke-Native`, `Assert-PortFree`, `Get-LabClusterState`, `Stop-LabClusterIfOwned` and `Remove-LabTree` are mocked, and the child runs with `TEMP` redirected into a sandbox. It exercises **parameter binding and the whole main path** -- `initdb`, `pg_ctl start`, `pg_isready`, the identity check, bootstrap, preflight, the Node step, the residue re-check, the evidence copy, the verdict and the teardown -- while **initdb, pg_ctl, psql, Node and every database operation are never invoked** and no real process is started. It asserts the Node step was reached, the verdict was **PASS**, only port **15432** was ever requested (**5432 never**), the teardown touched only the sandbox laboratory, and no `postgres.exe` appeared. |
+
+| C2h-4 | An explicit **binding proof for every externally supported parameter** | `-Confirm` is proven by a mocked run that is **refused** when the token is omitted; `-Keep` is proven by a mocked run that **keeps** the laboratory instead of tearing it down; `-EvidenceRoot` is proven by the dry run honouring it; `-SelfTest` is proven by the fact that the self-test is itself entered through it and by the C2g parameter-surface assertions. **All four bind correctly.** |
+
+An **exhaustive audit** for other main-path-only defects classified every
+script-scope variable read in the main path (`EvidenceDir`, `LabRoot`,
+`LogPath`, `RunId`, `ExitCodes`) and scanned **every function** in the file for
+a local variable read before assignment. **No unresolved main-path-only defect
+was found.**
 
 **No PostgreSQL setting was changed** and the option string is unchanged.
 

@@ -311,6 +311,12 @@ $script:EvidenceDir = $null
 $script:LogPath   = $null
 $script:LogLines  = New-Object System.Collections.Generic.List[string]
 $script:CaptureReady = $false
+# C2h: the exit-code table MUST be initialised at script scope. The main
+# execution path indexes it ($script:ExitCodes["initdb"] = ...) and
+# Set-StrictMode -Version Latest makes indexing an uninitialised $script:
+# variable a terminating error, which aborted the 2026-10-20 20:15 IST
+# one-shot run with exit code 2 before `pg_ctl start` was ever reached.
+$script:ExitCodes = @{}
 
 function Throw-Blocked([string]$m) { throw "T6 BLOCKED: $m" }
 function Step([string]$m) { Write-Host "[T6] $m"; Log-Line "[T6] $m" }
@@ -1880,6 +1886,331 @@ exit 77
       Remove-Item Env:\T6_PARAM_PROBE -ErrorAction SilentlyContinue
       if ($gWork -and $gWork.StartsWith($env:TEMP) -and $gWork -like "*t6-paramprobe-*") {
         Remove-Item -Recurse -Force -LiteralPath $gWork -ErrorAction SilentlyContinue
+      }
+    }
+  }
+
+  # ===========================================================================
+  # C2h REGRESSION: main-path initialisation correctness.
+  #
+  # The one-shot execution of 2026-10-20 20:15 IST ended with wrapper exit
+  # code 2 because $script:ExitCodes was NEVER INITIALISED: under
+  # Set-StrictMode -Version Latest the first assignment
+  # ($script:ExitCodes["initdb"] = ...) raised "The variable
+  # '$script:ExitCodes' cannot be retrieved because it has not been set." and
+  # aborted the run before `pg_ctl start`, so NO cluster was ever started and
+  # all 12 Group-L cases remained NOT RUN.
+  #
+  # The assertions below are OFFLINE and static: they parse this script's own
+  # syntax tree. For every script-scope variable READ in the main execution
+  # path the initialisation must be an UNCONDITIONAL top-level assignment
+  # that occurs BEFORE the first read. A mere textual assignment somewhere in
+  # the file is NOT accepted as proof. A variable that is deliberately
+  # assigned during execution (inside a function) is accepted only because
+  # the mocked main-path dry run proves it is set before it is read.
+  # ===========================================================================
+  Write-Host "--- C2h main-path initialisation regression (offline)"
+
+  $hSelfPath = $PSCommandPath
+  $hSelfText = $null
+  try { if ($hSelfPath) { $hSelfText = [IO.File]::ReadAllText($hSelfPath) } } catch { $hSelfText = $null }
+  $hTok = $null; $hErr = $null; $hAst = $null
+  if ($hSelfText) { $hAst = [System.Management.Automation.Language.Parser]::ParseInput($hSelfText, [ref]$hTok, [ref]$hErr) }
+  Check "the candidate's own source is available for AST inspection" ($null -ne $hAst)
+
+  if ($hAst) {
+    # The main execution path is the top-level try/catch/finally.
+    $hMain = $null
+    foreach ($st in $hAst.EndBlock.Statements) {
+      if ($st -is [System.Management.Automation.Language.TryStatementAst]) { $hMain = $st; break }
+    }
+    Check "the main execution path could be located in the syntax tree" ($null -ne $hMain)
+
+    if ($null -ne $hMain) {
+      $hMainStart = $hMain.Extent.StartOffset
+      $hMainEnd   = $hMain.Extent.EndOffset
+
+      # Is this assignment nested in a conditional or a loop? Such an
+      # assignment CANNOT be relied upon to have run.
+      function Get-CondKind($node) {
+        $n = $node.Parent
+        while ($null -ne $n) {
+          if ($n -is [System.Management.Automation.Language.IfStatementAst])     { return "if" }
+          if ($n -is [System.Management.Automation.Language.WhileStatementAst])   { return "while" }
+          if ($n -is [System.Management.Automation.Language.ForStatementAst])     { return "for" }
+          if ($n -is [System.Management.Automation.Language.ForEachStatementAst]) { return "foreach" }
+          if ($n -is [System.Management.Automation.Language.SwitchStatementAst]) { return "switch" }
+          if ($n -is [System.Management.Automation.Language.CatchClauseAst])     { return "catch" }
+          $n = $n.Parent
+        }
+        return "none"
+      }
+      function Get-InFunction($node) {
+        $n = $node.Parent
+        while ($null -ne $n) {
+          if ($n -is [System.Management.Automation.Language.FunctionDefinitionAst]) { return $true }
+          $n = $n.Parent
+        }
+        return $false
+      }
+
+      # Every script-scope variable READ in the main path, with its first read.
+      $hReads = @{}
+      foreach ($v in $hAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] -and $n.VariablePath.UserPath -like "script:*" }, $true)) {
+        $o = $v.Extent.StartOffset
+        if ($o -lt $hMainStart -or $o -gt $hMainEnd) { continue }
+        $name = $v.VariablePath.UserPath.Substring(7)
+        if (-not $hReads.ContainsKey($name)) { $hReads[$name] = $o }
+      }
+      # Every script-scope ASSIGNMENT, classified.
+      $hAssigns = @{}
+      foreach ($a in $hAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {
+        $l = $a.Left
+        if (($l -is [System.Management.Automation.Language.VariableExpressionAst]) -and ($l.VariablePath.UserPath -like "script:*")) {
+          $name = $l.VariablePath.UserPath.Substring(7)
+          if (-not $hAssigns.ContainsKey($name)) {
+            $hAssigns[$name] = New-Object System.Collections.Generic.List[object]
+          }
+          $hAssigns[$name].Add([pscustomobject]@{
+            Offset = $a.Extent.StartOffset
+            Line   = $a.Extent.StartLineNumber
+            InFunc = (Get-InFunction $a)
+            Cond   = (Get-CondKind $a)
+          })
+        }
+      }
+
+      $hUninitialised = @()
+      $hFunctionAssigned = @()
+      foreach ($name in ($hReads.Keys | Sort-Object)) {
+        $firstRead = $hReads[$name]
+        $list = @()
+        if ($hAssigns.ContainsKey($name)) { $list = $hAssigns[$name] }
+        # An UNCONDITIONAL, top-level assignment BEFORE the first read.
+        $good = @($list | Where-Object { ($_.InFunc -eq $false) -and ($_.Cond -eq "none") -and ($_.Offset -lt $firstRead) })
+        if ($good.Count -gt 0) {
+          Check ("`$script: variable {0} is initialised before its first main-path read" -f $name) $true
+          continue
+        }
+        # Assigned DURING execution, inside a function: accepted only because
+        # the mocked main-path dry run below proves it is set before it is read.
+        $inFunc = @($list | Where-Object { $_.InFunc -eq $true })
+        if ($inFunc.Count -gt 0) {
+          $hFunctionAssigned += $name
+          Check ("`$script: variable {0} is assigned during execution (function at line {1})" -f $name, $inFunc[0].Line) $true
+          continue
+        }
+        # A CONDITIONAL assignment cannot be relied upon.
+        $cond = @($list | Where-Object { ($_.InFunc -eq $false) -and ($_.Cond -ne "none") })
+        if ($cond.Count -gt 0) {
+          $hUninitialised += $name
+          Check ("`$script: variable {0} is only assigned CONDITIONALLY (line {1}) -- not a reliable initialisation" -f $name, $cond[0].Line) $false
+          continue
+        }
+        $hUninitialised += $name
+        Check ("`$script: variable {0} is NEVER initialised before its first main-path read" -f $name) $false
+      }
+      Check "no script-scope variable is read in the main path before being initialised" ($hUninitialised.Count -eq 0)
+      Check "the `$script:ExitCodes hashtable is initialised at script scope" ($hAssigns.ContainsKey("ExitCodes"))
+
+      # ------------------------------------------------------------------
+      # C2h-b: MOCKED main-path dry run.
+      #
+      # The candidate is copied to a scratch file and EVERY external command
+      # is replaced by a mock, so initdb, pg_ctl, psql, Node and the database
+      # are NEVER invoked. The child runs in a sandbox TEMP, so the disposable
+      # laboratory and the evidence directory are created inside the sandbox
+      # and nothing outside it is touched.
+      # ------------------------------------------------------------------
+      $hMockDir  = Join-Path $env:TEMP ("t6-mainpath-" + [guid]::NewGuid().ToString("N"))
+      # %TEMP% is the 8.3 SHORT form; the child canonicalises every path it
+      # prints with [IO.Path]::GetFullPath, so the expectations are
+      # canonicalised too and both sides carry the LONG form.
+      $hMockDir  = [IO.Path]::GetFullPath($hMockDir)
+      $hMockTemp = [IO.Path]::GetFullPath((Join-Path $hMockDir "AppData\Local\Temp"))
+      $hMockPrep = [IO.Path]::GetFullPath((Join-Path $hMockTemp "opencode\t6-prep"))
+      $hMockEv   = [IO.Path]::GetFullPath((Join-Path $hMockDir "evidence"))
+      New-Item -ItemType Directory -Force -Path $hMockPrep | Out-Null
+      New-Item -ItemType Directory -Force -Path $hMockEv   | Out-Null
+      try {
+        # The main path requires the prep directory to exist. Copy the six
+        # verified files so the check is realistic; the mock never reads them.
+        $hRealPrep = Join-Path $env:TEMP "opencode\t6-prep"
+        foreach ($f in @("t6-local-runner.mjs","t6-lab-setup.sql","t6-preflight-lab.sql","t6-lab-residue.sql","t6-sync.sql","T6_LAB_IMPLEMENTATION_PLAN.md")) {
+          $src = Join-Path $hRealPrep $f
+          if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination (Join-Path $hMockPrep $f) -Force -ErrorAction SilentlyContinue }
+        }
+
+        $hMockSrc = @'
+# ===== MOCKS: no initdb / pg_ctl / psql / node / database is contacted =====
+function Get-MockPath([string]$n) { Join-Path $env:TEMP $n }
+function Invoke-Native {
+  param(
+    [Parameter(Mandatory = $true)][string]$Exe,
+    [string[]]$ArgList = @(),
+    [string]$LogFile = $null,
+    [switch]$Quiet,
+    [int]$TimeoutSeconds = 0
+  )
+  Add-Content -LiteralPath (Get-MockPath "mock-invocations.log") -Value ("INVOKE|" + $Exe + "|" + ($ArgList -join " ")) -Encoding UTF8
+  $out = New-Object System.Collections.Generic.List[string]
+  $err = New-Object System.Collections.Generic.List[string]
+  $code = 0
+  if (($ArgList -join " ") -like "*current_setting*port*") {
+    $out.Add("15432|127.0.0.1|" + [IO.Path]::GetFullPath((Join-Path $env:TEMP "opencode\t6lab\data")))
+  }
+  if ($Exe -like "*node*") {
+    $resFile = Join-Path $env:TEMP "opencode\t6lab\t6-lab-results.jsonl"
+    $lines = @()
+    foreach ($id in $ExpectedGroupLCases) { $lines += ('{"id":"' + $id + '","status":"PASS","detail":""}') }
+    Set-Content -LiteralPath $resFile -Value ($lines -join "`n") -Encoding UTF8
+    $sha = (Get-FileHash -LiteralPath $resFile -Algorithm SHA256).Hash.ToLowerInvariant()
+    $out.Add('{"summary":{"total":12,"pass":12,"fail":0,"blocked":0,"not_run":0,"harness_failed":false,"residue_failed":false}}')
+    $out.Add('{"results_file":"' + $resFile + '","results_sha256":"' + $sha + '"}')
+  }
+  return [pscustomobject]@{
+    ExitCode = $code; Stdout = $out.ToArray(); Stderr = $err.ToArray(); TimedOut = $false
+    StdoutTruncated = $false; StderrTruncated = $false
+    StdoutDiscarded = 0; StderrDiscarded = 0; CaptureIncomplete = $false
+  }
+}
+function Assert-PortFree {
+  param([int]$P, [switch]$UseInjection, [bool]$InjectedListener = $false)
+  Add-Content -LiteralPath (Get-MockPath "mock-ports.log") -Value ([string]$P) -Encoding UTF8
+}
+function Get-LabClusterState {
+  param([string]$LabRootPath, [string]$DataDirPath)
+  return [pscustomobject]@{ State="none"; Pid=$null; Port=$null; DataDir=$null; Reason="mock: no live cluster"; Owned=$false; ProcessAlive=$false }
+}
+function Stop-LabClusterIfOwned {
+  param([string]$LabRootPath, [string]$DataDirPath, [string]$PgCtlPath)
+  return [pscustomobject]@{ Attempted=$false; Stopped=$false; State="none"; Reason="mock: nothing to stop"; ExitCode=$null }
+}
+function Remove-LabTree {
+  param([string]$Path)
+  Add-Content -LiteralPath (Get-MockPath "mock-removals.log") -Value $Path -Encoding UTF8
+}
+'@
+
+        # Insert the mocks immediately BEFORE the main execution path, so the
+        # later definitions override the real ones.
+        $hScratch = Join-Path $hMockDir "scratch-mainpath.ps1"
+        $hMockText = $hSelfText.Substring(0, $hMainStart) + "`r`n" + $hMockSrc + "`r`n" + $hSelfText.Substring($hMainStart)
+        Set-Content -LiteralPath $hScratch -Value $hMockText -Encoding UTF8
+
+        # The scratch copy must parse cleanly before it is run.
+        $hSTok = $null; $hSErr = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile($hScratch, [ref]$hSTok, [ref]$hSErr)
+        Check "the mocked scratch copy parses without errors" ($hSErr.Count -eq 0)
+
+        if ($hSErr.Count -eq 0) {
+          $hBefore = @(Get-Process -Name postgres -ErrorAction SilentlyContinue).Count
+          $hSo = Join-Path $hMockDir "child.out"
+          $hSe = Join-Path $hMockDir "child.err"
+          $hSavedTemp = $env:TEMP
+          try {
+            $env:TEMP = $hMockTemp
+            $hArgStr = "-NoProfile -ExecutionPolicy Bypass -File `"$hScratch`" -Confirm I_APPROVE_LOCAL_T6 -EvidenceRoot `"$hMockEv`""
+            $hProc = Start-Process -FilePath "powershell.exe" -ArgumentList $hArgStr -NoNewWindow -PassThru -Wait `
+                        -RedirectStandardOutput $hSo -RedirectStandardError $hSe
+          }
+          finally { $env:TEMP = $hSavedTemp }
+          $hChildOut = [string](Get-Content -LiteralPath $hSo -Raw -ErrorAction SilentlyContinue)
+          $hChildErr = [string](Get-Content -LiteralPath $hSe -Raw -ErrorAction SilentlyContinue)
+          $hAfter = @(Get-Process -Name postgres -ErrorAction SilentlyContinue).Count
+
+          Check "the mocked main-path dry run exits 0 (verdict PASS)" ($hProc.ExitCode -eq 0)
+          Check "the mocked main-path dry run reported no undefined-variable error" (($hChildOut + $hChildErr) -notmatch "cannot be retrieved because it has not been set")
+          Check "the mocked main-path dry run honoured -EvidenceRoot" ($hChildOut -match ([regex]::Escape($hMockEv)))
+          Check "the mocked main-path dry run wrote no evidence outside the sandbox" (($hChildOut -notmatch ([regex]::Escape((Join-Path $env:TEMP "opencode\t6-evidence")))) -or (-not (Test-Path -LiteralPath (Join-Path $env:TEMP "opencode\t6-evidence"))))
+          Check "the mocked main-path dry run started no PostgreSQL process" ($hBefore -eq $hAfter)
+
+          $hInvocations = @()
+          $hInvFile = [IO.Path]::GetFullPath((Join-Path $hMockTemp "mock-invocations.log"))
+          if (Test-Path -LiteralPath $hInvFile) { $hInvocations = @(Get-Content -LiteralPath $hInvFile) }
+          Check "the mocked main path invoked initdb"    (@($hInvocations | Where-Object { $_ -like "*initdb*" }).Count -ge 1)
+          Check "the mocked main path invoked pg_ctl"    (@($hInvocations | Where-Object { $_ -like "*pg_ctl*" }).Count -ge 1)
+          Check "the mocked main path invoked the node runner" (@($hInvocations | Where-Object { $_ -like "*node*" }).Count -ge 1)
+          Check "the mocked main path invoked psql for the identity check" (@($hInvocations | Where-Object { $_ -like "*psql*" }).Count -ge 1)
+          Check "every external command went through the mock" (@($hInvocations | Where-Object { $_ -match "INVOKE\|" }).Count -ge 1)
+
+          $hPorts = @()
+          $hPortFile = [IO.Path]::GetFullPath((Join-Path $hMockTemp "mock-ports.log"))
+          if (Test-Path -LiteralPath $hPortFile) { $hPorts = @(Get-Content -LiteralPath $hPortFile) }
+          Check "the mocked main path only asked about port 15432" (@($hPorts | Where-Object { $_ -eq "15432" }).Count -ge 1)
+          Check "the mocked main path NEVER asked about port 5432" (@($hPorts | Where-Object { $_ -eq "5432" }).Count -eq 0)
+
+          $hRemovals = @()
+          $hRemFile = [IO.Path]::GetFullPath((Join-Path $hMockTemp "mock-removals.log"))
+          if (Test-Path -LiteralPath $hRemFile) { $hRemovals = @(Get-Content -LiteralPath $hRemFile) }
+          Check "the mocked main path tore down its own sandbox laboratory" ($hRemovals.Count -ge 1)
+          Check "the mocked teardown only targeted the sandbox laboratory" (@($hRemovals | Where-Object { $_ -notlike "*t6-mainpath-*" }).Count -eq 0)
+
+          $hSandboxLab = [IO.Path]::GetFullPath((Join-Path $hMockTemp "opencode\t6lab"))
+          Check "the sandbox laboratory still exists (the real Remove-LabTree never ran)" (Test-Path -LiteralPath $hSandboxLab)
+          $hVerdicts = @(Get-ChildItem -LiteralPath $hMockEv -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "verdict.*.json" })
+          Check "the mocked run produced a verdict document" ($hVerdicts.Count -ge 1)
+          if ($hVerdicts.Count -ge 1) {
+            $hVerdictText = [string](Get-Content -LiteralPath $hVerdicts[0].FullName -Raw)
+            Check "the mocked verdict is PASS" ($hVerdictText -match '"verdict"\s*:\s*"PASS"')
+          }
+
+          # ------------------------------------------------------------------
+          # C2h-c: every externally supported parameter must BIND.
+          #
+          #   -EvidenceRoot  proven above (the dry run honoured it).
+          #   -Confirm       proven below (a run WITHOUT it is refused).
+          #   -Keep          proven below (a run WITH it keeps the laboratory).
+          #   -SelfTest      proven by the fact that this very self-test was
+          #                   entered through it, and by the C2g parameter-surface
+          #                   assertions.
+          #
+          # Both extra runs use the same mocked scratch copy, so no database
+          # operation happens in either of them.
+          # ------------------------------------------------------------------
+
+          # (a) -Confirm binds: without the token the run must be REFUSED.
+          $hRemFile2 = [IO.Path]::GetFullPath((Join-Path $hMockTemp "mock-removals.log"))
+          if (Test-Path -LiteralPath $hRemFile2) { Remove-Item -Force -LiteralPath $hRemFile2 -ErrorAction SilentlyContinue }
+          $hSo3 = Join-Path $hMockDir "child-noconfirm.out"
+          $hSe3 = Join-Path $hMockDir "child-noconfirm.err"
+          $hSavedTemp = $env:TEMP
+          try {
+            $env:TEMP = $hMockTemp
+            $hArgStr3 = "-NoProfile -ExecutionPolicy Bypass -File `"$hScratch`" -EvidenceRoot `"$hMockEv`""
+            $hProc3 = Start-Process -FilePath "powershell.exe" -ArgumentList $hArgStr3 -NoNewWindow -PassThru -Wait `
+                        -RedirectStandardOutput $hSo3 -RedirectStandardError $hSe3
+          }
+          finally { $env:TEMP = $hSavedTemp }
+          $hChildOut3 = [string](Get-Content -LiteralPath $hSo3 -Raw -ErrorAction SilentlyContinue)
+          $hChildErr3 = [string](Get-Content -LiteralPath $hSe3 -Raw -ErrorAction SilentlyContinue)
+          Check "the -Confirm parameter binds (a run without it is refused)" ($hProc3.ExitCode -eq 2)
+          Check "the run without -Confirm was blocked for the missing confirmation" (($hChildOut3 + $hChildErr3) -match "missing -Confirm")
+
+          # (b) -Keep binds: with it, the laboratory is NOT torn down.
+          if (Test-Path -LiteralPath $hRemFile2) { Remove-Item -Force -LiteralPath $hRemFile2 -ErrorAction SilentlyContinue }
+          $hSo4 = Join-Path $hMockDir "child-keep.out"
+          $hSe4 = Join-Path $hMockDir "child-keep.err"
+          $hSavedTemp = $env:TEMP
+          try {
+            $env:TEMP = $hMockTemp
+            $hArgStr4 = "-NoProfile -ExecutionPolicy Bypass -File `"$hScratch`" -Confirm I_APPROVE_LOCAL_T6 -EvidenceRoot `"$hMockEv`" -Keep"
+            $hProc4 = Start-Process -FilePath "powershell.exe" -ArgumentList $hArgStr4 -NoNewWindow -PassThru -Wait `
+                        -RedirectStandardOutput $hSo4 -RedirectStandardError $hSe4
+          }
+          finally { $env:TEMP = $hSavedTemp }
+          $hChildOut4 = [string](Get-Content -LiteralPath $hSo4 -Raw -ErrorAction SilentlyContinue)
+          $hRemovals4 = @()
+          if (Test-Path -LiteralPath $hRemFile2) { $hRemovals4 = @(Get-Content -LiteralPath $hRemFile2) }
+          Check "the -Keep parameter binds (the run with it exits 0)" ($hProc4.ExitCode -eq 0)
+          Check "the -Keep run did NOT tear the laboratory down" ($hRemovals4.Count -eq 0)
+          Check "the -Keep run reported that the laboratory is kept" ($hChildOut4 -match "keeping")
+        }
+      }
+      finally {
+        if ($hMockDir -and $hMockDir.StartsWith($env:TEMP) -and $hMockDir -like "*t6-mainpath-*") {
+          Remove-Item -Recurse -Force -LiteralPath $hMockDir -ErrorAction SilentlyContinue
+        }
       }
     }
   }
