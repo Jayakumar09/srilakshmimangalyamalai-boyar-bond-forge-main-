@@ -185,7 +185,52 @@ approved). **No revision was promoted, edited or executed by this recovery.**
   explicit checksum approval, and (c) a separate one-shot execution approval
   before anything is run.
 
-### 5. Preserved constraints (unchanged by the recovery)
+### 5. First one-shot execution attempt (2026-10-20) — BLOCKED, 0 of 12 cases ran
+
+Two launcher attempts occurred.
+
+1. **First attempt (11:15–11:33 IST) — INTERRUPTED.** The agent-side waiting
+   parent was killed by a harness tool-call abort while the wrapper was inside
+   the `pg_ctl start` step. The wrapper died, the disposable postmaster was
+   orphaned, and it subsequently failed with the Windows `0xC0000142`
+   (`STATUS_DLL_INIT_FAILED`) fault in the autovacuum worker and the startup
+   process at 11:33:21. Evidence: `D:\SLMM-T6-EVIDENCE\launcher-20261020-111559-41599433\`
+   (`stdout.log`, `pg.log.INTERRUPTED-ATTEMPT`, `T6LAB_OWNER.INTERRUPTED-ATTEMPT`).
+2. **Second attempt (11:38–12:13 IST) — COMPLETED WITH EXIT CODE 2.** The
+   launcher was detached so an agent-side interrupt could not kill the run.
+   **PostgreSQL started correctly** on `127.0.0.1:15432` (`pg.log`:
+   `listening on IPv4 address "127.0.0.1", port 15432`, `database system is
+   ready to accept connections`) and **survived its first 5-minute
+   time-based checkpoint at 11:58:03 with no fault** — no `0xC0000142` occurred
+   in this attempt. The wrapper then **blocked inside `Invoke-Native`** at the
+   `pg_ctl start` step for 20 minutes with **0% CPU and no child processes**,
+   and was released only when the disposable cluster was stopped. It then
+   failed closed with **exit code 2**:
+   `T6 BLOCKED: cluster did not become ready on port 15432 (pg_isready exit 2)`,
+   followed by its own teardown (`pg_ctl stop -m fast`,
+   `removing disposable lab ...`). Evidence:
+   `D:\SLMM-T6-EVIDENCE\launcher-20261020-113741-b4d0aac5\` (`stdout.log`,
+   `exitcode.txt` = `exitcode=2`, `lab-pg.log.PRE-INTERVENTION`,
+   `candidate-run-log.WEDGED.log`, `process-snapshot.WEDGED.txt`).
+
+**Root cause of the block (C2b).** `Invoke-Native` captured native output with
+a PowerShell **pipeline** (`& $Exe @ArgList 2>&1`), which completes only at
+EOF. On Windows `pg_ctl start` does not exec the postmaster; it spawns
+`pg_ctl.exe -> cmd.exe /C "postgres.exe ..." -> postgres.exe`, and that
+long-lived `cmd.exe`/`postgres.exe` pair **inherits pg_ctl's stdout and stderr
+handles**, so the write end stays open for the life of the cluster and EOF
+never arrives. The saved `process-snapshot.WEDGED.txt` shows exactly that
+shape: `cmd.exe` (6200) as the parent of `postgres.exe` (9544), with `pg_ctl`
+already exited.
+
+**Outcome.** The disposable cluster was cleaned up (the candidate removed
+`%TEMP%\opencode\t6lab` itself). **All 12 Group-L cases remain NOT RUN** —
+no `t6-lab-results.jsonl`, no node log, no verdict file was ever produced, and
+no case is labelled PASS. The port-5432 service was never touched (PID 4828,
+same start time, same listeners). **Candidate v1 was executed and returned
+BLOCKED.**
+
+### 6. Preserved constraints (unchanged by the recovery)
 
 - **Approval boundaries.** Execution requires a fresh, explicit one-shot
   approval (`-Confirm I_APPROVE_LOCAL_T6`). Approval to *recover files* is
@@ -207,16 +252,245 @@ approved). **No revision was promoted, edited or executed by this recovery.**
   contact Supabase TEST (`nqadtfqyurkpmxcodswc`) or production
   (`sxpkutjkqfekqwpabgrk`), R2, Cloudflare or Workers; no production access.
 
-### 6. Next action (single, concrete)
+### 7. Corrected candidate v2 prepared (2026-10-20) — NOT EXECUTION-APPROVED
 
-Review `test-harness/t6-checkpoint/t6-runner-candidate.ps1` and
-`ARTIFACT_MANIFEST.md` §1 ("Corrected candidate wrapper"), then approve (or
-reject) that candidate's checksum
-`7161bd7d5dc998d566a946621405476cf8b0657a63eca1a468bd88e160eec9cc`
+- **New file:** `test-harness/t6-checkpoint/t6-runner-candidate-v2.ps1`
+  (SHA-256 `b5a90be2198b186a009971342155e6e4f5ba54cf5f66455d2e8d4bef9d655bce`,
+  54620 bytes, 1040 lines). **Candidate v1 (`7161bd7d…eec9cc`, 48231 bytes) is
+  UNMODIFIED**, and so is the original recovered wrapper `t6-runner.ps1`
+  (`fac7926d…0894c`).
+- **The single correction is C2b.** `Invoke-Native` now runs the child through
+  `System.Diagnostics.Process` with `RedirectStandardOutput`/
+  `RedirectStandardError` and drains both streams with `CopyToAsync()` into
+  **unbounded `MemoryStream`s**. The
+  wait is on the **direct child only**, bounded by an explicit timeout, so a
+  daemonised descendant that inherits the std handles can no longer stall the
+  wrapper.
+  - Exit-code handling is **preserved and strengthened**: the real exit code
+    is read from the `Process` object (PowerShell's `$LASTEXITCODE` is
+    unreliable with redirected output), and a **timeout is reported as a
+    distinct, non-zero outcome and is never treated as success**.
+  - stdout and stderr are still captured **separately** and preserved as
+    evidence, exactly as v1 did.
+  - Argument fidelity is preserved: the command line is built with the
+    standard `CommandLineToArgvW` quoting rules, so an argument containing
+    spaces, quotes or a trailing backslash arrives as exactly ONE argument.
+- **All other v1 corrections are carried over unchanged**: C1 (unquoted
+  `listen_addresses`, one splatted argument, cmd-metacharacter guard), C3
+  (explicit exit-code capture for every native tool; the stale-cluster stop is
+  checked and blocks deletion on failure), C4 (`Get-T6Verdict` — PASS requires
+  all eight native steps to exit 0, exactly the 12 Group-L ids recorded PASS,
+  the runner summary 12/12 with 0 fail / 0 blocked / 0 not_run, and the
+  evidence copy byte-identical and matching the runner's own digest), C5
+  (`Assert-LabPort` / `Assert-NotServiceTarget` keep the port-5432 service
+  unreachable), C6 (structural ownership-marker parsing, `postmaster.pid`
+  verification, failed stop blocks deletion), C7 (durable, uniquely named
+  evidence outside the disposable cluster).
+- **No PostgreSQL setting was changed** — `autovacuum`, `checkpoint_timeout`,
+  `fsync` and every other server parameter are untouched; the lab still uses
+  initdb/pg_ctl defaults.
+- **Offline regression test for the deadlock itself:**
+  `test-harness/t6-checkpoint/t6-deadlock-repro.ps1` (SHA-256
+  `865f3abc0e9e75cd1212dab9e5f3292a1b8760a9d9cc5f631473f73f70c1d88c`).
+  It reproduces the exact failure shape with `cmd.exe` + `ping` only — it never
+  starts PostgreSQL, never touches port 15432 and never touches the 5432
+  service — and asserts that (a) the v1 pipeline pattern blocks while a
+  descendant holds the pipe, (b) the v2 file-redirect pattern returns
+  promptly, and (c) a short deadline is reported as a TIMEOUT rather than as
+  success.
+- **Static validation only:** PowerShell AST parse **0 errors / 7057 tokens**;
+  the candidate's own `-SelfTest` mode reports **62/62 PASS, exit 0** (the 49
+  v1 safety tests preserved and extended with 13 process-handling tests). No
+  PostgreSQL was started, no database was contacted, the runner was not
+  executed, and the port-5432 service was untouched.
+- **Two defects were found by the candidate's own new tests and fixed before
+  delivery:** the resolved-constants block had been placed after the
+  self-test, so `$script:LabRoot` was unset during `-SelfTest`; and the
+  argument-fidelity test had used `powershell.exe -File`, which re-parses its
+  own command line and mangles a trailing backslash — that tested the target's
+  quoting rather than ours, so the test now uses `node`, which parses argv
+  with the standard rules.
+- **T6 remains BLOCKED.** Candidate v2 needs (a) review, (b) a fresh explicit
+  checksum approval, and (c) a separate one-shot execution approval. **All 12
+  Group-L cases remain NOT RUN.**
+
+### 8. Corrected candidate v3 prepared (2026-10-20) — NOT EXECUTION-APPROVED, NOT EXECUTED
+
+- **New file:** `test-harness/t6-checkpoint/t6-runner-candidate-v3.ps1`.
+  **Current (final) revision: SHA-256 `deb84e0f09b56133e8b282adaae6f40e6f82e58b7f2becc6601b5a9a04228e8b`, 108466 bytes, 2016 lines.**
+  The earlier v3 revision (SHA-256 `5faae6ebc0a1e422b465b369ab37da8b3049f88190c81eb2f2a00794da21457a`, 95610 bytes / 1809 lines) is
+  superseded and is recorded in `ARTIFACT_MANIFEST.md` for provenance. Candidate **v1**
+  (`7161bd7d…eec9cc`, 48231 bytes), candidate **v2**
+  (`b5a90be2…55bce`, 54620 bytes) and the original recovered wrapper
+  `t6-runner.ps1` (`fac7926d…0894c`) are all **UNMODIFIED** and were
+  re-verified by checksum after the v3 work.
+- **Two defects were found in candidate v2 by the final offline safety
+  review and are corrected here.** Neither had been executed; both were
+  latent in v2.
+
+#### Defect 1 — unbounded output capture (memory)
+
+- **What was wrong.** v2 copied the child's stdout and stderr into an
+  **unbounded `MemoryStream`**. Because a daemonised descendant inherits the
+  write end of the pipe, that copy task stays pending for the whole life of
+  the descendant and the buffer grows at the descendant's output rate —
+  **measured ~1.3 MB/s** (3.8 MB → 22.8 MB over 18 s in a direct
+  reproduction). The wrapper itself therefore had an unbounded-allocation
+  path, independent of any child.
+- **Correction (C2c).** The copy target is now a **bounded sink**
+  (`T6BoundedCapture`, a `System.IO.Stream` subclass compiled once at
+  startup). It **retains at most `$NativeMaxCaptureBytes` (4 MB) per stream**,
+  **discards** the remainder while still **absorbing** it, and counts the
+  discarded bytes. stdout and stderr are bounded **independently**. Because
+  the sink always absorbs the data, the child is **still drained completely
+  and is never blocked** on a full pipe. Truncation is **reported
+  explicitly** (`StdoutTruncated` / `StderrTruncated`, the discarded byte
+  counts, and an `OUTPUT TRUNCATED (stdout|stderr)` line in the captured
+  output and in the evidence log). **The real native exit code is
+  unchanged.**
+- **Fail-closed:** if the bounded sink cannot be compiled the wrapper
+  **refuses to run** rather than silently falling back to unbounded capture.
+
+#### Defect 2 — a timed-out start left the laboratory unmanaged
+
+- **What was wrong.** v2 set `$started = $true` only **after** a successful
+  `pg_ctl start`. A start that **timed out or failed** therefore skipped the
+  teardown entirely, even though a postmaster may have come up. On timeout
+  v2 also killed only the **direct** child (`Process.Kill()` does not reach
+  descendants), so a postmaster could survive unmanaged on 15432 — and the
+  teardown could then **delete the lab data directory while that PostgreSQL
+  process could still have been using it**.
+- **Correction (C2e).** The start is now marked **attempted before it is
+  issued**, and the teardown **always inspects the disposable laboratory**
+  whenever a start was attempted — not only when a start succeeded. A
+  process is stopped **only on positively proven ownership**, using the
+  existing ownership marker, a canonical data-directory comparison and the
+  available identity evidence (`postmaster.pid` in *our* data directory,
+  recorded port `15432`, the PID still alive, a `postgres.exe` whose command
+  line names *our* data directory). A process is **never stopped merely
+  because it listens on port 15432**, and the port-5432 service is never a
+  candidate. If ownership cannot be established, the evidence is preserved,
+  the run is reported **BLOCKED**, and the uncertain process is **left
+  untouched**. The lab data directory is **never deleted while a potentially
+  active PostgreSQL process remains**; the decision is a pure function
+  (`Test-LabDeletionSafe`) taken on the **post-stop** state.
+
+#### Additional correction found while validating v3 (C2d — reader lifetime)
+
+- **What was wrong.** v2 disposed the capture buffer while the copy task
+  could still be writing into it, so the write end faulted on the disposed
+  buffer and the exception was **unobserved**; bytes read after the snapshot
+  were lost.
+- **Investigation (measured, offline).** Ending the reader task is not as
+  simple as closing the stream. A read that is **already pending** on an
+  **inherited pipe handle** is **not** interrupted by closing the stream, by
+  disposing it, by cancelling the .NET read, or by disposing the owning
+  `Process` — the read stays blocked and its copy task never reaches a
+  terminal state (measured: still `WaitingForActivation` after 3 s).
+  `CancelIoEx` on the pipe handle **does** interrupt it (measured: terminal
+  in **23–53 ms**, status `Canceled`).
+- **Correction.** v3 cancels the pending overlapped operation with
+  `CancelIoEx`, then closes the stream, then waits (bounded) for the reader
+  task to reach a terminal state, and **only then disposes the sink**. If the
+  task still has not finished the sink is **deliberately not disposed** and
+  the condition is reported (`CaptureIncomplete`).
+
+#### Additional correction (C2f) -- a truncated or incomplete capture can never yield PASS
+
+Found by the **final offline safety review** of the first v3 revision and
+corrected in the final revision.
+
+- **What was wrong.** The Group-L runner emits its `summary` line and its
+  `results_sha256` digest near the **end** of its stdout. A capture that was
+  truncated (the 4 MB cap was reached) or incomplete (a reader task had not
+  finished) could therefore remove **both** of them while the native exit
+  code was still 0. `Get-T6Verdict` also **skipped** the digest comparison
+  entirely when no digest was supplied, so a truncated capture could not be
+  distinguished from a complete one.
+- **Correction.** Two changes, nothing else:
+  1. The Node step now calls `Assert-NodeCaptureTrustworthy`, which **throws**
+     `T6 BLOCKED` when `StdoutTruncated`, `StderrTruncated` or
+     `CaptureIncomplete` is set. A truncated or incomplete runner capture is a
+     **hard failure** and no verdict is issued.
+  2. `Get-T6Verdict` now **requires** `ExpectedResultsSha` to be present and
+     to be a well-formed 64-hex-digit value, and requires the evidence copy
+     to match it. A missing or malformed digest is now a **failure reason**,
+     never a skipped check.
+  The evidence byte-identity comparison and both checksum comparisons are
+  **preserved unchanged** and are still evaluated in addition to the digest
+  check. **No other process, database or cleanup behaviour was changed.**
+- **New offline negative tests** (all with harmless simulated objects -- no
+  process, no database): a missing digest, an empty digest, a malformed digest,
+  a mismatched digest, a truncated capture that lost both the summary and the
+  digest, the capture-trust predicate for each of the three conditions, the
+  Node-step hard-failure gate for each of the three conditions, and the
+  positive control that a present, valid, matching digest still passes.
+- **Mutation testing:** 8 mutants (digest presence, digest validity,
+  digest-vs-evidence, evidence byte-identity, capture-trust predicate,
+  Node-step gate removal, Node-step gate always-throws, gate ordering) were
+  each **killed** by the new tests, proving they are load-bearing rather than
+  vacuous.
+- **Corrected counts** in this record: candidate v2 is **1040** lines (not
+  1034); v1->v2 is **132 removed / 278 added**; the historical v3 revision was
+  **59 removed / 828 added**; the final v3 revision is **65 removed / 1041
+  added**. v2 drained the streams with **`CopyToAsync()` into unbounded
+  `MemoryStream`s** -- not `ReadToEndAsync()`, which appeared only in v2's
+  own comments. The 45 runtime invocations added by the first v3 revision
+  correspond to **44 new assertion names** (one name was reused).
+
+- **All v2 and v1 corrections are carried over unchanged**, including the
+  C2b direct-child-only bounded wait and the explicit `CommandLineToArgvW`
+  argument quoting, C1 (unquoted `listen_addresses`, one splatted argument,
+  cmd-metacharacter guard), C3, C4 (`Get-T6Verdict` — PASS requires all
+  eight native steps to exit 0, exactly the 12 Group-L ids recorded PASS, the
+  runner summary 12/12 with 0 fail / 0 blocked / 0 not_run, and the evidence
+  copy byte-identical and matching the runner's own digest), C5
+  (`Assert-LabPort` / `Assert-NotServiceTarget` keep the port-5432 service
+  unreachable), C6 and C7 (durable, uniquely named evidence outside the
+  disposable cluster).
+- **No PostgreSQL setting was changed** — `autovacuum`, `checkpoint_timeout`,
+  `fsync` and every other server parameter are untouched; the lab still uses
+  initdb/pg_ctl defaults, and the option string is still exactly
+  `"-p $Port -c listen_addresses=127.0.0.1 -c logging_collector=off"`.
+- **Static validation only:** PowerShell AST parse **0 errors / 12171
+  tokens**; the candidate's own `-SelfTest` mode reports **130/130 PASS, exit
+  0** (the 62 v2 checks preserved + 68 new C2c/C2d/C2e/C2f checks).
+  **No PostgreSQL was started, no database was contacted, the runner was not
+  executed, port 15432 was never bound and the port-5432 service was
+  untouched.**
+- **New offline regression coverage (all with harmless simulated processes —
+  `cmd.exe` and `ping` only):** high-volume stdout **and** stderr; bounded
+  memory under sustained output; explicit output-truncation reporting;
+  descendants holding the pipe handles open; reader cancellation and safe
+  disposal; timeout with surviving descendants; and refusal to clean up
+  unowned, foreign or ambiguous processes (including a `postmaster.pid` that
+  names a foreign data directory, one that records port 5432, and one with
+  no valid ownership marker).
+- **T6 remains BLOCKED.** Candidate v3 needs (a) review, (b) a fresh explicit
+  checksum approval, and (c) a separate one-shot execution approval.
+  **All 12 Group-L cases remain NOT RUN.**
+
+### 9. Next action (single, concrete)
+
+Review `test-harness/t6-checkpoint/t6-runner-candidate-v3.ps1` (SHA-256
+`deb84e0f09b56133e8b282adaae6f40e6f82e58b7f2becc6601b5a9a04228e8b`) and `ARTIFACT_MANIFEST.md` §1, then approve (or reject) that checksum
 as the executable artifact, and grant a fresh, separate one-shot execution
-approval. Until then T6 stays **BLOCKED**.
+approval with `-EvidenceRoot` pointing outside `%TEMP%`. Until then T6 stays
+**BLOCKED**.
 
-Note for the reviewer: the **approved** `t6-runner.ps1` revision `fac7926d…`
-is recovered and verified but is **not executable unchanged** (it fails at
-`pg_ctl start` for the quoting reason recorded in §3), so the candidate is
-the only artifact that could plausibly be approved for a future run.
+Notes for the reviewer:
+- The **approved** `t6-runner.ps1` revision `fac7926d…` is recovered and
+  verified but is **not executable unchanged** (it fails at `pg_ctl start` for
+  the quoting reason recorded in §3).
+- **Candidate v1 was executed and returned BLOCKED** (exit 2) because of the
+  C2b pipe-inheritance defect recorded in §5. **All 12 Group-L cases remain
+  NOT RUN**; no case result exists.
+- **Candidate v2** corrects C2b but carries the two defects recorded in §8.
+  **Candidate v3** corrects those two defects plus the reader-lifetime
+  defect found during v3 validation, and has been validated offline against
+  reproductions of the exact failure shapes with 107 self-tests.
+- The Windows `0xC0000142` fault observed on 2026-10-19 and in the first
+  interrupted attempt on 2026-10-20 did **not** occur in the second attempt,
+  which ran the cluster healthily for 16 minutes including a completed
+  checkpoint. It remains an environment-level risk to record in any future
+  report, and it is the reason the first attempt must be run detached.
