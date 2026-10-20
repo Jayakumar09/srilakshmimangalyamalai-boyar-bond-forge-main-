@@ -317,9 +317,10 @@ BLOCKED.**
 ### 8. Corrected candidate v3 prepared (2026-10-20) — NOT EXECUTION-APPROVED, NOT EXECUTED
 
 - **New file:** `test-harness/t6-checkpoint/t6-runner-candidate-v3.ps1`.
-  **Current (final) revision: SHA-256 `deb84e0f09b56133e8b282adaae6f40e6f82e58b7f2becc6601b5a9a04228e8b`, 108466 bytes, 2016 lines.**
-  The earlier v3 revision (SHA-256 `5faae6ebc0a1e422b465b369ab37da8b3049f88190c81eb2f2a00794da21457a`, 95610 bytes / 1809 lines) is
-  superseded and is recorded in `ARTIFACT_MANIFEST.md` for provenance. Candidate **v1**
+  **Current (final) revision: SHA-256 `f4e10f765448811979bf9bbbc3d563b3b48d2d79dad08037e2e49308fde334e1`, 119524 bytes, 2189 lines.**
+  The earlier v3 revisions (SHA-256 `5faae6ebc0a1e422b465b369ab37da8b3049f88190c81eb2f2a00794da21457a`, 95610 bytes / 1809 lines, and SHA-256
+  `deb84e0f09b56133e8b282adaae6f40e6f82e58b7f2becc6601b5a9a04228e8b`, 108466 bytes / 2016 lines) are superseded and are recorded in
+  `ARTIFACT_MANIFEST.md` for provenance. Candidate **v1**
   (`7161bd7d…eec9cc`, 48231 bytes), candidate **v2**
   (`b5a90be2…55bce`, 54620 bytes) and the original recovered wrapper
   `t6-runner.ps1` (`fac7926d…0894c`) are all **UNMODIFIED** and were
@@ -452,9 +453,10 @@ corrected in the final revision.
   `fsync` and every other server parameter are untouched; the lab still uses
   initdb/pg_ctl defaults, and the option string is still exactly
   `"-p $Port -c listen_addresses=127.0.0.1 -c logging_collector=off"`.
-- **Static validation only:** PowerShell AST parse **0 errors / 12171
-  tokens**; the candidate's own `-SelfTest` mode reports **130/130 PASS, exit
-  0** (the 62 v2 checks preserved + 68 new C2c/C2d/C2e/C2f checks).
+- **Static validation only:** PowerShell AST parse **0 errors / 13391
+  tokens**; the candidate's own `-SelfTest` mode reports **164/164 PASS, exit
+  0** (the 62 v2 checks preserved + 68 new C2c/C2d/C2e/C2f checks + 34 new C2g
+  parameter-binding checks).
   **No PostgreSQL was started, no database was contacted, the runner was not
   executed, port 15432 was never bound and the port-5432 service was
   untouched.**
@@ -470,10 +472,57 @@ corrected in the final revision.
   checksum approval, and (c) a separate one-shot execution approval.
   **All 12 Group-L cases remain NOT RUN.**
 
+### 8a. Parameter-binding repair and the C2g regression block (2026-10-20)
+
+- **The one-shot execution attempt (2026-10-20, 19:16 IST) FAILED with
+  launcher exit code 1.** The approved invocation was
+  `powershell -File <candidate> -Confirm I_APPROVE_LOCAL_T6 -EvidenceRoot D:\SLMM-T6-EVIDENCE`.
+  The candidate **never ran**: `t6-runner-candidate-v3.ps1` did not declare an
+  `-EvidenceRoot` parameter, so PowerShell failed at **parameter binding, before
+  the script body**. Elapsed 1.4 s, empty stdout/stderr, **no evidence
+  directory created, no PostgreSQL started, port 15432 never bound, and all 12
+  Group-L cases NOT RUN**. Evidence retained under
+  `D:\SLMM-T6-EVIDENCE\launcher-20261020-191622-a1e6bf5c\` (including
+  `DIAGNOSIS.txt`).
+- **Root cause.** The `param()` block lacked `[string]$EvidenceRoot` while
+  `New-EvidenceDir` reads `$EvidenceRoot` under `Set-StrictMode -Version
+  Latest`. The declaration was present in candidate **v1** (committed in
+  `ed5e2121`), **lost in v2**, and inherited by v3.
+- **Correction.** `[string]$EvidenceRoot` was added to the `param()` block --
+  restoring exactly the v1 shape. This is the ONLY functional change; every
+  other edit is inside the C2g self-test block.
+- **C2g REGRESSION BLOCK (34 new offline assertions).** The new block proves:
+  the script's own `param()` block declares exactly `Keep`, `Confirm`,
+  `SelfTest` and `EvidenceRoot`; the effective parameter surface exposes all
+  four; the designed default for an omitted `-EvidenceRoot` is intact; the
+  candidate **accepts `-EvidenceRoot`** with no parameter-binding error; the
+  omitted case yields **only the designed default, never an undefined-variable
+  failure**; and a harmless binding probe **cannot enter the PostgreSQL
+  execution path** (the real candidate's `-SelfTest` path exits before the
+  main path, and a scratch copy with the main path AST-removed is used for
+  the remaining probes).
+- **Seven defects in the new test code were found and corrected** (the
+  candidate's behaviour was never at fault):
+  1. the parameter assertion was over-strict -- it collected every FUNCTION
+     parameter (59 names) instead of the script's own `param()` block;
+  2. the scratch-copy cut used a text search that also matched the same
+     marker inside the C2g block itself, cutting the file mid-`try/finally`
+     and leaving an unbalanced brace;
+  3. the extracted prefix is now **AST-verified to be syntactically balanced**
+     before the probe is built;
+  4. two path expectations compared against the **8.3 short form** of
+     `%TEMP%` while the candidate canonicalises with `GetFullPath`; both
+     sides are now canonicalised before comparison;
+  5. the remaining failures were consequences of the above and cleared with
+     them.
+- **No assertion was removed or skipped.** All 34 C2g assertions pass.
+- **The self-test total is now 164/164 PASS, exit 0** (62 v2 checks
+  preserved + 68 C2c/C2d/C2e/C2f + 34 C2g). AST: **0 errors / 13391 tokens**.
+
 ### 9. Next action (single, concrete)
 
 Review `test-harness/t6-checkpoint/t6-runner-candidate-v3.ps1` (SHA-256
-`deb84e0f09b56133e8b282adaae6f40e6f82e58b7f2becc6601b5a9a04228e8b`) and `ARTIFACT_MANIFEST.md` §1, then approve (or reject) that checksum
+`f4e10f765448811979bf9bbbc3d563b3b48d2d79dad08037e2e49308fde334e1`) and `ARTIFACT_MANIFEST.md` §1, then approve (or reject) that checksum
 as the executable artifact, and grant a fresh, separate one-shot execution
 approval with `-EvidenceRoot` pointing outside `%TEMP%`. Until then T6 stays
 **BLOCKED**.

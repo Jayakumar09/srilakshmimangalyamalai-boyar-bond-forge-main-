@@ -51,8 +51,9 @@ tool-call abort, the second ran to completion.
 | I | Attempt 2 — port-5432 Windows service untouched | **PASS** | PID 4828, same start time, same 2 listeners, same 10 postgres processes; never contacted or stopped |
 | J | Candidate v2 offline validation (2026-10-20) | **PASS** | `t6-runner-candidate-v2.ps1` SHA-256 `b5a90be2198b186a009971342155e6e4f5ba54cf5f66455d2e8d4bef9d655bce` (54620 bytes); AST 0 errors / 7057 tokens; `-SelfTest` 62/62 PASS (49 v1 safety tests preserved + 13 process-handling tests); deadlock reproducer `t6-deadlock-repro.ps1` SHA-256 `865f3abc0e9e75cd1212dab9e5f3292a1b8760a9d9cc5f631473f73f70c1d88c` (`cmd.exe` + `ping` only) 8/8 expectations held |
 | K | Candidate v3 — the two defects found by the final v2 safety review | **PASS (corrected, offline)** | **Defect 1 (unbounded capture):** v2 copied stdout/stderr into an unbounded `MemoryStream`; measured ~1.3 MB/s growth (3.8 MB → 22.8 MB in 18 s) while a descendant held the pipe. **Defect 2 (timeout cleanup):** v2 set `$started = $true` only *after* a successful `pg_ctl start`, so a timed-out or failed start skipped teardown and could leave a postmaster unmanaged on 15432 while the lab data directory was deleted underneath it. Both corrected in v3 (C2c bounded capture, C2e ownership-verified teardown). No execution occurred. |
-| L | Candidate v3 offline validation (2026-10-20) | **PASS** | `t6-runner-candidate-v3.ps1` SHA-256 `deb84e0f09b56133e8b282adaae6f40e6f82e58b7f2becc6601b5a9a04228e8b` (108466 bytes, 2016 lines); AST **0 errors / 12171 tokens**; `-SelfTest` **130/130 PASS, exit 0** (62 v2 checks preserved + 68 new C2c/C2d/C2e/C2f checks); **8/8 mutants killed**; **no PostgreSQL started, no database contacted, port 15432 never bound, port-5432 service untouched** (PID 4828, unchanged) |
+| L | Candidate v3 offline validation (2026-10-20) | **PASS** | `t6-runner-candidate-v3.ps1` SHA-256 `f4e10f765448811979bf9bbbc3d563b3b48d2d79dad08037e2e49308fde334e1` (119524 bytes, 2189 lines); AST **0 errors / 13391 tokens**; `-SelfTest` **164/164 PASS, exit 0** (62 v2 checks preserved + 68 new C2c/C2d/C2e/C2f checks + 34 new C2g parameter-binding checks); **8/8 mutants killed**; **no PostgreSQL started, no database contacted, port 15432 never bound, port-5432 service untouched** (PID 4828, unchanged) |
 | M | Candidate v3 final hardening (2026-10-20) | **PASS** | C2f: a truncated or incomplete runner capture is now a **hard failure** (`Assert-NodeCaptureTrustworthy` throws `T6 BLOCKED` on `StdoutTruncated` / `StderrTruncated` / `CaptureIncomplete`), and `Get-T6Verdict` now **requires** a present, well-formed 64-hex-digit runner digest that must match the evidence copy. The evidence byte-identity comparison and both checksum comparisons are **preserved unchanged**. 8/8 mutants killed (digest presence, digest validity, digest-vs-evidence, byte-identity, capture-trust predicate, Node-step gate removal, gate always-throws, gate ordering) |
+| N | Candidate v3 one-shot execution attempt (2026-10-20 19:16 IST) | **BLOCKED (launcher exit 1)** | The approved invocation passed `-EvidenceRoot D:\SLMM-T6-EVIDENCE`, but the candidate did not declare that parameter, so PowerShell failed at **parameter binding before the script body ran** (elapsed 1.4 s, empty stdout/stderr). **No evidence directory created, no PostgreSQL started, port 15432 never bound, all 12 Group-L cases NOT RUN.** Evidence retained under `D:\SLMM-T6-EVIDENCE\launcher-20261020-191622-a1e6bf5c\` (`exitcode.txt` = `exitcode=1`, `DIAGNOSIS.txt`, pre/post state, process snapshot) |
 
 ## Summary
 
@@ -69,7 +70,7 @@ tool-call abort, the second ran to completion.
   further defects — unbounded output capture and timeout cleanup that could
   leave the laboratory unmanaged — and is **NOT EXECUTION-APPROVED**.
 - Candidate **v3** (`t6-runner-candidate-v3.ps1`, SHA-256
-  `deb84e0f09b56133e8b282adaae6f40e6f82e58b7f2becc6601b5a9a04228e8b`) corrects both defects plus a reader-lifetime defect found while
+  `f4e10f765448811979bf9bbbc3d563b3b48d2d79dad08037e2e49308fde334e1`) corrects both defects plus a reader-lifetime defect found while
   validating it (C2c bounded capture; C2e ownership-verified teardown that
   never stops an unproven process and never deletes the lab directory while
   a possibly active PostgreSQL process remains; C2d deterministic reader
@@ -78,8 +79,10 @@ tool-call abort, the second ran to completion.
   runner digest before PASS is possible). The earlier v3 revision
   (`5faae6ebc0a1e422b465b369ab37da8b3049f88190c81eb2f2a00794da21457a`) is superseded. It is **NOT EXECUTION-APPROVED** and has
   **not been executed**.
-- **No Group-L case has ever run.** Nothing in any candidate's offline
-  validation demonstrates concurrency correctness.
+- **No Group-L case has ever run.** The one-shot execution attempt of 2026-10-20 19:16 IST failed at
+  **parameter binding, before the candidate body ran** (launcher exit 1); no PostgreSQL was started and
+  no evidence directory was created. Nothing in any candidate's offline validation demonstrates concurrency
+  correctness.
 
 ## Evidence and limitations
 
@@ -92,7 +95,7 @@ tool-call abort, the second ran to completion.
 - **Limitation:** the runner's Node stage was never reached, so there are **zero**
   Group-L case results. Nothing in this report demonstrates concurrency correctness.
 - **Limitation (2026-10-20, candidate v3):** all v3 validation is **static and
-  offline**. The 130 self-tests use harmless simulated processes (`cmd.exe`
+  offline**. The 164 self-tests use harmless simulated processes (`cmd.exe`
   and `ping` only), simulated capture-result objects and disposable filesystem
   sandboxes. No PostgreSQL process
   was started, no database was contacted, port 15432 was never bound, and the

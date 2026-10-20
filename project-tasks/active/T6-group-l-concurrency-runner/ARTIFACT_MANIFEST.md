@@ -213,13 +213,14 @@ initdb/pg_ctl defaults.
 | Item | Value |
 |---|---|
 | File | `test-harness/t6-checkpoint/t6-runner-candidate-v3.ps1` (new file) |
-| **Current (final) SHA-256** | `deb84e0f09b56133e8b282adaae6f40e6f82e58b7f2becc6601b5a9a04228e8b` |
-| **Current bytes / lines** | **108466 bytes / 2016 lines** |
-| Historical v3 revision SHA-256 | `5faae6ebc0a1e422b465b369ab37da8b3049f88190c81eb2f2a00794da21457a` (95610 bytes / 1809 lines) -- superseded by the final revision, retained here for provenance |
+| **Current (final) SHA-256** | `f4e10f765448811979bf9bbbc3d563b3b48d2d79dad08037e2e49308fde334e1` |
+| **Current bytes / lines** | **119524 bytes / 2189 lines** |
+| Historical v3 revision SHA-256 (a) | `5faae6ebc0a1e422b465b369ab37da8b3049f88190c81eb2f2a00794da21457a` (95610 bytes / 1809 lines) -- superseded, retained here for provenance |
+| Historical v3 revision SHA-256 (b) | `deb84e0f09b56133e8b282adaae6f40e6f82e58b7f2becc6601b5a9a04228e8b` (108466 bytes / 2016 lines) -- superseded, retained here for provenance |
 | Derived from | candidate v2 `t6-runner-candidate-v2.ps1` (`b5a90be2…55bce`, 54620 bytes) — **unmodified**; candidate v1 (`7161bd7d…eec9cc`) and the original recovered `t6-runner.ps1` (`fac7926d…0894c`) are also **unmodified** |
 | Line delta vs. v2 -- historical v3 revision | 1040 → 1809 lines (59 removed, 828 added) |
-| Line delta vs. v2 -- current final revision | 1040 → 2016 lines (65 removed, 1041 added) |
-| Static validation | PowerShell AST parse: **0 errors / 12171 tokens**; `-SelfTest`: **130/130 PASS, exit 0** (the 62 v2 checks preserved + 68 new C2c/C2d/C2e/C2f checks) |
+| Line delta vs. v2 -- current final revision | 1040 → 2189 lines (66 removed, 1215 added) |
+| Static validation | PowerShell AST parse: **0 errors / 13391 tokens**; `-SelfTest`: **164/164 PASS, exit 0** (the 62 v2 checks preserved + 68 new C2c/C2d/C2e/C2f checks + 34 new C2g parameter-binding checks) |
 | Mutation testing | 8/8 mutants **killed** (digest presence, digest validity, digest-vs-evidence, evidence byte-identity, capture-trust predicate, Node-step gate removal, Node-step gate always-throws, gate ordering) |
 | Status | **CANDIDATE v3 — awaiting review and a fresh checksum approval** |
 
@@ -299,6 +300,31 @@ both of them while the native exit code is still 0. Two changes close this:
 The **evidence byte-identity comparison and both checksum comparisons are
 preserved unchanged** and are still evaluated in addition to the digest check.
 **No other process, database or cleanup behaviour was changed.**
+
+#### C2g -- parameter-binding correctness, and the failed launch it explains
+
+Added after the one-shot execution attempt of 2026-10-20 19:16 IST **failed
+with launcher exit code 1**: the approved invocation passed `-EvidenceRoot`,
+but the candidate's `param()` block did not declare it, so PowerShell failed
+at parameter binding **before the script body ran**. No evidence directory was
+created, **no PostgreSQL was started**, port 15432 was never bound, and **all
+12 Group-L cases were NOT RUN**. Evidence retained under
+`D:\SLMM-T6-EVIDENCE\launcher-20261020-191622-a1e6bf5c\`.
+
+| # | Correction | Effect |
+|---|---|---|
+| C2g-1 | `[string]$EvidenceRoot` added to the `param()` block | The approved invocation binds. This restores exactly the shape candidate **v1** had (committed in `ed5e2121`); the declaration was lost in v2 and inherited by v3. It is the **only functional change** to the candidate. |
+| C2g-2 | A 34-assertion offline regression block | Proves the script's own `param()` block declares exactly `Keep`, `Confirm`, `SelfTest`, `EvidenceRoot`; the effective surface exposes all four; the designed default for an omitted `-EvidenceRoot` is intact; the candidate accepts `-EvidenceRoot` with no binding error; an omitted `-EvidenceRoot` yields **only the designed default, never an undefined-variable failure**; and a harmless binding probe **cannot enter the PostgreSQL execution path**. |
+
+Seven defects in the new test code were found and corrected -- the candidate's
+behaviour was never at fault: an over-strict parameter assertion that
+collected every FUNCTION parameter instead of the script's own `param()`
+block; a text-search cut point that also matched the same marker inside the
+C2g block itself, cutting the file mid-`try/finally` and leaving an
+unbalanced brace (the extracted prefix is now **AST-verified balanced**); and
+two path expectations compared against the **8.3 short form** of `%TEMP%`
+while the candidate canonicalises with `GetFullPath` (both sides are now
+canonicalised). **No assertion was removed or skipped.**
 
 **No PostgreSQL setting was changed** and the option string is unchanged.
 

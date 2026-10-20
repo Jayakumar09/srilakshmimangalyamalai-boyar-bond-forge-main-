@@ -275,7 +275,8 @@
 param(
   [switch]$Keep,
   [string]$Confirm,
-  [switch]$SelfTest
+  [switch]$SelfTest,
+  [string]$EvidenceRoot
 )
 
 Set-StrictMode -Version Latest
@@ -1708,6 +1709,178 @@ function Invoke-SelfTest {
     if ($sim) { try { Stop-Process -Id $sim.Id -Force -ErrorAction SilentlyContinue } catch { } }
     if ($osbx -and $osbx.StartsWith($env:TEMP) -and $osbx -like "*t6-ownsbx-*") {
       Remove-Item -Recurse -Force -LiteralPath $osbx -ErrorAction SilentlyContinue
+    }
+  }
+
+  # ===========================================================================
+  # C2g REGRESSION: parameter-binding correctness.
+  #
+  # The candidate must DECLARE every externally supported parameter, must
+  # accept -EvidenceRoot, and must never fail with an undefined-variable
+  # error when -EvidenceRoot is omitted -- it must fall back to the
+  # explicitly designed default instead.
+  #
+  # These checks are OFFLINE. They use AST inspection, Get-Command (which
+  # PARSES a script without executing it), and child processes whose main
+  # execution path is either the documented -SelfTest path (which exits
+  # BEFORE the main path) or is structurally REMOVED (a scratch copy truncated
+  # before the main path). No PostgreSQL process can be started by any of
+  # them, and no database is contacted.
+  #
+  # The T6_PARAM_PROBE environment guard stops a probe child from spawning
+  # another probe child.
+  # ===========================================================================
+  Write-Host "--- C2g parameter-binding regression (offline)"
+
+  $gSelfPath = $PSCommandPath
+  $gSelfText = $null
+  try { if ($gSelfPath) { $gSelfText = [IO.File]::ReadAllText($gSelfPath) } } catch { $gSelfText = $null }
+  $gTokens = $null; $gErrors = $null; $gAst = $null
+  if ($gSelfText) {
+    $gAst = [System.Management.Automation.Language.Parser]::ParseInput($gSelfText, [ref]$gTokens, [ref]$gErrors)
+  }
+  Check "the candidate's own source is available for AST inspection" ($null -ne $gAst)
+  Check "the candidate's own source parses without errors" ($null -eq $gErrors -or $gErrors.Count -eq 0)
+
+  # (a) The param() block declares every externally supported parameter.
+  #     $ast.ParamBlock is the SCRIPT's own param() block. (A FindAll over the
+  #     whole file would also collect every FUNCTION parameter, which is why
+  #     the comparison below is made against the script-level block.)
+  $gDeclared = @()
+  if ($gAst -and $null -ne $gAst.ParamBlock) {
+    $gDeclared = @($gAst.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+  }
+  $gExpected = @("Keep","Confirm","SelfTest","EvidenceRoot")
+  Check "the candidate's param() block declares -EvidenceRoot" ($gDeclared -contains "EvidenceRoot")
+  foreach ($gP in $gExpected) {
+    Check ("the candidate's param() block declares -{0}" -f $gP) ($gDeclared -contains $gP)
+  }
+  $gMissing = @($gExpected | Where-Object { $gDeclared -notcontains $_ })
+  $gExtra   = @($gDeclared | Where-Object { $gExpected -notcontains $_ })
+  Check "no externally supported parameter is missing from the param() block" ($gMissing.Count -eq 0)
+  Check "the param() block declares no unexpected parameter" ($gExtra.Count -eq 0)
+
+  # (b) The EFFECTIVE parameter surface (Get-Command PARSES a script; it does
+  #     NOT execute it) exposes every externally supported parameter.
+  $gSurface = @()
+  try { $gSurface = @((Get-Command -Name $gSelfPath -ErrorAction Stop).Parameters.Keys) } catch { $gSurface = @() }
+  Check "the effective parameter surface exposes -EvidenceRoot" ($gSurface -contains "EvidenceRoot")
+  foreach ($gP in $gExpected) {
+    Check ("the effective parameter surface exposes -{0}" -f $gP) ($gSurface -contains $gP)
+  }
+
+  # (c) The designed default for an omitted -EvidenceRoot is still present.
+  Check "the designed default evidence root is still declared" ($gSelfText -match '\$DefaultEvidence\s*=\s*"\\opencode\\t6-evidence"')
+  Check "New-EvidenceDir still falls back to the designed default" ($gSelfText -match '\$DefaultEvidence\.TrimStart')
+
+  if ($env:T6_PARAM_PROBE -eq "1") {
+    Write-Host "--- C2g parameter-binding regression (skipped inside a probe child)"
+  } else {
+    # A child runner that captures stdout/stderr separately.
+    function Run-ProbeChild([string]$File, [string[]]$ChildArgs, [string]$Work) {
+      $so = Join-Path $Work ("probe-" + [guid]::NewGuid().ToString("N") + ".out")
+      $se = Join-Path $Work ("probe-" + [guid]::NewGuid().ToString("N") + ".err")
+      $argStr = "-NoProfile -ExecutionPolicy Bypass -File `"$File`" " + ($ChildArgs -join " ")
+      $p = Start-Process -FilePath "powershell.exe" -ArgumentList $argStr -NoNewWindow -PassThru -Wait `
+                       -RedirectStandardOutput $so -RedirectStandardError $se
+      $o = ""; $e = ""
+      try { if (Test-Path -LiteralPath $so) { $o = [string](Get-Content -LiteralPath $so -Raw) } } catch { }
+      try { if (Test-Path -LiteralPath $se) { $e = [string](Get-Content -LiteralPath $se -Raw) } } catch { }
+      return [pscustomobject]@{ Exit = [int]$p.ExitCode; Out = $o; Err = $e }
+    }
+
+    $gWork = Join-Path $env:TEMP ("t6-paramprobe-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $gWork | Out-Null
+    try {
+      $gLabPath = Join-Path $env:TEMP "opencode\t6lab"
+      $gDefaultRoot = Join-Path $env:TEMP "opencode\t6-evidence"
+      $gDefaultExisted = Test-Path -LiteralPath $gDefaultRoot
+
+      # (d) The REAL candidate, via the documented -SelfTest path, must ACCEPT
+      #     -EvidenceRoot and must NOT enter its main execution path.
+      #     -SelfTest exits before the main path, so no lab, no cluster and no
+      #     database can be touched.
+      $gEvRoot = Join-Path $gWork "evidence"
+      $env:T6_PARAM_PROBE = "1"
+      $r1 = Run-ProbeChild -File $gSelfPath -ChildArgs @("-SelfTest","-EvidenceRoot",$gEvRoot) -Work $gWork
+      Remove-Item Env:\T6_PARAM_PROBE -ErrorAction SilentlyContinue
+      Check "the real candidate accepts -EvidenceRoot (no parameter-binding error)" ($r1.Err -notmatch "NamedParameterNotFound")
+      Check "the real candidate reports no undefined-variable error with -EvidenceRoot" ($r1.Err -notmatch "cannot be retrieved because it has not been set")
+      Check "the real candidate's -SelfTest path still passes with -EvidenceRoot" ($r1.Exit -eq 0 -and $r1.Out -match "T6 SELF-TEST: all checks passed")
+      Check "the real candidate did NOT create an evidence directory" (-not (Test-Path -LiteralPath $gEvRoot))
+      Check "the real candidate did NOT create the disposable lab" (-not (Test-Path -LiteralPath $gLabPath))
+      Check "the real candidate bound no listener on port 15432" ((@(Get-NetTCPConnection -LocalPort 15432 -State Listen -ErrorAction SilentlyContinue)).Count -eq 0)
+
+      # (e) A scratch copy whose MAIN EXECUTION PATH IS STRUCTURALLY REMOVED.
+      #     It can only reach New-EvidenceDir, so it cannot start PostgreSQL.
+      # The main execution path is the top-level try/catch/finally. It is
+      # located with the AST (a text search would also match the $gMarker
+      # string literal inside this very block, and would cut mid-statement).
+      $gMainPath = $null
+      if ($gAst) {
+        foreach ($gSt in $gAst.EndBlock.Statements) {
+          if ($gSt -is [System.Management.Automation.Language.TryStatementAst]) { $gMainPath = $gSt; break }
+        }
+      }
+      Check "the main execution path could be located for the scratch-copy probe" ($null -ne $gMainPath)
+      if ($null -ne $gMainPath) {
+        $gCut = $gMainPath.Extent.StartOffset
+        # The extracted prefix must be syntactically BALANCED: it is parsed
+        # here and the probe is only built if it has no parse errors.
+        $gPrefix = $gSelfText.Substring(0, $gCut)
+        $gPTok = $null; $gPErr = $null
+        [void][System.Management.Automation.Language.Parser]::ParseInput($gPrefix, [ref]$gPTok, [ref]$gPErr)
+        Check "the extracted scratch-copy source is syntactically balanced" ($null -eq $gPErr -or $gPErr.Count -eq 0)
+        $gProbe = @"
+
+# --- offline parameter probe: the main execution path is NOT present ---
+`$evDir = New-EvidenceDir
+Write-Host ("EVROOT=[" + `$script:EvidenceDir + "]")
+exit 77
+"@
+        $gScratch = Join-Path $gWork "scratch-probe.ps1"
+        Set-Content -LiteralPath $gScratch -Value ($gPrefix + $gProbe) -Encoding UTF8
+
+        # (e1) -EvidenceRoot is honoured: the run directory is created UNDER it.
+        #     %TEMP% is the 8.3 SHORT form, but Assert-EvidenceRoot canonicalises
+        #     with [IO.Path]::GetFullPath, so the EXPECTED path is canonicalised
+        #     the same way before the comparison (both sides normalised).
+        $gEvRoot2 = Join-Path $gWork "evidence2"
+        $gEvRoot2Canon = [IO.Path]::GetFullPath($gEvRoot2)
+        $r2 = Run-ProbeChild -File $gScratch -ChildArgs @("-EvidenceRoot",$gEvRoot2) -Work $gWork
+        Check "the scratch probe with -EvidenceRoot exits with its probe code" ($r2.Exit -eq 77)
+        Check "the scratch probe with -EvidenceRoot did not error" ($r2.Err -notmatch "NamedParameterNotFound")
+        Check "the scratch probe with -EvidenceRoot created the run dir UNDER the given root" ($r2.Out -match ([regex]::Escape($gEvRoot2Canon)))
+        Check "the scratch probe with -EvidenceRoot reported no undefined-variable error" ($r2.Err -notmatch "cannot be retrieved because it has not been set")
+
+        # (e2) Omitting -EvidenceRoot yields ONLY the designed default -- never
+        #      an undefined-variable failure. The expected default is
+        #      canonicalised for the same reason as above.
+        $gDefaultRootCanon = [IO.Path]::GetFullPath($gDefaultRoot)
+        $r3 = Run-ProbeChild -File $gScratch -ChildArgs @() -Work $gWork
+        Check "the scratch probe with an OMITTED -EvidenceRoot exits with its probe code" ($r3.Exit -eq 77)
+        Check "the scratch probe with an OMITTED -EvidenceRoot did NOT fail with an undefined-variable error" ($r3.Err -notmatch "cannot be retrieved because it has not been set")
+        Check "the scratch probe with an OMITTED -EvidenceRoot used the designed default" ($r3.Out -match ([regex]::Escape($gDefaultRootCanon)))
+        Check "the scratch probe with an OMITTED -EvidenceRoot reported the default run dir" ($r3.Out -match "EVROOT=\[")
+
+        # Clean up only what the probes created, and only if it was absent before.
+        $gDefaultRunDirs = @(Get-ChildItem -LiteralPath $gDefaultRoot -Directory -Filter "t6-run-*" -ErrorAction SilentlyContinue)
+        foreach ($d in $gDefaultRunDirs) {
+          if (-not $gDefaultExisted) { Remove-Item -Recurse -Force -LiteralPath $d.FullName -ErrorAction SilentlyContinue }
+        }
+        if (-not $gDefaultExisted -and (Test-Path -LiteralPath $gDefaultRoot)) {
+          $left = @(Get-ChildItem -LiteralPath $gDefaultRoot -Force -ErrorAction SilentlyContinue)
+          if ($left.Count -eq 0) { Remove-Item -Force -LiteralPath $gDefaultRoot -ErrorAction SilentlyContinue }
+        }
+      }
+      Check "the probes did NOT create the disposable lab" (-not (Test-Path -LiteralPath $gLabPath))
+      Check "the probes bound no listener on port 15432" ((@(Get-NetTCPConnection -LocalPort 15432 -State Listen -ErrorAction SilentlyContinue)).Count -eq 0)
+    }
+    finally {
+      Remove-Item Env:\T6_PARAM_PROBE -ErrorAction SilentlyContinue
+      if ($gWork -and $gWork.StartsWith($env:TEMP) -and $gWork -like "*t6-paramprobe-*") {
+        Remove-Item -Recurse -Force -LiteralPath $gWork -ErrorAction SilentlyContinue
+      }
     }
   }
 
