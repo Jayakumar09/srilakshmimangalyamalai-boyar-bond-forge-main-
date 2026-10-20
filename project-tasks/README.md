@@ -49,6 +49,30 @@ Each task gets its **own** folder named `<TASK-ID>-<kebab-title>`, e.g.
    backed up or no longer needed, and **only** with separate approval.
 10. Never silently overwrite a tested or committed artifact.
 
+## Approval gates (non-negotiable)
+
+**Read-only investigation is the default.** No change, execution, or external
+action proceeds without its own explicit approval, and **approval for one
+operation never authorizes the next**. Each of the following requires a
+**separate, explicit** authorization:
+
+1. **Editing verified or committed artifacts** (rule 10 — never silently overwrite).
+2. **Git staging / commit.**
+3. **GitHub push.**
+4. **Database writes or schema changes** — TEST-only; requires the relevant
+   live-guard opt-in / task confirm token.
+5. **Deployments and production changes** — see `PROJECT_STATUS.md` §8 rules 6–7.
+6. **Destructive cleanup or deletion** (lifecycle rule 9).
+
+Invariants:
+
+- A task is **not** `COMPLETED` until its required verification has passed
+  **and** its GitHub backup is approved and confirmed.
+- Each new task gets its **own** folder (never reuse a previous one) and its
+  **own** checkpoint.
+- Closed tasks retain durable evidence; disposable working files may be deleted
+  **only** after separate approval.
+
 ## Status ↔ folder mapping
 
 The index (`docs/project/TASK_INDEX.md`) uses four statuses but there are three

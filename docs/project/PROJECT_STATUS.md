@@ -94,7 +94,7 @@ _Last updated: 2026-10-17 (local)_
 
 Before editing any file:
 
-1. Read this instruction and this `PROJECT_STATUS.md` (including §8 Isolation Policy, which is binding).
+1. Read `docs/project/CURRENT_HANDOVER.md` (front-door state) and `docs/project/TASK_INDEX.md` (authoritative task list + statuses), then this instruction and this `PROJECT_STATUS.md` (including §8 Isolation Policy, which is binding).
 2. Read the latest entries of `docs/project/SESSION_HISTORY.md`.
 3. Read `docs/project/TEST_EVIDENCE.md`.
 4. Read `docs/project/PENDING_WORK.md`.
@@ -127,3 +127,26 @@ Do not restart completed work. Do not assume a previously successful test still 
 - **Current `.output` is a PRODUCTION build** (stamp `2026-10-16T14:34:43.764Z`): Worker name `slmm-boyar-matrimony`; production Supabase ref `sxpkutjkqfekqwpabgrk` present in 4 files; TEST ref absent. `node scripts/check-build-target.mjs test` -> **exit 1** (correctly fail-closed); `node scripts/check-build-target.mjs prod` -> **exit 0**. This artifact **must not** be deployed to TEST.
 - **`supabase/config.toml` (tracked, unmodified) has `project_id = "sxpkutjkqfekqwpabgrk"` (production)** — a Supabase CLI isolation gap (the CLI would target production). Flagged only; **not changed**.
 - **Not run:** no live harness, no remote access, no build, no deploy, no commit/push.
+
+---
+
+## 12. Update — 2026-10-17 (later still) — local checkpoint `9d810a9`
+
+> **Append-only superseding note.** §11 ended with "no commit/push"; a **local** commit has since been created. Nothing has been pushed.
+
+- **HEAD is now `9d810a9`** (`test(offline): add quota SQL-contract and upload-cap suites; track build-target gate`), one commit on top of `ff1abb1`; `origin/main` is **9 behind** HEAD.
+- **Tracked by `9d810a9`** (previously untracked or staged): `scripts/check-build-target.mjs`, `.config/nitro.config.mjs`, `test-harness/slmm-elite-code-tests.mjs`, `test-harness/slmm-quota-sql-contract-tests.mjs`, `test-harness/slmm-upload-cap-tests.mjs`, and the **six** `docs/project/*.md`; `test-harness/harness-registry.mjs` modified (`M`). The tracking gap noted in §11 is **resolved**.
+- **Working tree now:** **0 staged**, **37 modified tracked**, **69 untracked** (was 72), **0 deletions**. Preserve the modified/untracked set; never reset/clean/force-push.
+- **Offline regression (freshly re-confirmed after `9d810a9`):** `npm run test:offline` -> **exit 0**, `TOTAL tests=497 pass=497 fail=0 skip=0 suites=15 failing_suites=0`; `npx tsc --noEmit` -> **exit 0**.
+- **Not run:** no live harness, no remote access, no build, no deploy; **no push**.
+
+---
+
+## 13. Update — 2026-10-17 (later still) — security hardening; fresh 578/578
+
+> **Append-only superseding note.** §12 recorded HEAD `9d810a9` / 497 tests / 69 untracked. The current state follows.
+
+- **HEAD is now `92804e0`** (`Security: protect non-document R2 references`); `origin/main` is **12 behind**. Three security commits since `9d810a9`: `0bb3836`, `4e9e1c0`, `92804e0`.
+- **Offline regression (freshly observed 2026-10-17, on the current working tree):** `npm run test:offline` -> **exit 0**, `TOTAL tests=578 pass=578 fail=0 skip=0 suites=19 failing_suites=0`; `npx tsc --noEmit` -> **exit 0**. Evidence: `TEST_EVIDENCE.md` E-008. (The 19-suite count includes one uncommitted registry entry; pure HEAD would be 18 suites.)
+- **Working tree now:** **0 staged**, **44 modified tracked** (the 4 corrected docs + in-progress feature/security/test work), **71 untracked**, **0 deletions**. Preserve all of it; never reset/clean/force-push.
+- **Not run:** no live harness, no remote access, no build, no deploy; **no push**.

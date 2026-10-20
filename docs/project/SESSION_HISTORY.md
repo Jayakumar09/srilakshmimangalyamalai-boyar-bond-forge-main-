@@ -197,3 +197,20 @@
 10. **Deployment occurred:** no.
 11. **Risks/limitations:** **T6 remains BLOCKED** — (a) `t6-runner.ps1` SHA-256 `abd83227…c6701b` ≠ approved `fac7926d…20894c`; (b) `127.0.0.1:15432` has a listener (PID 2676) where none is required; (c) `%TEMP%\opencode\t6lab` pre-exists with an ownership marker (`pid=5480`) that does not match the live server (`2676`). No prerequisite-clearing action was taken (PID 2676 and the lab directory remain untouched). `T1`/`T2` are undocumented and were not invented. The offline suite (578/578) was **not** re-run. Nothing is committed.
 12. **Next recommended step:** review the new handover/task structure; if accepted, approve a **focused** commit of the added files; separately decide the T6 blockers (confirm/replace the `.ps1` hash; stop PID 2676 and/or remove `%TEMP%\opencode\t6lab`). A follow-up should also point `PROJECT_STATUS.md` §9 (recovery steps) at `CURRENT_HANDOVER.md`.
+
+---
+
+## 2026-10-19 (later) — INFRA-001 committed and pushed to GitHub
+
+1. **Date/time:** 2026-10-19 (local).
+2. **Task title/objective:** Record the local commit and successful GitHub push of the INFRA-001 task-management and handover system.
+3. **Environment:** TEST-only; documentation-only. No database connection, no live/local harness run, no build, no deploy.
+4. **Files committed (27; commit `806d983`):** `docs/project/CURRENT_HANDOVER.md`, `docs/project/TASK_INDEX.md`, `project-tasks/README.md`, `project-tasks/{active,pending,completed}/README.md`, `project-tasks/_TEMPLATE/{TASK,PROGRESS,TEST_REPORT,ARTIFACT_MANIFEST}.md`, `project-tasks/active/T6-group-l-concurrency-runner/*.md`, and the T3/T4/T5 records under `project-tasks/completed/`; modified `docs/project/SESSION_HISTORY.md`.
+5. **Implementation/config change:** none beyond the recorded documentation system (see the 2026-10-19 INFRA-001 entry above).
+6. **Commands executed:** read-only `git` checks; `git add -- <27 paths>`; `git diff --cached --check`; `git commit -m "docs(tasks): establish permanent task handover and history system"`; `git fetch origin main`; `git push origin main`. No build.
+7. **Test results:** N/A (documentation task); `git diff --cached --check` PASS before commit.
+8. **Commit ID:** `806d983656132de71c64ac97c8a29c24ddc70153` (`docs(tasks): establish permanent task handover and history system`); 27 files changed, 934 insertions(+), 0 deletions; parent `eef9b2e`. Pushed as a fast-forward (`eef9b2e..806d983`), exit 0; GitHub `main` verified equal to local `main`; 0 ahead / 0 behind.
+9. **Remote TEST resources modified:** none.
+10. **Deployment occurred:** no.
+11. **Risks/limitations:** working tree is now **41 modified tracked + 69 untracked** (preserve; the 42nd modification was `SESSION_HISTORY.md`, now committed). **T6 remains BLOCKED** (identical three prerequisites; PID 2676 and `%TEMP%\opencode\t6lab` untouched).
+12. **Next recommended step:** obtain separate approval to commit the reconciliation edits to `AGENTS.md`, `CURRENT_HANDOVER.md`, `TASK_INDEX.md`, `PROJECT_STATUS.md` and `project-tasks/README.md`; separately decide the T6 blockers.

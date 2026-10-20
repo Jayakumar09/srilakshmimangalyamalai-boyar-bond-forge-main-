@@ -8,7 +8,7 @@
 > **Environment policy: TEST-ONLY** (binding — `PROJECT_STATUS.md` §8). No
 > production access/changes. Not connected to Lovable; do not reconnect it.
 >
-> _Last updated: 2026-10-19 (task-management system bootstrap)._
+> _Last updated: 2026-10-19 (post-INFRA-001 commit/push reconciliation)._
 
 ## 1. Verified project state (measured this session)
 
@@ -16,13 +16,15 @@
 |---|---|
 | Repository | `D:\DevProjects\Working\srilakshmimangalyamalai(boyar-bond-forge-main)` |
 | Branch | `main` |
-| HEAD | `eef9b2e607346f3560af5baf1f170932455a9b44` — `docs(storage): record T5 live TEST verification addendum` |
-| `origin/main` | `eef9b2e607346f3560af5baf1f170932455a9b44` — **in sync (0 ahead / 0 behind)** |
-| Working tree | **42 modified tracked** · **69 untracked** · **0 staged** · **0 deletions** |
-| Preserve | The 42 modified + 69 untracked entries are in-progress work — **preserve; never reset/clean/force-push**. |
+| HEAD | `806d983656132de71c64ac97c8a29c24ddc70153` — `docs(tasks): establish permanent task handover and history system` |
+| `origin/main` | `806d983656132de71c64ac97c8a29c24ddc70153` — **in sync (0 ahead / 0 behind)** |
+| Working tree | **41 modified tracked** · **69 untracked** · **0 staged** · **0 deletions** (verified 2026-10-19 snapshot — informational, not an immutable count) |
+| Preserve | The 41 modified + 69 untracked entries are in-progress work — **preserve; never reset/clean/force-push**. |
 
-> Counts verified 2026-10-19T23:33 local via `git diff --name-only`,
-> `git ls-files --others --exclude-standard`, `git rev-list --count`.
+> Counts are the **verified 2026-10-19 snapshot** (post-INFRA-001 push), measured
+> via `git diff --name-only`, `git ls-files --others --exclude-standard`,
+> `git rev-list --count`. Treat them as informational, **not** an immutable
+> current count — re-measure at session start.
 
 ## 2. Active task
 
@@ -36,6 +38,16 @@ No cluster was started. Three prerequisites failed on the last attempt
 3. `%TEMP%\opencode\t6lab` **pre-exists** with a run-ownership marker whose PID (`5480`) does not match the live server (`2676`) — ownership uncertain → stop for manual review.
 
 Full detail: `project-tasks/active/T6-group-l-concurrency-runner/`.
+
+### Latest completion — INFRA-001
+
+- **Committed and pushed to GitHub:** `806d983656132de71c64ac97c8a29c24ddc70153`
+  — `docs(tasks): establish permanent task handover and history system`
+  (27 files; 934 insertions, 0 deletions; parent `eef9b2e`). `git push origin
+  main` → exit 0 (`eef9b2e..806d983`, fast-forward); GitHub `main` verified
+  equal to local `main`.
+- Status: `COMPLETED` (see `TASK_INDEX.md`). This front-door document and the
+  `project-tasks/` system are the durable artifacts that push delivered.
 
 ## 3. Latest verified evidence
 
@@ -66,7 +78,7 @@ See `TASK_INDEX.md` (ACTIVE / BLOCKED / PENDING / COMPLETED). Task records live 
 3. Read `TASK_INDEX.md` and the active task folder.
 4. Inspect Git read-only: `git status --short`, `git branch --show-current`,
    `git rev-parse HEAD`, `git log -5 --oneline`.
-5. Confirm the working-tree counts (42 modified / 69 untracked) are preserved.
+5. Confirm the working-tree counts (41 modified / 69 untracked) are preserved.
 6. Identify the active task + exact next action; propose **one** next action.
 7. Do not restart completed work; do not assume an old pass still holds if code/config changed.
 
@@ -89,3 +101,4 @@ See `TASK_INDEX.md` (ACTIVE / BLOCKED / PENDING / COMPLETED). Task records live 
 ## 8. Change log of this file
 
 - **2026-10-19** — created as part of INFRA-001 (task-management & handover system). Seeds verified state and the blocked T6 task.
+- **2026-10-19** — INFRA-001 reconciled after commit `806d983` was pushed to GitHub: HEAD/`origin/main` and working-tree counts refreshed (41 modified / 69 untracked); INFRA-001 recorded COMPLETED. T6 BLOCKED state and incident details unchanged.

@@ -10,3 +10,7 @@ Lovable, and do not use Lovable for builds, previews, publishing, or deployment.
   assume them.
 - Preserve published git history: do not force-push, rebase, amend, or squash
   commits that are already pushed.
+- **Session start (required):** before any new project operation, read
+  `docs/project/CURRENT_HANDOVER.md`, then `docs/project/TASK_INDEX.md`, then the
+  active task folder under `project-tasks/`. Recover state from repository files,
+  not chat history; follow `PROJECT_STATUS.md` §8 (TEST-only, binding).

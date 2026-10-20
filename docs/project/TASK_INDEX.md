@@ -7,7 +7,7 @@
 > never delete a row — change its status. One row per task; details live in the
 > task folder under `project-tasks/`.
 >
-> _Last updated: 2026-10-19 (task-management system bootstrap)._
+> _Last updated: 2026-10-19 (post-INFRA-001 commit/push)._
 
 ## Status legend
 
@@ -32,7 +32,7 @@
 
 | ID | Title | Status | Folder | Latest evidence | Git checkpoint | Next action |
 |---|---|---|---|---|---|---|
-| INFRA-001 | Project-wide task management & handover system | ACTIVE | `docs/project/` + `project-tasks/` | this document | uncommitted | review → approve commit (then push) |
+| INFRA-001 | Project-wide task management & handover system | COMPLETED | `docs/project/` + `project-tasks/` | this document | `806d983` (pushed, GitHub-verified 2026-10-19) | archived |
 | T6 | Group-L concurrency runner — disposable local PG 18 lab | BLOCKED | `project-tasks/active/T6-group-l-concurrency-runner/` | re-verified 2026-10-19 | none (never executed) | resolve 3 prereq failures (see task) |
 | T5 | Storage-deletion lifecycle + fence — live TEST verification | COMPLETED | `project-tasks/completed/T5-storage-deletion-lifecycle-and-fence/` | `TEST_VERIFICATION_LEDGER.md` addendum 2026-10-19 | `b25555e`, `eef9b2e` (pushed) | archived |
 | T4 | Storage-deletion state-transition — live TEST verification | COMPLETED | `project-tasks/completed/T4-storage-deletion-state-transitions/` | `TEST_VERIFICATION_LEDGER.md` addendum 2026-10-18 | `e54756b`, `1ba4351` (pushed) | archived |
