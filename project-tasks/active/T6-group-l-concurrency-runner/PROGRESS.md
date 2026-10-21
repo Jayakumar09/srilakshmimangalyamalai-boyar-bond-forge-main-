@@ -2,17 +2,18 @@
 
 > Append-only. Correct mistakes with a new dated line.
 
-- **Latest approved Git checkpoint:** `none` (runner never executed; no commits)
-- **Current blocker:** three failed prerequisites (hash mismatch, busy port, pre-existing lab dir)
-- **Exact next action:** obtain a decision on the three blockers, then re-approve and re-run.
+- **Latest approved Git checkpoint:** `84d9e145e852dc9046ffa02c75bbee067aab508d` (pushed)
+- **Current blocker:** none for Group-L. **Group-L local concurrency: VERIFIED PASS** (2026-10-21 10:06 IST, 12/12). The overall T6 program is **INCOMPLETE** — Group-R, Group-C, R2 and scheduler integration are separate pending gates, and Supabase TEST/production behaviour is **NOT VERIFIED**.
+- **Exact next action:** commit and push this documentation update, then decide the next gate (Group-R rollback-only TEST, or Group-C after operator approval) with a fresh, separate approval.
 
-> **Superseding status — 2026-10-20 (see the dated entries at the end of this
-> file for the full record).** The three bullets above describe the state as
-> of 2026-10-19 and are retained as history. The current state is:
+> **Superseding status — 2026-10-21 (10:06 IST execution):** the two earlier
+> status blocks below describe the state as of 2026-10-19 and 2026-10-20 and
+> are **retained as history**. The current state is:
 >
-> - **Latest approved Git checkpoint:** `64dafc9298157890877b87e38e6deb5c9dcfa8da` (pushed). The recovery commit for this task has **not** been created; nothing was staged, committed or pushed.
-> - **Current blocker:** T6 remains **BLOCKED** — the approved artifacts have been recovered into the repository, but they have **not** been safety-verified for execution and **not** been re-approved, and **no verified Group-L concurrency case results exist**.
-> - **Exact next action:** review the recovered checkpoint at `test-harness/t6-checkpoint/` and approve (or reject) the **approved** `t6-runner.ps1` revision `fac7926d…` as the executable artifact; then grant a fresh, separate one-shot execution approval.
+> - **Latest approved Git checkpoint:** `84d9e145e852dc9046ffa02c75bbee067aab508d` (pushed to GitHub, verified with `git ls-remote`).
+> - **Current state:** the C10 runner `9f06b1c3...b008` was **executed exactly once** and returned **wrapper exit 0 / verdict PASS / 12 PASS, 0 FAIL, 0 BLOCKED, 0 NOT RUN**, with zero residue and an ownership-safe cleanup. The GitHub baseline for that run was the same commit `84d9e145...`.
+> - **Current blocker:** none for Group-L. The **overall T6 program remains INCOMPLETE** — 8 R-cases and 3 C-cases are unexecuted, Supabase TEST/production behaviour is **NOT VERIFIED**, and R2/scheduler integration are separate pending gates.
+> - **Exact next action:** commit and push the documentation update for this PASS, then obtain a fresh, separate approval for the next gate.
 >
 > **Correction to the 2026-10-19 record below:** it states "Nothing was
 > executed. No cluster was started." That is **inaccurate**. A local disposable
@@ -754,26 +755,113 @@ corrected in the final revision.
   session, the observer-identity fail-closed check removed, the observer made a
   termination target, the inspected-count constant broken, and the preflight
   allowance drifting from the audit expectation.
-- **This correction is NOT EXECUTION-APPROVED and has NOT been live-tested.**
-  No run has been performed with it. The **repository** follow-ups are now
-  **COMPLETE and offline-verified**: the committed checksum manifest
+- **This correction was NOT EXECUTION-APPROVED at the time of writing (§8e,
+  2026-10-20/21).** It was subsequently approved, committed, pushed and
+  **executed once on 2026-10-21 at approximately 10:06 IST — see §8f, which
+  supersedes this line.** No run had been performed with it when §8e was
+  written. The **repository** follow-ups were **COMPLETE and offline-verified**
+  before the run: the committed checksum manifest
   (`test-harness/t6-checkpoint/t6-checksums.txt`) pins the C10 checksum
   `9f06b1c396e3634fc86eeab4d73878ce7345d7e7e5bffb0d1fea458d7f76b008` for
   `t6-local-runner.mjs` (all 15 manifest entries verified against the
   repository artifacts), and `TASK.md`'s `t6-local-runner.mjs` acceptance
-  criterion names the same checksum. The **preparation copy** is still on the
-  previous revision — see §9.
+  criterion names the same checksum. The **preparation copy** was then
+  refreshed to the C10 revision before the run.
+
+### 8f. Third execution attempt (2026-10-21 10:06 IST) — the C10 runner executed once; **VERDICT PASS, 12/12 Group-L cases**
+
+- **The one-shot execution of 2026-10-21 at approximately 10:06 IST returned
+  wrapper exit code `0` with verdict `PASS`.** This is the **first** run in
+  which the Group-L runner reached the end of the suite with every case
+  passing. The launcher started at 10:06:44 IST and finished at 10:07:07 IST
+  (elapsed 23.5 s, child pid 10228). The run used the **detached launcher with
+  a waiting parent** and the **corrected** stdout/stderr capture ordering (the
+  child process is started *before* the asynchronous stream reads begin).
+- **The approved GitHub baseline at execution was
+  `84d9e145e852dc9046ffa02c75bbee067aab508d`** — the commit that carries the
+  C10 runner, the reconciled checksum manifest and the corrected task records.
+- **All nine native steps exited 0:** `initdb=0`, `pgctl_start=0`,
+  `isready=0`, `identity=0`, `create_db=0`, `bootstrap=0`, `preflight=0`,
+  `node=0`, `residue=0`. The verdict block records **zero** failure reasons.
+  The server identity was confirmed by the runner's own preflight:
+  `{"preflight":"ok","database":"t6lab","port":15432,"server_addr":"127.0.0.1","isolation":"read committed","listen_addresses":"127.0.0.1","namespace_rows":0}`.
+- **All twelve Group-L cases PASSED: 12 PASS, 0 FAIL, 0 BLOCKED, 0 NOT RUN.**
+  The runner summary is
+  `{"total":12,"pass":12,"fail":0,"blocked":0,"not_run":0,"harness_failed":false,"residue_failed":false}`,
+  and all twelve expected case ids — `T6-L01`, `T6-L02`, `T6-L03`, `T6-L04`,
+  `T6-L05`, `T6-L06`, `T6-L07`, **`T6-L08a`**, **`T6-L08b`**, `T6-L09`,
+  `T6-L10`, `T6-L11` — are present exactly once, with no duplicates and no
+  extra ids. **This is the first time any Group-L case has reported PASS.**
+- **The C10 correction did exactly what it was designed to do.** The two
+  harness defects that caused the 2026-10-20 22:28 and 2026-10-21 09:01
+  failures — the per-case survivor check counting the runner's own reusable A/B
+  sessions as leaks, and the audit judging its own observer as an unhealthy
+  session — are both absent from this run. The residue verdict's
+  `other_t6_backends: 0` independently confirms the first defect is gone: no
+  A/B session was force-terminated as a false leak.
+- **Results digest verified three ways.** The runner reported
+  `results_sha256 = 3489610fbf2105868c8aa2ab6bd60681ac0788446a816980c5cbfd424b187b0c`;
+  an **independent recalculation** of the evidence copy's SHA-256 produced the
+  same value, and it matches both the verdict's `runner_sha256` and the run's
+  `artifact-sha256` manifest. The digest was also re-derived from the JSONL
+  *content* alone (rebuilding the text and hashing it, with no file hashing)
+  and produced the same value.
+- **Zero residue:** `{"synthetic_rows":0,"other_t6_backends":0,"t6_advisory_locks":0}`
+  — no synthetic row, no unexpected T6 backend and no advisory lock survived.
+- **The disposable laboratory was cleaned up safely.** The teardown proved
+  ownership before acting (`marker valid, postmaster.pid in our data dir, port
+  15432, postgres.exe naming our data dir`), stopped the cluster with
+  `pg_ctl stop -m fast`, confirmed that no live cluster of ours used the
+  laboratory, and only then removed the lab tree. Post-run:
+  `port15432_listeners=0`, `t6lab_exists=False`. The **port-5432 service was
+  untouched** (`Running`, 2 listeners, 10 `postgres.exe`, pid 5148 — identical
+  to the pre-run baseline) and **no** `postgres.exe` had the lab data
+  directory in its command line.
+- **Evidence preserved:** `D:\SLMM-T6-EVIDENCE\t6-run-20261021-100645-9d2f02f9\`
+  (run log, node log, results JSONL, verdict JSON, artifact checksums) and
+  `D:\SLMM-T6-EVIDENCE\launcher-20261021-100642-9c43b8d4\` (stdout, stderr,
+  exit code, started/finished timestamps, child pid, preflight and postrun
+  state, process snapshot and the launcher script itself). All four earlier
+  run directories, all earlier launcher directories and both historical
+  launcher scripts are **intact and unmodified** — the earlier **FAIL**
+  outcomes are **not** relabelled.
+- **The executed wrapper was the approved candidate v3**
+  (`test-harness/t6-checkpoint/t6-runner-candidate-v3.ps1`, SHA-256
+  `30e31c1d2c1f14f04bdff78cfd42fa466cb613efa923f099157a347a649ba97c`),
+  invoked with `-Confirm I_APPROVE_LOCAL_T6 -EvidenceRoot D:\SLMM-T6-EVIDENCE`.
+  The **original recovered `t6-runner.ps1`** (`fac7926d...`) was **never**
+  copied to the preparation directory and was **never executed**; it remains a
+  preserved artifact only.
+- **PostgreSQL defaults were preserved:** the lab used `initdb`/`pg_ctl`
+  defaults and the only option string was
+  `-p $Port -c listen_addresses=127.0.0.1 -c logging_collector=off`. No
+  service configuration was modified, and the scheduler was never activated.
+- **Scope of this PASS (do not over-read it).** This is a **local disposable
+  PostgreSQL 18 lab** result. It proves the 12 Group-L concurrency cases only.
+  It does **not** prove any Supabase TEST or production behaviour, and it
+  says nothing about the hosted PostgreSQL's versions, `pg_locks` /
+  `pg_stat_activity` semantics, timing or infrastructure. The **overall T6
+  program remains INCOMPLETE**: 8 R-cases and 3 C-cases are unexecuted, and
+  R2 and scheduler integration are separate pending gates. The Windows
+  `0xC0000142` fault observed on 2026-10-19 did **not** recur.
 
 ### 9. Next action (single, concrete)
 
-Refresh the preparation copy at `%TEMP%\opencode\t6-prep\t6-local-runner.mjs`
-from the committed C10 file
-(`9f06b1c396e3634fc86eeab4d73878ce7345d7e7e5bffb0d1fea458d7f76b008`) —
-this is the **only** outstanding follow-up. The two repository corrections
-that preceded it are **DONE and offline-verified**: `t6-checksums.txt` now
-pins the C10 checksum (all 15 entries match their repository artifacts) and
-`TASK.md`'s `t6-local-runner.mjs` acceptance criterion names the same
-checksum. **Then** obtain a **fresh, separate one-shot execution approval**.
+Commit and push this documentation update for the 2026-10-21 10:06 IST PASS
+(the C10 runner, the reconciled checksum manifest and the corrected task
+records are already committed and pushed at `84d9e145`). Then decide the
+**next gate** with a fresh, separate approval. The Group-L local-lab gate is
+**closed**; the remaining gates are independent and each needs its own
+approval and its own target:
+
+| Gate | Target | State | Needs |
+|---|---|---|---|
+| Group-L | local disposable PostgreSQL 18 lab, `127.0.0.1:15432` | **VERIFIED PASS** (2026-10-21 10:06 IST) | — closed |
+| Group-R (`T6-R01`–`T6-R08`) | TEST Supabase, two concurrent psql sessions, **ZERO-COMMIT rollback-only** | not executed | fresh approval + a TEST target |
+| Group-C (`T6-C01`–`T6-C03`) | TEST Supabase, committed synthetic fixtures + explicit cleanup + residue proof | not executed | **separate operator approval** (still BLOCKED) |
+| R2 / object-storage and scheduler integration | — | not exercised | separate approval; no R2/Cloudflare/Worker operation has been performed |
+
+Supabase TEST/production behaviour remains **NOT VERIFIED**.
 Until then T6 stays **BLOCKED** and the corrected C10 runner has not been
 live-tested.
 
