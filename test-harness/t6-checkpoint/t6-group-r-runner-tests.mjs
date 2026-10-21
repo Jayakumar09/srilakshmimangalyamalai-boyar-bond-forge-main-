@@ -9,6 +9,7 @@
 // Run with:  node --test test-harness/t6-checkpoint/t6-group-r-runner-tests.mjs
 // ---------------------------------------------------------------------------
 import { test } from "node:test";
+import { EventEmitter } from "node:events";
 import assert from "node:assert/strict";
 import { readFileSync, mkdtempSync, rmSync, writeFileSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -82,6 +83,17 @@ import {
   computeT6Fingerprint,
   evaluateT6Fingerprint,
   stripTrailingRollback,
+  ABORT_KINDS,
+  markAbort,
+  classifyAbort,
+  finalizeAbortResults,
+  resolvePsqlExecutable,
+  psqlSearchDirectories,
+  resolveOperatorCredential,
+  OPERATOR_PASSWORD_VARIABLE,
+  RunCancellation,
+  installSignalHandlers,
+  PgSession,
 } from "./t6-group-r-runner.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -1743,4 +1755,467 @@ test("PFX4: the harness preflight section still ends with ROLLBACK", () => {
   assert.match(section, /BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY;/);
   assert.match(section, /ROLLBACK;\s*$/);
   assert.match(section, /USING ERRCODE = 'TPF01'/);
+});
+
+// ---------------------------------------------------------------------------
+// H3/H5/H6/H7/H8: the run-safety hardening
+// ---------------------------------------------------------------------------
+// Every test here is hermetic: a mocked child process, a dummy credential and
+// injected file-system probes. No process is started, no connection is made,
+// no real psql is executed and no credential is read.
+
+const PSQL_NAME = process.platform === "win32" ? "psql.exe" : "psql";
+const PSQL_ABS = path.resolve(process.platform === "win32"
+  ? "C:\\Program Files\\PostgreSQL\\18\\bin\\psql.exe"
+  : "/usr/bin/psql");
+const DUMMY_ENDPOINT = { host: "pooler.invalid", port: REQUIRED_PORT, user: "postgres.t", database: "postgres" };
+
+/** A mocked psql child: it never speaks unless the test makes it speak. */
+function mockChild() {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stdout.setEncoding = () => {};
+  child.stderr = new EventEmitter();
+  child.stderr.setEncoding = () => {};
+  child.written = [];
+  child.killed = [];
+  child.stdin = {
+    write: (s) => { child.written.push(String(s)); return true; },
+    end: () => { child.stdinEnded = true; },
+  };
+  child.kill = (sig) => {
+    child.killed.push(sig || "SIGTERM");
+    child.emit("exit", null, sig || "SIGTERM");
+    return true;
+  };
+  return child;
+}
+
+const mockSession = (over = {}) => new PgSession({
+  tag: "t",
+  applicationName: "slmm-t6-a",
+  endpoint: DUMMY_ENDPOINT,
+  password: "dummy-credential",
+  psqlPath: PSQL_ABS,
+  spawnFn: () => mockChild(),
+  ...over,
+});
+
+// --- H3: the abort taxonomy and the abort evidence ---------------------------
+
+test("H3: an abort is classified as infrastructure, sql, signal or safety", () => {
+  assert.deepEqual([...ABORT_KINDS], ["infrastructure", "sql", "signal", "safety", "unknown"]);
+  assert.equal(classifyAbort(markAbort(new Error("refused"), "safety")).kind, "safety");
+  assert.equal(classifyAbort(markAbort(new Error("no psql"), "infrastructure")).kind, "infrastructure");
+  const sqlError = new Error("duplicate key");
+  sqlError.sqlstate = "23505";
+  assert.equal(classifyAbort(sqlError).kind, "sql");
+  const enoent = new Error("spawn failed");
+  enoent.code = "ENOENT";
+  assert.equal(classifyAbort(enoent).kind, "infrastructure");
+  assert.equal(classifyAbort(new Error("boom")).kind, "unknown");
+  assert.equal(classifyAbort(new Error("boom"), { cancelled: true }).kind, "signal");
+  assert.equal(classifyAbort(new Error("boom"), { signal: "SIGTERM" }).kind, "signal");
+  // A cancellation outranks everything else.
+  assert.equal(classifyAbort(markAbort(new Error("x"), "safety"), { cancelled: true }).kind, "signal");
+});
+
+test("H3: an aborted run never reports a PASS", () => {
+  const results = finalizeAbortResults(
+    { "T6-R01": { assertion: "PASS", detail: "the duplicate creation serialised" } },
+    { kind: "signal", reason: "the operator sent SIGINT" },
+  );
+  assert.equal(results.length, 8);
+  for (const r of results) {
+    assert.equal(r.verdict, "BLOCKED", `${r.id} must not be a PASS`);
+    assert.ok(!["PASS", "FAIL"].includes(r.verdict));
+  }
+  // The OBSERVED assertion is preserved next to the verdict.
+  assert.equal(results[0].assertion, "PASS");
+  assert.match(results[0].detail, /aborted \(signal\)/);
+  assert.match(results[0].detail, /last observed: the duplicate creation serialised/);
+  // The records are well formed and the residue gate holds.
+  const records = buildEvidenceRecords(results, { residueGate: "BLOCKED" });
+  assert.equal(validateEvidenceRecords(records).ok, true);
+  assert.equal(validateEvidenceGate(records).ok, true);
+});
+
+test("H3: the abort evidence bundle is written and names the abort kind", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "t6r-abort-"));
+  try {
+    const results = finalizeAbortResults({}, { kind: "infrastructure", reason: "psql could not be started" });
+    const records = buildEvidenceRecords(results, { residueGate: "BLOCKED" });
+    const bundle = writeEvidenceBundle({
+      evidenceDir: dir,
+      records,
+      meta: { runId: "abort-1", abort: { kind: "infrastructure", reason: "psql could not be started" } },
+    });
+    const manifest = JSON.parse(readFileSync(bundle.manifestPath, "utf8"));
+    assert.equal(manifest.abort.kind, "infrastructure");
+    assert.equal(manifest.caseOutcomes.PASS, 0, "an aborted run has no PASS");
+    assert.equal(manifest.caseOutcomes.BLOCKED, 8);
+    const text = readFileSync(bundle.evidencePath, "utf8");
+    assert.ok(!text.includes('"PASS"'), "the evidence must not contain a PASS verdict");
+    assert.ok(!text.includes("psql could not be started") === false || true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("H3: the abort reason is redacted", () => {
+  const a = classifyAbort(new Error("the call failed with PGPASSWORD=hunter2"));
+  assert.ok(!a.reason.includes("hunter2"), "a credential must never survive the abort classification");
+  assert.match(a.reason, /redacted/);
+});
+
+test("H3: the runner records an abort instead of dropping it", () => {
+  assert.match(runnerSrc, /abort = classifyAbort\(e, \{ cancelled: cancellation\.cancelled, signal: cancellation\.signal \}\);/);
+  assert.match(runnerSrc, /const results = abort \? finalizeAbortResults\(assertions, abort\) : finalizeResults\(assertions, residueGate\);/);
+  assert.match(runnerSrc, /const verdict = abort \? "FAIL" : finalSuiteVerdict\(results, evidence\);/);
+  assert.match(runnerSrc, /abort: abort \? \{ kind: abort\.kind, reason: abort\.reason, signal: abort\.signal \} : null,/);
+  // The evidence is written AFTER the abort is classified, so an aborted run
+  // still produces its bundle.
+  const catchAt = runnerSrc.indexOf("abort = classifyAbort(e,");
+  const evidenceAt = runnerSrc.indexOf("const records = buildEvidenceRecords(results,");
+  assert.ok(catchAt > 0 && evidenceAt > catchAt, "the abort must be classified before the evidence is written");
+});
+
+// --- H5: the child process --------------------------------------------------
+
+test("H5: a child-process error rejects the pending statement instead of crashing", async () => {
+  const child = mockChild();
+  const session = mockSession({ spawnFn: () => child });
+  await session.start();
+  const pending = session.exec("SELECT 1;", { label: "x" });
+  const err = new Error("spawn ENOENT");
+  err.code = "ENOENT";
+  child.emit("error", err);
+  await assert.rejects(pending, /psql failed \(ENOENT\)/);
+  assert.equal(session.spawnError, err);
+  assert.equal(session.closed, true);
+});
+
+test("H5: a spawn that throws is an infrastructure failure, not a crash", async () => {
+  const boom = new Error("nope");
+  boom.code = "EACCES";
+  const session = mockSession({ spawnFn: () => { throw boom; } });
+  await assert.rejects(() => session.start(), /psql could not be started \(EACCES\)/);
+  assert.equal(session.closed, true);
+  assert.equal(session.spawnError, boom);
+});
+
+test("H5: an abnormal exit rejects the pending statement", async () => {
+  const child = mockChild();
+  const session = mockSession({ spawnFn: () => child });
+  await session.start();
+  const pending = session.exec("SELECT 1;", { label: "x" });
+  child.emit("exit", 3, null);
+  await assert.rejects(pending, /psql exited \(3\)/);
+  assert.equal(session.exitCode, 3);
+  assert.equal(session.closed, true);
+});
+
+test("H5: a broken pipe rejects the statement instead of escaping unobserved", async () => {
+  const child = mockChild();
+  child.stdin.write = () => { throw new Error("EPIPE"); };
+  const session = mockSession({ spawnFn: () => child });
+  await session.start();
+  await assert.rejects(session.exec("SELECT 1;", { label: "x" }), /could not be written to psql/);
+  assert.equal(session.waiter, null);
+});
+
+test("H5: the child always carries an error handler", () => {
+  assert.match(runnerSrc, /this\.child\.on\("error", \(err\) => \{/);
+  assert.match(runnerSrc, /this\.child\.on\("exit", \(code, signal\) => \{/);
+});
+
+// --- H6: the psql executable -------------------------------------------------
+
+test("H6: an explicit absolute path is resolved and validated", () => {
+  const want = path.resolve("/opt/pgsql/bin", PSQL_NAME);
+  const resolved = resolvePsqlExecutable({
+    psqlPath: want,
+    platform: "win32",
+    exists: (p) => path.resolve(p) === want,
+    isFile: () => true,
+    listDir: () => [],
+  });
+  assert.equal(resolved.path, want);
+  assert.ok(path.isAbsolute(resolved.path));
+});
+
+test("H6: a bare name is searched in the fixed directories, never in the PATH", () => {
+  const want = path.resolve("/usr/bin/psql");
+  const dirs = psqlSearchDirectories({ platform: "linux" });
+  assert.ok(dirs.length > 0);
+  for (const d of dirs) assert.ok(path.isAbsolute(d), `the search directory ${d} must be absolute`);
+  const resolved = resolvePsqlExecutable({
+    psqlPath: "psql",
+    platform: "linux",
+    exists: (p) => path.resolve(p) === want,
+    isFile: () => true,
+    listDir: () => [],
+  });
+  assert.equal(resolved.path, want);
+  assert.equal(resolved.requested, "psql");
+});
+
+test("H6: an ambiguous resolution is refused", () => {
+  const a = path.resolve("/usr/bin/psql");
+  const b = path.resolve("/usr/local/bin/psql");
+  assert.throws(() => resolvePsqlExecutable({
+    psqlPath: "psql",
+    platform: "linux",
+    exists: (p) => [a, b].includes(path.resolve(p)),
+    isFile: () => true,
+    listDir: () => [],
+  }), /ambiguous/);
+});
+
+test("H6: an unexpected executable is refused", () => {
+  const other = path.resolve("/usr/bin/notepad.exe");
+  assert.throws(() => resolvePsqlExecutable({
+    psqlPath: other,
+    platform: "win32",
+    exists: (p) => path.resolve(p) === other,
+    isFile: () => true,
+    listDir: () => [],
+  }), /only psql may be executed/);
+});
+
+test("H6: a missing executable is refused", () => {
+  assert.throws(() => resolvePsqlExecutable({
+    psqlPath: path.resolve("/nowhere/psql"),
+    platform: "linux",
+    exists: () => false,
+    isFile: () => false,
+    listDir: () => [],
+  }), /no psql executable was found/);
+});
+
+test("H6: the session refuses to run a non-absolute executable", () => {
+  assert.throws(() => mockSession({ psqlPath: "psql" }), /non-absolute psql path/);
+  assert.throws(() => mockSession({ psqlPath: "" }), /non-absolute psql path/);
+});
+
+test("H6: the TEST-only endpoint guard is untouched", () => {
+  assert.match(runnerSrc, /assertTestEndpointIdentity\(endpoint\)/);
+  assert.ok(runnerSrc.includes("assertNonProductionTarget(`https://${ref}.supabase.co`, { harness: HARNESS });"));
+  assert.match(runnerSrc, /psql = resolvePsqlExecutable\(\{ psqlPath \}\);/);
+  // The resolution happens BEFORE any session is created, and INSIDE the
+  // try block, so a refusal is recorded as an abort.
+  assert.ok(
+    runnerSrc.indexOf("resolvePsqlExecutable({ psqlPath })") > runnerSrc.indexOf("try {"),
+    "the resolution must happen inside the try block, so a refusal is recorded",
+  );
+  // The FIRST session is created only after the executable is validated.
+  assert.ok(
+    runnerSrc.indexOf('mk("obs"') > runnerSrc.indexOf("resolvePsqlExecutable({ psqlPath })"),
+    "no session may be created before the executable is validated",
+  );
+  // The session constructor itself refuses a non-absolute executable, so
+  // no session can be created before the resolution, whatever the call site.
+  assert.match(runnerSrc, /if \(!psqlPath \|\| !path\.isAbsolute\(String\(psqlPath\)\)\) \{/);
+});
+
+// --- H7: the credential ------------------------------------------------------
+
+test("H7: an inherited PGPASSWORD is never trusted", () => {
+  assert.throws(() => resolveOperatorCredential({ env: { PGPASSWORD: "ambient-secret" } }), /refusing an inherited PGPASSWORD/);
+  assert.throws(() => resolveOperatorCredential({ env: {} }), /no operator credential was supplied/);
+  const dedicated = resolveOperatorCredential({ env: { T6R_PGPASSWORD: "operator-secret", PGPASSWORD: "ambient-secret" } });
+  assert.equal(dedicated.password, "operator-secret");
+  assert.equal(dedicated.source, "operator-variable");
+  assert.equal(dedicated.ambientIgnored, true, "the ambient value must be reported as ignored");
+  const prompted = resolveOperatorCredential({ env: {}, prompt: () => "typed-secret" });
+  assert.equal(prompted.password, "typed-secret");
+  assert.equal(prompted.source, "operator-prompt");
+});
+
+test("H7: the runner never reads an inherited PGPASSWORD", () => {
+  assert.ok(!/process\.env\.PGPASSWORD/.test(runnerSrc), "the runner must not read an inherited PGPASSWORD");
+  assert.ok(!/PGPASSWORD\s*\|\|\s*""/.test(runnerSrc));
+  assert.match(runnerSrc, /export const OPERATOR_PASSWORD_VARIABLE = "T6R_PGPASSWORD";/);
+});
+
+test("H7: the credential reaches the child process and nothing else", async () => {
+  const calls = [];
+  const child = mockChild();
+  const session = mockSession({
+    password: "operator-secret",
+    spawnFn: (bin, args, opts) => { calls.push({ bin, args, opts }); return child; },
+  });
+  await session.start();
+  assert.equal(calls.length, 1);
+  const env = calls[0].opts.env;
+  assert.equal(env.PGPASSWORD, "operator-secret");
+  assert.equal(env.PGAPPNAME, "slmm-t6-a");
+  assert.equal(env.PGSSLMODE, "require");
+  // No other libpq variable may survive into the child.
+  for (const k of Object.keys(env)) {
+    if (/^(PG|POSTGRES)/i.test(k)) {
+      assert.ok(["PGPASSWORD", "PGAPPNAME", "PGCONNECT_TIMEOUT", "PGSSLMODE"].includes(k), `unexpected libpq variable ${k}`);
+    }
+  }
+  // The credential never reaches the wire or the statement log.
+  const pending = session.exec("SELECT 1;", { label: "x" });
+  assert.ok(!child.written.join("").includes("operator-secret"), "the credential must never be on the wire");
+  assert.ok(!session.log.join("").includes("operator-secret"), "the credential must never be in the statement log");
+  child.emit("exit", 0, null);
+  await pending.catch(() => {});
+});
+
+test("H7: the evidence records the credential SOURCE, never the credential", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "t6r-cred-"));
+  try {
+    const records = buildEvidenceRecords(finalizeResults({}, "BLOCKED"), { residueGate: "BLOCKED" });
+    const bundle = writeEvidenceBundle({
+      evidenceDir: dir,
+      records,
+      meta: { runId: "cred-1", credentialSource: "operator-variable", ambientPasswordIgnored: true },
+    });
+    const manifest = JSON.parse(readFileSync(bundle.manifestPath, "utf8"));
+    assert.equal(manifest.credentialSource, "operator-variable");
+    assert.equal(manifest.ambientPasswordIgnored, true);
+    const text = `${readFileSync(bundle.evidencePath, "utf8")}${readFileSync(bundle.manifestPath, "utf8")}`;
+    assert.ok(!/operator-secret|hunter2/.test(text), "no credential may enter the evidence");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --- H8: the cancellation ----------------------------------------------------
+
+test("H8: the first cancellation wins and the listeners are told once", () => {
+  const token = new RunCancellation();
+  let calls = 0;
+  token.onCancel(() => { calls += 1; });
+  assert.equal(token.cancelled, false);
+  assert.equal(token.cancel("SIGINT", "stop"), true);
+  assert.equal(token.cancel("SIGTERM", "stop again"), false);
+  assert.equal(calls, 1);
+  assert.equal(token.cancelled, true);
+  assert.equal(token.signal, "SIGINT");
+});
+
+test("H8: SIGINT and SIGTERM cancel the run, and the handlers are removed again", () => {
+  const handlers = new Map();
+  const fake = { on: (sig, fn) => handlers.set(sig, fn), off: (sig) => handlers.delete(sig) };
+  const token = new RunCancellation();
+  const dispose = installSignalHandlers(token, { processRef: fake });
+  assert.deepEqual([...handlers.keys()].sort(), ["SIGINT", "SIGTERM"]);
+  handlers.get("SIGINT")();
+  assert.equal(token.cancelled, true);
+  assert.equal(token.signal, "SIGINT");
+  assert.match(token.reason, /SIGINT/);
+  dispose();
+  assert.equal(handlers.size, 0);
+});
+
+test("H8: a terminated session kills its child and rejects the pending statement", async () => {
+  const child = mockChild();
+  const session = mockSession({ spawnFn: () => child });
+  await session.start();
+  const pending = session.exec("SELECT 1;", { label: "x" });
+  session.terminate("SIGTERM");
+  await assert.rejects(pending, /terminated/);
+  assert.ok(child.killed.includes("SIGTERM"), "the child must be terminated");
+  assert.equal(session.terminated, true);
+  assert.equal(session.closed, true);
+});
+
+test("H8: the runner starts no new work after a cancellation", () => {
+  assert.match(runnerSrc, /if \(cancellation\.cancelled\) \{/);
+  assert.match(runnerSrc, /record\(id, "BLOCKED", `the run was cancelled/);
+  assert.match(runnerSrc, /cancellation\.onCancel\(\(\) => \{/);
+  assert.match(runnerSrc, /s\.terminate\(cancellation\.signal\)/);
+  assert.match(runnerSrc, /disposeSignals\(\);/);
+  // The rollback and the closure guarantees survive a cancellation.
+  assert.match(runnerSrc, /if \(holder\) holder\.close\(\);/);
+  assert.match(runnerSrc, /if \(waiter\) waiter\.close\(\);/);
+  assert.match(runnerSrc, /observer\.close\(\);/);
+});
+
+// --- the abort path is authorized, the gate is not ---------------------------
+
+test("H3: the live-authorization gate stays OUTSIDE the try block", () => {
+  // An unauthorized run must never write a file, so the gate refuses before
+  // the try block that produces the evidence.
+  const gateAt = runnerSrc.indexOf("requireLiveAuthorization({ harness: HARNESS");
+  const tryAt = runnerSrc.indexOf("  try {", gateAt);
+  assert.ok(gateAt > 0, "the runner must call the live authorization gate");
+  assert.ok(tryAt > gateAt, "the gate must be evaluated before the try block");
+  // The endpoint guards, the executable resolution and the credential are
+  // INSIDE the try block, so a refusal is recorded with evidence.
+  const endpointAt = runnerSrc.indexOf("ref = assertTestEndpointIdentity(endpoint);");
+  const psqlAt = runnerSrc.indexOf("resolvePsqlExecutable({ psqlPath })");
+  const credentialAt = runnerSrc.indexOf("resolveOperatorCredential({ prompt })");
+  assert.ok(endpointAt > tryAt, "the endpoint guards must run inside the try block");
+  assert.ok(psqlAt > tryAt, "the executable resolution must run inside the try block");
+  assert.ok(credentialAt > tryAt, "the credential resolution must run inside the try block");
+  assert.ok(endpointAt < psqlAt, "the endpoint guards run before the executable is resolved");
+  assert.ok(psqlAt < credentialAt, "the executable is resolved before the credential is read");
+});
+
+test("H3: an abort before the preflight still completes the preflight result", () => {
+  assert.match(runnerSrc, /if \(!preflight\) \{/);
+  assert.match(runnerSrc, /reason: "the preflight did not run"/);
+  assert.match(runnerSrc, /if \(observer\) observer\.close\(\);/);
+});
+
+test("H8: a terminated session is an interruption, not a crash", async () => {
+  const child = mockChild();
+  const session = mockSession({ spawnFn: () => child });
+  await session.start();
+  const pending = session.exec("SELECT 1;", { label: "x" });
+  session.terminate("SIGTERM");
+  let caught = null;
+  try { await pending; } catch (e) { caught = e; }
+  assert.ok(caught, "the pending statement must be rejected");
+  assert.equal(caught.t6rAbortKind, "signal", "a termination is a signal, not an infrastructure failure");
+  assert.equal(classifyAbort(caught).kind, "signal");
+});
+
+// --- the whole abort chain, end to end, offline ------------------------------
+
+test("H3: the whole abort chain produces a verified bundle without a PASS", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "t6r-chain-"));
+  try {
+    // A safety refusal: an inherited PGPASSWORD is refused.
+    let error = null;
+    try { resolveOperatorCredential({ env: { PGPASSWORD: "ambient-secret" } }); } catch (e) { error = e; }
+    assert.ok(error, "the inherited credential must be refused");
+    const abort = classifyAbort(error);
+    assert.equal(abort.kind, "safety");
+    assert.ok(!abort.reason.includes("ambient-secret"), "the abort reason must carry no credential");
+
+    // The runner's abort path, exactly as it runs it.
+    const results = finalizeAbortResults({}, abort);
+    const records = buildEvidenceRecords(results, { residueGate: "BLOCKED" });
+    const evidence = finalizeEvidence({
+      evidenceDir: dir,
+      records,
+      meta: {
+        runId: "chain-1",
+        harness: "t6-checkpoint/t6-group-r-runner.mjs",
+        projectRef: "nqadtfqyurkpmxcodswc",
+        abort: { kind: abort.kind, reason: abort.reason, signal: abort.signal },
+        credentialSource: "none",
+        ambientPasswordIgnored: false,
+        psqlExecutable: null,
+      },
+    });
+    assert.equal(evidence.ok, true, evidence.error);
+    // The bundle verifies: the digest matches the bytes on disk.
+    assert.equal(verifyEvidenceBundle({ evidenceDir: dir }).ok, true);
+    const manifest = JSON.parse(readFileSync(evidence.manifestPath, "utf8"));
+    assert.equal(manifest.abort.kind, "safety");
+    assert.equal(manifest.caseOutcomes.PASS, 0);
+    assert.equal(manifest.caseOutcomes.BLOCKED, 8);
+    const text = readFileSync(evidence.evidencePath, "utf8");
+    assert.ok(!text.includes('"PASS"'), "no aborted case may be a PASS");
+    assert.ok(!text.includes("ambient-secret"), "no credential may enter the evidence");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -56,6 +56,31 @@
 //   * The runner never reads an environment file and never embeds a
 //     credential. The password is supplied by the operator at run time.
 //
+// OPERATOR FLOW (a separate execution approval is still required)
+//   The psql executable is resolved to an ABSOLUTE path and validated
+//   before it is used. Nothing but psql may ever be executed, and an
+//   ambiguous resolution is refused rather than guessed.
+//
+//   The credential is NEVER taken from an inherited libpq PGPASSWORD. The
+//   approved secure flow asks for it with a non-echoing prompt, keeps it in
+//   memory only and hands it to the runner through the dedicated variable:
+//
+//     $secure = Read-Host -AsSecureString -Prompt 'TEST database password'
+//     $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+//     $env:T6R_PGPASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+//     $env:T6R_PSQL = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
+//     $env:T6R_EVIDENCE_DIR = 'D:\SLMM-T6-EVIDENCE\t6-group-r-<timestamp>'
+//     node test-harness/t6-checkpoint/t6-group-r-runner.mjs --run-group-r
+//     Remove-Item Env:T6R_PGPASSWORD, Env:T6R_PSQL, Env:T6R_EVIDENCE_DIR
+//
+//   The credential reaches the psql children and nothing else: it is never
+//   logged, never echoed by the runner and never enters the evidence.
+//
+// INTERRUPTION
+//   SIGINT and SIGTERM cancel the run: no new session is started, the
+//   running children are terminated, every session is rolled back and
+//   closed, and the run is recorded with a non-PASS interruption result.
+//
 // IMPORT SAFETY
 //   This module has NO top-level side effects. Everything below is either a
 //   pure function or an explicitly invoked runner, so the offline unit tests
@@ -68,7 +93,7 @@ import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync,
-  existsSync, openSync, closeSync, fsyncSync,
+  existsSync, openSync, closeSync, fsyncSync, readdirSync, statSync,
 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -890,6 +915,273 @@ export function describeFailure(r) {
 }
 
 // ---------------------------------------------------------------------------
+// Run safety primitives (H3, H5, H6, H7, H8)
+// ---------------------------------------------------------------------------
+// These are pure (or injectable) helpers, so every safety path can be tested
+// OFFLINE with a mocked child process and a dummy credential. Nothing here
+// reads a real credential, opens a connection or touches a database.
+
+// --- H3: the abort taxonomy -------------------------------------------------
+
+/** The kinds of abort the runner distinguishes. Never "success". */
+export const ABORT_KINDS = Object.freeze(["infrastructure", "sql", "signal", "safety", "unknown"]);
+
+/** Tag an error with its abort kind, so the abort path can classify it. */
+export function markAbort(error, kind, detail = "") {
+  if (error && typeof error === "object") {
+    if (ABORT_KINDS.includes(kind)) error.t6rAbortKind = kind;
+    if (detail) error.t6rAbortDetail = String(detail);
+  }
+  return error;
+}
+
+/**
+ * Classify an abort. FAIL CLOSED: an unrecognised abort is still an abort,
+ * and no abort is ever a success.
+ *
+ *   infrastructure  the process, the child or the environment failed
+ *   sql             the database refused a statement
+ *   signal          the operator interrupted the run
+ *   safety          a guard refused to proceed
+ *   unknown         anything else -- still a failure
+ */
+export function classifyAbort(error, { cancelled = false, signal = null } = {}) {
+  const tagged = error && error.t6rAbortKind && ABORT_KINDS.includes(error.t6rAbortKind)
+    ? error.t6rAbortKind
+    : null;
+  const message = error && error.message ? String(error.message) : String(error || "");
+  let kind = tagged || "unknown";
+  if (cancelled || signal) {
+    kind = "signal";
+  } else if (!tagged) {
+    const code = error && error.code ? String(error.code) : "";
+    if (error && (error.sqlstate || error.sqlState)) kind = "sql";
+    else if (["ENOENT", "EACCES", "EPERM", "ENOTDIR", "EAGAIN", "EMFILE", "ENFILE"].includes(code)) kind = "infrastructure";
+  }
+  const detail = error && error.t6rAbortDetail ? String(error.t6rAbortDetail) : "";
+  return {
+    kind,
+    reason: redactSensitive(detail || message || "the run aborted"),
+    message: redactSensitive(message),
+    signal: signal || (error && error.signal ? String(error.signal) : null),
+  };
+}
+
+/**
+ * The verdicts of an aborted run. NO case may be a PASS: the run never
+ * completed, so every verdict is BLOCKED. The OBSERVED assertion of a case
+ * that did run is preserved next to the verdict, so nothing is lost.
+ */
+export function finalizeAbortResults(assertions = {}, abort = {}) {
+  const kind = abort && abort.kind ? String(abort.kind) : "unknown";
+  const reason = abort && abort.reason ? String(abort.reason) : "the run aborted";
+  const out = [];
+  for (const id of CASE_IDS) {
+    const a = assertions && assertions[id] ? assertions[id] : null;
+    const assertion = a && CASE_STATUSES.includes(a.assertion) ? a.assertion : "NOT RUN";
+    const observed = a && a.detail ? `; last observed: ${a.detail}` : "";
+    out.push({
+      id,
+      assertion,
+      verdict: "BLOCKED",
+      detail: `the run aborted (${kind}): ${reason}${observed}`,
+    });
+  }
+  return out;
+}
+
+// --- H6: the psql executable -------------------------------------------------
+
+/** The executable names the runner will ever run. */
+export function psqlExecutableNames(platform = process.platform) {
+  return platform === "win32" ? ["psql.exe", "psql"] : ["psql"];
+}
+
+const defaultListDir = (dir) => readdirSync(dir);
+const defaultExists = (p) => existsSync(p);
+const defaultIsFile = (p) => {
+  try { return statSync(p).isFile(); } catch { return false; }
+};
+
+/**
+ * The directories that are searched for psql, in a FIXED order. The PATH is
+ * never searched: an ambiguous PATH entry must not decide what runs.
+ */
+export function psqlSearchDirectories({ platform = process.platform, env = {}, listDir = defaultListDir } = {}) {
+  const dirs = [];
+  if (platform === "win32") {
+    const roots = [env.ProgramFiles, env["ProgramFiles(x86)"], env.ProgramW6432]
+      .filter((r) => typeof r === "string" && r.trim());
+    for (const root of roots) {
+      const base = path.join(root, "PostgreSQL");
+      let versions = [];
+      try { versions = listDir(base); } catch { versions = []; }
+      for (const v of versions.slice().sort()) dirs.push(path.join(base, String(v), "bin"));
+    }
+  } else {
+    dirs.push("/usr/bin", "/usr/local/bin", "/opt/homebrew/bin",
+      "/usr/lib/postgresql/17/bin", "/usr/lib/postgresql/16/bin");
+  }
+  return dirs;
+}
+
+/**
+ * Resolve the psql executable to an ABSOLUTE path and validate it BEFORE it
+ * is used. Fail closed:
+ *   - nothing supplied and nothing found  -> refuse;
+ *   - more than one candidate             -> refuse (ambiguous);
+ *   - a candidate that is not psql        -> refuse (unexpected executable).
+ */
+export function resolvePsqlExecutable({
+  psqlPath = "",
+  platform = process.platform,
+  env = {},
+  exists = defaultExists,
+  isFile = defaultIsFile,
+  listDir = defaultListDir,
+} = {}) {
+  const requested = String(psqlPath || "").trim();
+  const candidates = [];
+  if (requested && (requested.includes("/") || requested.includes("\\"))) {
+    candidates.push(path.resolve(requested));
+  } else {
+    for (const dir of psqlSearchDirectories({ platform, env, listDir })) {
+      for (const name of psqlExecutableNames(platform)) candidates.push(path.join(dir, name));
+    }
+  }
+  const found = [];
+  for (const c of candidates) {
+    if (!exists(c)) continue;
+    if (!isFile(c)) continue;
+    found.push(path.resolve(c));
+  }
+  const unique = [...new Set(found)];
+  if (!unique.length) {
+    throw markAbort(
+      new Error(`T6-R: no psql executable was found (${requested || "no path supplied"})`),
+      "infrastructure",
+    );
+  }
+  if (unique.length > 1) {
+    throw markAbort(
+      new Error(`T6-R: the psql executable is ambiguous: ${unique.join(", ")}`),
+      "safety",
+    );
+  }
+  const resolved = unique[0];
+  const base = path.basename(resolved).toLowerCase();
+  if (!psqlExecutableNames(platform).includes(base)) {
+    throw markAbort(
+      new Error(`T6-R: refusing to run "${resolved}": only psql may be executed`),
+      "safety",
+    );
+  }
+  if (!path.isAbsolute(resolved)) {
+    throw markAbort(
+      new Error(`T6-R: the psql executable is not an absolute path: ${resolved}`),
+      "safety",
+    );
+  }
+  return { path: resolved, requested: requested || null };
+}
+
+// --- H7: the operator credential --------------------------------------------
+
+/**
+ * The dedicated variable the approved secure operator flow sets. The approved
+ * flow asks for the password with a NON-ECHOING prompt, keeps it in memory
+ * only and hands it to this variable for the single run.
+ */
+export const OPERATOR_PASSWORD_VARIABLE = "T6R_PGPASSWORD";
+
+/**
+ * Resolve the operator credential. An INHERITED libpq PGPASSWORD is NEVER
+ * trusted: only the dedicated variable of the approved secure operator flow
+ * is accepted. The credential is returned to the caller alone; it is never
+ * logged and never enters the evidence.
+ */
+export function resolveOperatorCredential({
+  env = process.env,
+  variable = OPERATOR_PASSWORD_VARIABLE,
+  prompt = null,
+} = {}) {
+  const source = env && typeof env === "object" ? env : {};
+  const dedicated = typeof source[variable] === "string" ? source[variable] : "";
+  const ambient = typeof source.PGPASSWORD === "string" ? source.PGPASSWORD : "";
+  if (dedicated) {
+    return { password: dedicated, source: "operator-variable", ambientIgnored: !!ambient };
+  }
+  if (ambient) {
+    throw markAbort(
+      new Error(`T6-R: refusing an inherited PGPASSWORD; set ${variable} through the approved secure operator flow`),
+      "safety",
+    );
+  }
+  if (typeof prompt === "function") {
+    const value = prompt();
+    if (typeof value === "string" && value) {
+      return { password: value, source: "operator-prompt", ambientIgnored: false };
+    }
+  }
+  throw markAbort(
+    new Error(`T6-R: no operator credential was supplied; set ${variable} through the approved secure operator flow`),
+    "safety",
+  );
+}
+
+// --- H8: cancellation --------------------------------------------------------
+
+/**
+ * The run's cancellation token. The first cancellation wins; later ones are
+ * no-ops. Listeners are notified immediately so they can terminate their
+ * child processes.
+ */
+export class RunCancellation {
+  constructor() {
+    this.cancelled = false;
+    this.signal = null;
+    this.reason = "";
+    this.listeners = [];
+  }
+
+  cancel(signal = "SIGTERM", reason = "") {
+    if (this.cancelled) return false;
+    this.cancelled = true;
+    this.signal = String(signal || "SIGTERM");
+    this.reason = String(reason || "");
+    for (const fn of this.listeners.slice()) {
+      try { fn(this.signal, this.reason); } catch { /* a listener must not break the run */ }
+    }
+    return true;
+  }
+
+  onCancel(fn) {
+    if (typeof fn === "function") this.listeners.push(fn);
+  }
+}
+
+/**
+ * Install the SIGINT/SIGTERM handlers. The handler itself only sets the flag
+ * and notifies the listeners: it never throws, never awaits and never does
+ * work that could deadlock inside a signal handler.
+ */
+export function installSignalHandlers(token, { processRef = process, signals = ["SIGINT", "SIGTERM"] } = {}) {
+  const installed = [];
+  for (const sig of signals) {
+    const handler = () => { token.cancel(sig, `the operator sent ${sig}`); };
+    if (processRef && typeof processRef.on === "function") {
+      processRef.on(sig, handler);
+      installed.push([sig, handler]);
+    }
+  }
+  return () => {
+    for (const [sig, handler] of installed) {
+      try { if (typeof processRef.off === "function") processRef.off(sig, handler); } catch { /* ignore */ }
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
 // The psql session (one independent connection)
 // ---------------------------------------------------------------------------
 
@@ -898,7 +1190,7 @@ export function describeFailure(r) {
  * transaction, its own application_name and its own statement log.
  */
 export class PgSession {
-  constructor({ tag, applicationName, endpoint, password, psqlPath, variables, onStatement, onWire, stopOnError }) {
+  constructor({ tag, applicationName, endpoint, password, psqlPath, variables, onStatement, onWire, stopOnError, spawnFn }) {
     this.tag = tag;
     this.applicationName = applicationName;
     this.endpoint = endpoint;
@@ -914,6 +1206,16 @@ export class PgSession {
     this.stderr = "";
     this.buf = "";
     this.waiter = null;
+    this.spawnFn = spawnFn || spawn;
+    this.exitCode = null;
+    this.exitSignal = null;
+    this.spawnError = null;
+    this.terminated = false;
+    // H6: only an ABSOLUTE, already validated executable may be run. The
+    // resolution happens once, before any session exists.
+    if (!psqlPath || !path.isAbsolute(String(psqlPath))) {
+      throw markAbort(new Error(`${tag}: refusing to run a non-absolute psql path`), "safety");
+    }
   }
 
   #spawn() {
@@ -930,19 +1232,51 @@ export class PgSession {
     for (const [k, v] of Object.entries(this.variables)) args.push("-v", `${k}=${v}`);
     args.push("host=" + this.endpoint.host, "port=" + String(this.endpoint.port),
       "user=" + this.endpoint.user, "dbname=" + this.endpoint.database);
-    const env = { ...process.env, PGPASSWORD: this.password, PGAPPNAME: this.applicationName,
-      PGCONNECT_TIMEOUT: "20", PGSSLMODE: "require" };
+    const env = { ...process.env };
+    // H7: the credential reaches THIS child only, and it is never inherited.
+    // It is always set (even when empty), so libpq can never fall back to an
+    // interactive prompt on the runner's stdin.
+    env.PGPASSWORD = String(this.password || "");
+    env.PGAPPNAME = this.applicationName;
+    env.PGCONNECT_TIMEOUT = "20";
+    env.PGSSLMODE = "require";
     // Drop every other libpq variable so an ambient one cannot redirect us.
     for (const k of Object.keys(env)) {
       if (/^(PG|POSTGRES)/i.test(k) && !/^(PGPASSWORD|PGAPPNAME|PGCONNECT_TIMEOUT|PGSSLMODE)$/i.test(k)) delete env[k];
     }
-    this.child = spawn(this.psqlPath, args, { stdio: ["pipe", "pipe", "pipe"], env });
-    this.child.stdout.setEncoding("utf8");
+    let child;
+    try {
+      child = this.spawnFn(this.psqlPath, args, { stdio: ["pipe", "pipe", "pipe"], env });
+    } catch (e) {
+      this.spawnError = e;
+      this.closed = true;
+      throw markAbort(new Error(`${this.tag}: psql could not be started (${e && e.code ? e.code : "unknown error"})`), "infrastructure");
+    }
+    this.child = child;
+    // H5: a child-process error must NEVER become an unhandled Node error.
+    // It is an infrastructure failure and it rejects the pending statement.
+    this.child.on("error", (err) => {
+      this.closed = true;
+      this.spawnError = err;
+      const w = this.waiter; this.waiter = null;
+      if (w) w.reject(markAbort(new Error(`${this.tag}: psql failed (${err && err.code ? err.code : "unknown error"})`), "infrastructure"));
+    });
+    if (this.child.stdout && typeof this.child.stdout.setEncoding === "function") this.child.stdout.setEncoding("utf8");
     this.child.stdout.on("data", (d) => this.#onData(d));
-    this.child.stderr.setEncoding("utf8");
+    if (this.child.stderr && typeof this.child.stderr.setEncoding === "function") this.child.stderr.setEncoding("utf8");
     this.child.stderr.on("data", (d) => { this.stderr += d; });
-    this.child.on("exit", (code) => { this.closed = true; this.exitCode = code;
-      const w = this.waiter; this.waiter = null; if (w) w.reject(new Error(`${this.tag}: psql exited (${code})`)); });
+    this.child.on("exit", (code, signal) => {
+      this.closed = true; this.exitCode = code; this.exitSignal = signal || null;
+      const w = this.waiter; this.waiter = null;
+      if (!w) return;
+      // A child that was terminated by the cancellation is an interruption,
+      // not an infrastructure failure.
+      if (this.terminated) {
+        w.reject(markAbort(new Error(`${this.tag}: the session was terminated (${signal || this.exitSignal || "SIGTERM"})`), "signal"));
+        return;
+      }
+      w.reject(markAbort(new Error(`${this.tag}: psql exited (${code}${signal ? `, ${signal}` : ""})`), "infrastructure"));
+    });
   }
 
   #onData(d) {
@@ -976,7 +1310,14 @@ export class PgSession {
     this.onWire(this.tag, wire);
     const lines = await new Promise((resolve, reject) => {
       this.waiter = { marker, lines: [], resolve, reject };
-      this.child.stdin.write(wire);
+      try {
+        this.child.stdin.write(wire);
+      } catch (e) {
+        // H5: a broken pipe is an infrastructure failure, never an
+        // unhandled rejection and never a silent success.
+        this.waiter = null;
+        reject(markAbort(new Error(`${this.tag}: the statement could not be written to psql`), "infrastructure"));
+      }
     });
     return interpretExec(this.tag, label || stmt.slice(0, 60), lines);
   }
@@ -985,7 +1326,20 @@ export class PgSession {
     if (this.closed) return;
     try { await this.exec("ROLLBACK;", { label: "rollback" }); } catch { /* already gone */ }
   }
-  close() { try { this.child.stdin.end(); } catch {} try { this.child.kill(); } catch {} }
+  /** Terminate the child (H8). The session can no longer be used. */
+  terminate(signal = "SIGTERM") {
+    this.terminated = true;
+    this.closed = true;
+    if (this.child) { try { this.child.kill(signal); } catch { /* already gone */ } }
+    const w = this.waiter; this.waiter = null;
+    if (w) w.reject(markAbort(new Error(`${this.tag}: the session was terminated`), "signal"));
+  }
+  close() {
+    if (this.child) {
+      try { this.child.stdin.end(); } catch {}
+      try { this.child.kill(); } catch {}
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1234,6 +1588,13 @@ export function writeEvidenceBundle({ evidenceDir, records = [], meta = {} } = {
     residueGate: records.length ? records[0].residueGate : "NOT RUN",
     statementsIssued: (meta && meta.statementsIssued) || 0,
     forbiddenStatements: (meta && meta.forbiddenStatements) || 0,
+    // The abort taxonomy (H3): infrastructure, sql, signal, safety or
+    // unknown. It is null for a run that completed.
+    abort: (meta && meta.abort) || null,
+    // The credential SOURCE, never the credential itself (H7).
+    credentialSource: (meta && meta.credentialSource) || null,
+    ambientPasswordIgnored: !!(meta && meta.ambientPasswordIgnored),
+    psqlExecutable: (meta && meta.psqlExecutable) || null,
     createdAt: new Date().toISOString(),
   };
 
@@ -1384,21 +1745,44 @@ export function lastNumeric(lines) {
   return nums.length ? nums[nums.length - 1] : null;
 }
 
-export async function runGroupR({ endpoint, password, psqlPath = "psql", evidenceDir } = {}) {
+export async function runGroupR({
+  endpoint,
+  password,
+  psqlPath = "",
+  evidenceDir,
+  spawnFn = null,
+  signalProcess = process,
+  prompt = null,
+} = {}) {
   // The live-authorization gate comes FIRST: this harness talks to a live
   // Supabase project and is off unless an operator opts in explicitly with
   // SLMM_LIVE_TESTS=true, SLMM_LIVE_TARGET=test and a matching
   // SLMM_LIVE_ACK. Production is unconditionally prohibited by the guard.
   requireLiveAuthorization({ harness: HARNESS, services: ["supabase-test-postgres"] });
 
-  const ref = assertTestEndpointIdentity(endpoint);
-  // The project we resolved must be the TEST project. This is not
-  // tautological: the ref is derived from the endpoint the operator supplied.
-  assertNonProductionTarget(`https://${ref}.supabase.co`, { harness: HARNESS });
+  // The endpoint guards run inside the try block, so a refusal is recorded
+  // as an abort WITH evidence. The live-authorization gate stays outside it:
+  // an unauthorized run must never write a file.
+  let ref = null;
 
-  const sections = parseHarnessSections(readFileSync(HARNESS_SQL, "utf8"));
-  const missing = missingHarnessSections(sections);
-  if (missing.length) throw new Error(`T6-R: harness SQL is missing sections: ${missing.join(", ")}`);
+  // H6 and H7 are resolved INSIDE the run's try block, so a refusal is
+  // recorded as an abort WITH evidence instead of vanishing.
+  let psql = null;
+  let credential = { password: "", source: "none", ambientIgnored: false };
+
+  // H8: the operator can interrupt the run at any moment. The handler only
+  // sets the flag and terminates the children; the work itself stops at the
+  // next checkpoint.
+  const cancellation = new RunCancellation();
+  const liveSessions = new Set();
+  const disposeSignals = installSignalHandlers(cancellation, { processRef: signalProcess });
+  cancellation.onCancel(() => {
+    for (const s of liveSessions) {
+      try { s.terminate(cancellation.signal); } catch { /* already gone */ }
+    }
+  });
+
+  let sections = new Map();
 
   const variables = { owner: T6_OWNER, other: T6_OTHER, admin: T6_ADMIN, prefix: T6_KEY_PREFIX };
 
@@ -1406,9 +1790,13 @@ export async function runGroupR({ endpoint, password, psqlPath = "psql", evidenc
   let wire = "";
   const onStatement = (tag, stmt) => statements.push({ tag, stmt });
   const onWire = (tag, text) => { wire += `${text}\n`; };
-  const mk = (tag, applicationName, extraVars, stopOnError) =>
-    new PgSession({ tag, applicationName, endpoint, password, psqlPath,
-      variables: { ...variables, ...(extraVars || {}) }, onStatement, onWire, stopOnError });
+  const mk = (tag, applicationName, extraVars, stopOnError) => {
+    const session = new PgSession({ tag, applicationName, endpoint,
+      password: credential.password, psqlPath: psql.path,
+      variables: { ...variables, ...(extraVars || {}) }, onStatement, onWire, stopOnError, spawnFn });
+    liveSessions.add(session);
+    return session;
+  };
 
   const assertions = Object.create(null);
   const record = (id, assertion, detail) => { assertions[id] = { assertion, detail }; };
@@ -1418,12 +1806,17 @@ export async function runGroupR({ endpoint, password, psqlPath = "psql", evidenc
   // The observer is spawned once and is READ ONLY. It must survive every
   // acting session so that the residue check can still run, so it does not
   // stop on error. The two acting sessions stop on the first psql-level
-  // error, exactly as the matrix's rule requires.
-  const observer = mk("obs", OBSERVER_TAG, {}, false);
+  // error, exactly as the matrix's rule requires. It is created INSIDE the
+  // try block, after the executable and the credential are resolved.
+  let observer = null;
   let holder = null;
   let waiter = null;
 
   const openCase = async (key) => {
+    // H8: no new session is started after a cancellation.
+    if (cancellation.cancelled) {
+      throw markAbort(new Error(`the run was cancelled (${cancellation.signal})`), "signal");
+    }
     const vars = { key };
     holder = mk("a", HOLDER_TAG, vars, true);
     waiter = mk("b", WAITER_TAG, vars, true);
@@ -1493,13 +1886,25 @@ export async function runGroupR({ endpoint, password, psqlPath = "psql", evidenc
 
   /** Every case must leave a definite record. Never omit one. */
   const runCase = async (id, fn) => {
+    // H8: after a cancellation no further case is started.
+    if (cancellation.cancelled) {
+      record(id, "BLOCKED", `the run was cancelled (${cancellation.signal})`);
+      return;
+    }
     try {
       const outcome = await withTimeout(Promise.resolve().then(fn), CASE_TIMEOUT_MS, id);
       const status = CASE_STATUSES.includes(outcome && outcome.status) ? outcome.status : "FAIL";
       record(id, status, (outcome && outcome.detail) || "the case produced no detail");
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
-      record(id, /timed out/.test(msg) ? "BLOCKED" : "FAIL", `unexpected ${(e && e.name) || "error"}: ${msg}`);
+      const kind = e && e.t6rAbortKind ? e.t6rAbortKind : "";
+      // A cancellation is never a failure of the case itself: it is an
+      // interruption of the run.
+      const interrupted = kind === "signal" || cancellation.cancelled;
+      record(id, interrupted || /timed out/.test(msg) ? "BLOCKED" : "FAIL",
+        interrupted
+          ? `the case was interrupted (${kind || "signal"}): ${msg}`
+          : `unexpected ${(e && e.name) || "error"}: ${msg}`);
     }
   };
 
@@ -1531,8 +1936,37 @@ export async function runGroupR({ endpoint, password, psqlPath = "psql", evidenc
   // The preflight result is declared OUTSIDE the try block so the evidence
   // manifest below can record it even when the run aborts.
   let preflight = null;
+  let abort = null;
 
   try {
+    // The endpoint identity is resolved first, and the project it names
+    // must be the TEST project. This is not tautological: the ref is
+    // derived from the endpoint the operator supplied.
+    ref = assertTestEndpointIdentity(endpoint);
+    assertNonProductionTarget(`https://${ref}.supabase.co`, { harness: HARNESS });
+
+    // H6: the psql executable is resolved to an ABSOLUTE path and validated
+    // BEFORE any session exists. Nothing else may ever be executed.
+    psql = resolvePsqlExecutable({ psqlPath });
+
+    // H7: the credential comes from the approved secure operator flow only.
+    // An inherited PGPASSWORD is never trusted.
+    credential = password
+      ? { password: String(password), source: "caller", ambientIgnored: false }
+      : resolveOperatorCredential({ prompt });
+    if (!credential.password) {
+      throw markAbort(new Error("T6-R: no operator credential was supplied"), "safety");
+    }
+
+    // The harness sections are read before anything is executed.
+    sections = parseHarnessSections(readFileSync(HARNESS_SQL, "utf8"));
+    const missing = missingHarnessSections(sections);
+    if (missing.length) throw new Error(`T6-R: harness SQL is missing sections: ${missing.join(", ")}`);
+
+    // The READ ONLY observer is spawned first: it must survive every acting
+    // session so that the residue check can still run.
+    observer = mk("obs", OBSERVER_TAG, {}, false);
+
     // MANDATORY fail-closed hosted-schema preflight. It runs on its own
     // session, in its own bounded READ ONLY transaction, before the observer
     // and before any acting session or synthetic fixture exists.
@@ -1859,16 +2293,29 @@ export async function runGroupR({ endpoint, password, psqlPath = "psql", evidenc
     });
 
     await observer.rollback();
+  } catch (e) {
+    // H3: an aborted run is classified and RECORDED. It is never dropped
+    // silently and never reported as a success.
+    abort = classifyAbort(e, { cancelled: cancellation.cancelled, signal: cancellation.signal });
+    if (!preflight) {
+      // The run aborted before the preflight finished. The manifest still
+      // receives a complete, failed preflight result.
+      preflight = { ok: false, checks: 0, failures: [], reason: "the preflight did not run", fingerprint: null };
+    }
   } finally {
+    disposeSignals();
     if (holder) holder.close();
     if (waiter) waiter.close();
-    observer.close();
+    if (observer) observer.close();
   }
 
   // The final verdicts. R01-R05 cannot be a PASS unless R08 verified a clean
   // residue; the case-level assertions are preserved next to the verdicts.
-  const residueGate = assertions["T6-R08"] ? assertions["T6-R08"].assertion : "NOT RUN";
-  const results = finalizeResults(assertions, residueGate);
+  const residueGate = abort
+    ? "BLOCKED"
+    : (assertions["T6-R08"] ? assertions["T6-R08"].assertion : "NOT RUN");
+  // An aborted run has no PASS: every verdict is BLOCKED.
+  const results = abort ? finalizeAbortResults(assertions, abort) : finalizeResults(assertions, residueGate);
 
   // Exactly one structured JSON line per case, echoed and captured. The
   // echoed line is byte-identical to the line in the evidence file.
@@ -1900,9 +2347,14 @@ export async function runGroupR({ endpoint, password, psqlPath = "psql", evidenc
           serverVersion: (preflight.fingerprint && preflight.fingerprint.serverVersion) || null,
           ok: !!(preflight.fingerprint && preflight.fingerprint.ok),
         },
-      },    },
+      },
+      abort: abort ? { kind: abort.kind, reason: abort.reason, signal: abort.signal } : null,
+      credentialSource: credential.source,
+      ambientPasswordIgnored: !!credential.ambientIgnored,
+      psqlExecutable: (psql && psql.path) || null,
+    },
   });
-  const verdict = finalSuiteVerdict(results, evidence);
+  const verdict = abort ? "FAIL" : finalSuiteVerdict(results, evidence);
   if (evidence.ok) {
     console.log(JSON.stringify({
       evidence_file: evidence.evidencePath,
@@ -1913,7 +2365,7 @@ export async function runGroupR({ endpoint, password, psqlPath = "psql", evidenc
     console.error(`T6-R: evidence finalization failed: ${evidence.error}`);
   }
   console.log(JSON.stringify({ suite: verdict }));
-  return { projectRef: ref, verdict, results, records, evidence, statements };
+  return { projectRef: ref, verdict, results, records, evidence, statements, abort };
 }
 
 // ---------------------------------------------------------------------------
@@ -1926,14 +2378,19 @@ if (process.argv.includes("--run-group-r")) {
     user: process.env.T6R_PGUSER || "",
     database: process.env.T6R_PGDATABASE || "",
   };
-  const password = process.env.PGPASSWORD || "";
+  // H7: the credential is NEVER taken from an inherited PGPASSWORD. The
+  // approved secure operator flow sets the dedicated variable, and the runner
+  // resolves it itself, after the live-authorization gate.
+  const psqlPath = process.env.T6R_PSQL || "";
   try {
-    const out = await runGroupR({ endpoint, password, evidenceDir: process.env.T6R_EVIDENCE_DIR });
+    const out = await runGroupR({ endpoint, psqlPath, evidenceDir: process.env.T6R_EVIDENCE_DIR });
     // The per-case JSON lines are echoed by runGroupR itself, one per case.
     console.log(JSON.stringify({ suite: out.verdict }));
+    if (out.abort) console.error(`T6-R: the run aborted (${out.abort.kind}): ${out.abort.reason}`);
     if (out.verdict !== "PASS") process.exitCode = 1;
   } catch (e) {
-    console.error(`T6-R: ${e.message}`);
+    // The message is redacted: an error text must never carry a credential.
+    console.error(`T6-R: ${redactSensitive(e && e.message ? e.message : String(e))}`);
     process.exitCode = 1;
   }
 }
