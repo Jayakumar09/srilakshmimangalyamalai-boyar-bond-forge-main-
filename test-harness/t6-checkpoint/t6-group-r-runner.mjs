@@ -222,9 +222,16 @@ export function evaluateT6Fingerprint(fingerprint = {}) {
   return {
     ok: problems.length === 0,
     problems,
+    // The observed facts are carried with the verdict, so the evidence can
+    // record the contract, the digest, the function count and the observed
+    // server version of the baseline.
+    contract: typeof fp.schema === "string" ? fp.schema : null,
     expected: T6_FINGERPRINT_EXPECTED,
     computed: typeof fp.computed === "string" ? fp.computed : null,
+    functionCount: Number.isInteger(fp.functionCount) ? fp.functionCount : null,
     serverVersion: typeof fp.serverVersion === "string" ? fp.serverVersion : null,
+    baselineServerVersion: typeof fp.observedBaselineServerVersion === "string"
+      ? fp.observedBaselineServerVersion : null,
   };
 }
 
@@ -868,6 +875,9 @@ export function interpretPreflight(r) {
       ok: false,
       reason: `the preflight statement failed (${describeFailure(r)})${why}`,
       failures, checks, namespace, diagnostic: true,
+      // The published payload carries the fingerprint verdict even when the
+      // statement failed, so the evidence records WHY it failed.
+      fingerprint: evaluateT6Fingerprint((payload && payload.fingerprint) || {}),
     };
   }
   if (!payloadOk) {
@@ -988,6 +998,62 @@ export function finalizeAbortResults(assertions = {}, abort = {}) {
     });
   }
   return out;
+}
+
+// --- the run modes ------------------------------------------------------------
+
+/** The modes the runner can be started in. */
+export const RUN_MODES = Object.freeze(["group-r", "preflight-only"]);
+export const RUN_FLAG = "--run-group-r";
+export const PREFLIGHT_ONLY_FLAG = "--preflight-only";
+
+/**
+ * Parse the run mode from the command line. Fail closed: an UNKNOWN flag is
+ * refused rather than ignored, so a typo can never silently start the full
+ * concurrency suite, and the preflight-only flag can never stand alone.
+ */
+export function parseRunMode(argv = []) {
+  const flags = (Array.isArray(argv) ? argv : [])
+    .filter((a) => typeof a === "string" && a.startsWith("--"));
+  const known = new Set([RUN_FLAG, PREFLIGHT_ONLY_FLAG]);
+  const unknown = flags.filter((f) => !known.has(f));
+  if (unknown.length) {
+    throw markAbort(
+      new Error(`T6-R: unknown run flag(s): ${unknown.join(", ")} (refusing to guess the run mode)`),
+      "safety",
+    );
+  }
+  const run = flags.includes(RUN_FLAG);
+  const preflightOnly = flags.includes(PREFLIGHT_ONLY_FLAG);
+  if (preflightOnly && !run) {
+    throw markAbort(
+      new Error(`T6-R: ${PREFLIGHT_ONLY_FLAG} requires ${RUN_FLAG} (the mode is never inferred)`),
+      "safety",
+    );
+  }
+  if (!run) return { mode: "none", preflightOnly: false };
+  return { mode: preflightOnly ? "preflight-only" : "group-r", preflightOnly };
+}
+
+/**
+ * The case records of a preflight-only rehearsal. Eight records, every
+ * one "NOT RUN" (the matrix rule: a case that was not executed is never a
+ * pass) and "BLOCKED" as the verdict, so the bundle can never claim a
+ * Group-R success. The detail names the preflight outcome, which is what
+ * distinguishes a successful preflight from a successful concurrency run.
+ */
+export function finalizePreflightOnlyResults(preflight = {}) {
+  const ok = !!(preflight && preflight.ok === true);
+  const reason = preflight && preflight.reason ? String(preflight.reason) : "";
+  const outcome = ok
+    ? "the hosted-schema preflight passed"
+    : `the hosted-schema preflight did not pass${reason ? `: ${reason}` : ""}`;
+  return CASE_IDS.map((id) => ({
+    id,
+    assertion: "NOT RUN",
+    verdict: "BLOCKED",
+    detail: `the preflight-only rehearsal stopped after the preflight (${outcome}); ${id} was not executed`,
+  }));
 }
 
 // --- H6: the psql executable -------------------------------------------------
@@ -1588,6 +1654,10 @@ export function writeEvidenceBundle({ evidenceDir, records = [], meta = {} } = {
     residueGate: records.length ? records[0].residueGate : "NOT RUN",
     statementsIssued: (meta && meta.statementsIssued) || 0,
     forbiddenStatements: (meta && meta.forbiddenStatements) || 0,
+    // The mode makes a preflight-only rehearsal unmistakable in the bundle.
+    mode: (meta && meta.mode) || "group-r",
+    // The preflight verdict, including the pinned fingerprint verdict.
+    preflight: (meta && meta.preflight) || null,
     // The abort taxonomy (H3): infrastructure, sql, signal, safety or
     // unknown. It is null for a run that completed.
     abort: (meta && meta.abort) || null,
@@ -1753,6 +1823,7 @@ export async function runGroupR({
   spawnFn = null,
   signalProcess = process,
   prompt = null,
+  preflightOnly = false,
 } = {}) {
   // The live-authorization gate comes FIRST: this harness talks to a live
   // Supabase project and is off unless an operator opts in explicitly with
@@ -1886,6 +1957,12 @@ export async function runGroupR({
 
   /** Every case must leave a definite record. Never omit one. */
   const runCase = async (id, fn) => {
+    // The preflight-only rehearsal never executes a case: no fixture, no
+    // statement, no session.
+    if (preflightOnly) {
+      record(id, "NOT RUN", "the preflight-only rehearsal did not execute this case");
+      return;
+    }
     // H8: after a cancellation no further case is started.
     if (cancellation.cancelled) {
       record(id, "BLOCKED", `the run was cancelled (${cancellation.signal})`);
@@ -1963,18 +2040,29 @@ export async function runGroupR({
     const missing = missingHarnessSections(sections);
     if (missing.length) throw new Error(`T6-R: harness SQL is missing sections: ${missing.join(", ")}`);
 
-    // The READ ONLY observer is spawned first: it must survive every acting
-    // session so that the residue check can still run.
-    observer = mk("obs", OBSERVER_TAG, {}, false);
-
     // MANDATORY fail-closed hosted-schema preflight. It runs on its own
     // session, in its own bounded READ ONLY transaction, before the observer
     // and before any acting session or synthetic fixture exists.
     preflight = await runPreflight();
 
-    await observer.start();
-    const obsPre = await openSession(observer, "prelude.observer");
-    if (!obsPre.ok) throw new Error(`T6-R: the observer session could not be opened: ${obsPre.detail}`);
+    // A cancellation that arrived during the preflight ends the run here: it
+    // is recorded as an interruption, and no session is created.
+    if (cancellation.cancelled) {
+      throw markAbort(new Error(`the run was cancelled (${cancellation.signal})`), "signal");
+    }
+
+    // The preflight-only rehearsal creates NO session beyond the preflight:
+    // no observer, no acting session, no synthetic identity, no fixture and
+    // no case. The preflight's own transaction was already rolled back and
+    // its session closed by runPreflight's finally block.
+    if (!preflightOnly) {
+      // The READ ONLY observer is spawned first: it must survive every acting
+      // session so that the residue check can still run.
+      observer = mk("obs", OBSERVER_TAG, {}, false);
+      await observer.start();
+      const obsPre = await openSession(observer, "prelude.observer");
+      if (!obsPre.ok) throw new Error(`T6-R: the observer session could not be opened: ${obsPre.detail}`);
+    }
 
     // ---- T6-R01: a reference INSERT waits for an in-flight fence ----------
     // A fences the key (holding the per-key advisory lock and an uncommitted
@@ -2292,7 +2380,7 @@ export async function runGroupR({
       };
     });
 
-    await observer.rollback();
+    if (observer) await observer.rollback();
   } catch (e) {
     // H3: an aborted run is classified and RECORDED. It is never dropped
     // silently and never reported as a success.
@@ -2313,9 +2401,15 @@ export async function runGroupR({
   // residue; the case-level assertions are preserved next to the verdicts.
   const residueGate = abort
     ? "BLOCKED"
-    : (assertions["T6-R08"] ? assertions["T6-R08"].assertion : "NOT RUN");
-  // An aborted run has no PASS: every verdict is BLOCKED.
-  const results = abort ? finalizeAbortResults(assertions, abort) : finalizeResults(assertions, residueGate);
+    : (preflightOnly ? "NOT RUN" : (assertions["T6-R08"] ? assertions["T6-R08"].assertion : "NOT RUN"));
+  // An aborted run has no PASS: every verdict is BLOCKED. A preflight-only
+  // rehearsal records eight NOT RUN / BLOCKED records: the Group-R suite was
+  // never executed, whatever the preflight said.
+  const results = abort
+    ? finalizeAbortResults(assertions, abort)
+    : preflightOnly
+      ? finalizePreflightOnlyResults(preflight)
+      : finalizeResults(assertions, residueGate);
 
   // Exactly one structured JSON line per case, echoed and captured. The
   // echoed line is byte-identical to the line in the evidence file.
@@ -2335,6 +2429,8 @@ export async function runGroupR({
       projectRef: ref,
       statementsIssued: statements.length,
       forbiddenStatements: auditStatementLog(statements.map((s) => s.stmt)).length,
+      // The mode makes a preflight-only rehearsal unmistakable in the bundle.
+      mode: preflightOnly ? "preflight-only" : "group-r",
       preflight: {
         ok: preflight.ok === true,
         checks: preflight.checks || 0,
@@ -2344,7 +2440,9 @@ export async function runGroupR({
           contract: T6_FINGERPRINT_CONTRACT,
           expected: T6_FINGERPRINT_EXPECTED,
           computed: (preflight.fingerprint && preflight.fingerprint.computed) || null,
+          functionCount: (preflight.fingerprint && preflight.fingerprint.functionCount) || null,
           serverVersion: (preflight.fingerprint && preflight.fingerprint.serverVersion) || null,
+          baselineServerVersion: (preflight.fingerprint && preflight.fingerprint.observedBaselineServerVersion) || T6_FINGERPRINT_SERVER_VERSION,
           ok: !!(preflight.fingerprint && preflight.fingerprint.ok),
         },
       },
@@ -2365,32 +2463,88 @@ export async function runGroupR({
     console.error(`T6-R: evidence finalization failed: ${evidence.error}`);
   }
   console.log(JSON.stringify({ suite: verdict }));
-  return { projectRef: ref, verdict, results, records, evidence, statements, abort };
+  return {
+    projectRef: ref,
+    mode: preflightOnly ? "preflight-only" : "group-r",
+    verdict, results, records, evidence, statements, abort,
+    preflight: {
+      ok: preflight.ok === true,
+      checks: preflight.checks || 0,
+      failures: (preflight.failures || []).map((f) => redactSensitive(f)),
+      reason: redactSensitive(preflight.reason || ""),
+      fingerprint: {
+        contract: T6_FINGERPRINT_CONTRACT,
+        expected: T6_FINGERPRINT_EXPECTED,
+        computed: (preflight.fingerprint && preflight.fingerprint.computed) || null,
+        functionCount: (preflight.fingerprint && preflight.fingerprint.functionCount) || null,
+        serverVersion: (preflight.fingerprint && preflight.fingerprint.serverVersion) || null,
+        ok: !!(preflight.fingerprint && preflight.fingerprint.ok),
+      },
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
 // CLI entry point (never runs on import)
 // ---------------------------------------------------------------------------
-if (process.argv.includes("--run-group-r")) {
-  const endpoint = {
-    host: process.env.T6R_PGHOST || "",
-    port: Number(process.env.T6R_PGPORT || 0),
-    user: process.env.T6R_PGUSER || "",
-    database: process.env.T6R_PGDATABASE || "",
-  };
-  // H7: the credential is NEVER taken from an inherited PGPASSWORD. The
-  // approved secure operator flow sets the dedicated variable, and the runner
-  // resolves it itself, after the live-authorization gate.
-  const psqlPath = process.env.T6R_PSQL || "";
+// A run flag of either family triggers the block, so a TYPO in a run flag
+// is refused instead of silently doing nothing (or, worse, silently starting
+// the full concurrency suite).
+const RUN_FLAG_CANDIDATES = process.argv.filter(
+  (a) => typeof a === "string" && /^--(run|preflight)/.test(a),
+);
+
+if (RUN_FLAG_CANDIDATES.length) {
+  // The mode is never inferred. --preflight-only REQUIRES --run-group-r, an
+  // unknown flag is refused, and the combination is explicit.
+  let mode = { mode: "none", preflightOnly: false };
   try {
-    const out = await runGroupR({ endpoint, psqlPath, evidenceDir: process.env.T6R_EVIDENCE_DIR });
-    // The per-case JSON lines are echoed by runGroupR itself, one per case.
-    console.log(JSON.stringify({ suite: out.verdict }));
-    if (out.abort) console.error(`T6-R: the run aborted (${out.abort.kind}): ${out.abort.reason}`);
-    if (out.verdict !== "PASS") process.exitCode = 1;
+    mode = parseRunMode(process.argv);
+    if (mode.mode === "none") {
+      throw new Error(`T6-R: ${PREFLIGHT_ONLY_FLAG} requires ${RUN_FLAG} (the run mode is never inferred)`);
+    }
   } catch (e) {
-    // The message is redacted: an error text must never carry a credential.
     console.error(`T6-R: ${redactSensitive(e && e.message ? e.message : String(e))}`);
     process.exitCode = 1;
+  }
+
+  if (mode.mode !== "none") {
+    const endpoint = {
+      host: process.env.T6R_PGHOST || "",
+      port: Number(process.env.T6R_PGPORT || 0),
+      user: process.env.T6R_PGUSER || "",
+      database: process.env.T6R_PGDATABASE || "",
+    };
+    // H7: the credential is NEVER taken from an inherited PGPASSWORD. The
+    // approved secure operator flow sets the dedicated variable, and the runner
+    // resolves it itself, after the live-authorization gate.
+    const psqlPath = process.env.T6R_PSQL || "";
+    try {
+      const out = await runGroupR({
+        endpoint,
+        psqlPath,
+        evidenceDir: process.env.T6R_EVIDENCE_DIR,
+        preflightOnly: mode.preflightOnly,
+      });
+      // The per-case JSON lines are echoed by runGroupR itself, one per case.
+      console.log(JSON.stringify({ suite: out.verdict }));
+      if (out.mode === "preflight-only") {
+        // A preflight-only rehearsal is NEVER a Group-R success. It reports
+        // the preflight verdict on its own, so a passing preflight can never
+        // be mistaken for a passing concurrency run.
+        console.log(JSON.stringify({
+          mode: out.mode,
+          preflight: !!(out.preflight && out.preflight.ok),
+          preflight_checks: (out.preflight && out.preflight.checks) || 0,
+          fingerprint: (out.preflight && out.preflight.fingerprint) || null,
+        }));
+      }
+      if (out.abort) console.error(`T6-R: the run aborted (${out.abort.kind}): ${out.abort.reason}`);
+      if (out.verdict !== "PASS") process.exitCode = 1;
+    } catch (e) {
+      // The message is redacted: an error text must never carry a credential.
+      console.error(`T6-R: ${redactSensitive(e && e.message ? e.message : String(e))}`);
+      process.exitCode = 1;
+    }
   }
 }

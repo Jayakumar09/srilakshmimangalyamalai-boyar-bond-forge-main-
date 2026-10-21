@@ -72,6 +72,9 @@ import {
   finalizeEvidence,
   finalSuiteVerdict,
   PREFLIGHT_TAG,
+  OBSERVER_TAG,
+  HOLDER_TAG,
+  WAITER_TAG,
   PREFLIGHT_SCHEMA,
   PREFLIGHT_NAMESPACE_KEYS,
   interpretPreflight,
@@ -94,6 +97,12 @@ import {
   RunCancellation,
   installSignalHandlers,
   PgSession,
+  RUN_MODES,
+  RUN_FLAG,
+  PREFLIGHT_ONLY_FLAG,
+  parseRunMode,
+  runGroupR,
+  finalizePreflightOnlyResults,
 } from "./t6-group-r-runner.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -1870,7 +1879,7 @@ test("H3: the abort reason is redacted", () => {
 
 test("H3: the runner records an abort instead of dropping it", () => {
   assert.match(runnerSrc, /abort = classifyAbort\(e, \{ cancelled: cancellation\.cancelled, signal: cancellation\.signal \}\);/);
-  assert.match(runnerSrc, /const results = abort \? finalizeAbortResults\(assertions, abort\) : finalizeResults\(assertions, residueGate\);/);
+  assert.match(runnerSrc, /const results = abort\s*\? finalizeAbortResults\(assertions, abort\)/);
   assert.match(runnerSrc, /const verdict = abort \? "FAIL" : finalSuiteVerdict\(results, evidence\);/);
   assert.match(runnerSrc, /abort: abort \? \{ kind: abort\.kind, reason: abort\.reason, signal: abort\.signal \} : null,/);
   // The evidence is written AFTER the abort is classified, so an aborted run
@@ -2218,4 +2227,374 @@ test("H3: the whole abort chain produces a verified bundle without a PASS", () =
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// PF: the preflight-only rehearsal mode
+// ---------------------------------------------------------------------------
+// Every test is hermetic: a mocked child process, a dummy credential and a
+// dummy executable file. No process is started, no connection is made, no
+// SQL reaches a server and no credential is read.
+
+const PF_ENDPOINT = {
+  host: POOL_HOST,
+  port: REQUIRED_PORT,
+  user: `postgres.${TEST_REF}`,
+  database: "postgres",
+};
+
+/** A dummy, never-executed executable for the resolver to validate. */
+function dummyPsql() {
+  const dir = mkdtempSync(path.join(tmpdir(), "t6r-pf-psql-"));
+  const file = path.join(dir, process.platform === "win32" ? "psql.exe" : "psql");
+  writeFileSync(file, "not an executable\n");
+  return { dir, file };
+}
+
+/**
+ * A mocked psql that answers the completion probe, so the whole runner can
+ * be driven offline. It records every session it is asked for and every wire
+ * it receives.
+ */
+function mockPreflightRunner({
+  preflightOk = true,
+  computed = T6_FINGERPRINT_EXPECTED,
+  functionCount = T6_FINGERPRINT_FUNCTION_COUNT,
+  onPreflightWire = null,
+} = {}) {
+  const spawned = [];
+  const wires = [];
+  const spawnFn = (bin, args, opts) => {
+    const appname = opts.env.PGAPPNAME;
+    spawned.push(appname);
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stdout.setEncoding = () => {};
+    child.stderr = new EventEmitter();
+    child.stderr.setEncoding = () => {};
+    let buf = "";
+    child.stdin = {
+      write: (s) => {
+        buf += String(s);
+        const m = buf.match(/\\echo (__T6R_END_[^\s]+)/);
+        if (!m) return true;
+        const marker = m[1];
+        const wire = buf;
+        buf = "";
+        wires.push(wire);
+        const isPreflight = wire.includes("t6-group-r-preflight/v1");
+        if (isPreflight && typeof onPreflightWire === "function") onPreflightWire(child, wire);
+        const payload = isPreflight
+          ? {
+            sqlstate: preflightOk ? "00000" : "TPF01",
+            message: preflightOk ? "" : "the hosted-schema preflight failed",
+            preflight: JSON.stringify({
+              schema: PREFLIGHT_SCHEMA,
+              ok: preflightOk,
+              checks: 57,
+              failures: preflightOk ? [] : ["function public.has_role(uuid, public.app_role) is missing"],
+              namespace: Object.fromEntries(PREFLIGHT_NAMESPACE_KEYS.map((k) => [k, 0])),
+              fingerprint: {
+                schema: T6_FINGERPRINT_CONTRACT,
+                expected: T6_FINGERPRINT_EXPECTED,
+                computed,
+                functionCount,
+                serverVersion: "17.11",
+              },
+            }),
+          }
+          : { sqlstate: "00000", message: "", isolation: "read committed" };
+        // A bounded numeric answer keeps the observer polls fast.
+        const numeric = wire.includes("slmm-t6-%'") ? "0" : "1";
+        child.stdout.emit("data", `${numeric}\n${PROBE_PREFIX}${JSON.stringify(payload)}\n${marker}\n`);
+        return true;
+      },
+      end: () => {},
+    };
+    child.kill = () => { child.emit("exit", null, "SIGTERM"); return true; };
+    return child;
+  };
+  return { spawned, wires, spawnFn };
+}
+
+/** Run the body with the live authorization in place, then restore it. */
+function withLiveAuthorization(fn) {
+  const keys = ["SLMM_LIVE_TESTS", "SLMM_LIVE_TARGET", "SLMM_LIVE_ACK"];
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  process.env.SLMM_LIVE_TESTS = "true";
+  process.env.SLMM_LIVE_TARGET = "test";
+  process.env.SLMM_LIVE_ACK = "t6-checkpoint/t6-group-r-runner.mjs";
+  try {
+    return fn();
+  } finally {
+    for (const k of keys) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  }
+}
+
+const runPreflightOnly = (mock, { evidenceDir, psqlPath, extra = {} } = {}) =>
+  withLiveAuthorization(() => runGroupR({
+    endpoint: PF_ENDPOINT,
+    password: "dummy-credential",
+    psqlPath,
+    evidenceDir,
+    spawnFn: mock.spawnFn,
+    preflightOnly: true,
+    ...extra,
+  }));
+
+// --- the mode is never inferred ------------------------------------------------
+
+test("PF: the run mode is explicit and a typo is refused", () => {
+  assert.deepEqual(parseRunMode(["node", "runner.mjs"]), { mode: "none", preflightOnly: false });
+  assert.deepEqual(parseRunMode(["node", "runner.mjs", "--run-group-r"]), { mode: "group-r", preflightOnly: false });
+  assert.deepEqual(
+    parseRunMode(["node", "runner.mjs", "--run-group-r", "--preflight-only"]),
+    { mode: "preflight-only", preflightOnly: true },
+  );
+  // The preflight-only flag never stands alone.
+  assert.throws(() => parseRunMode(["node", "runner.mjs", "--preflight-only"]), /requires --run-group-r/);
+  // A typo in a run flag is refused, never ignored.
+  assert.throws(() => parseRunMode(["node", "runner.mjs", "--run-group-r", "--prefligt-only"]), /unknown run flag/);
+  assert.throws(() => parseRunMode(["node", "runner.mjs", "--run-group-r2"]), /unknown run flag/);
+});
+
+test("PF: the preflight-only records are eight NOT RUN / BLOCKED", () => {
+  const results = finalizePreflightOnlyResults({ ok: true, checks: 57, reason: "" });
+  assert.equal(results.length, 8);
+  for (const r of results) {
+    assert.equal(r.assertion, "NOT RUN");
+    assert.equal(r.verdict, "BLOCKED");
+    assert.notEqual(r.verdict, "PASS");
+  }
+  assert.match(results[0].detail, /preflight passed/);
+  const failed = finalizePreflightOnlyResults({ ok: false, checks: 57, reason: "the fingerprint drifted" });
+  assert.match(failed[0].detail, /did not pass/);
+  const records = buildEvidenceRecords(results, { residueGate: "NOT RUN" });
+  assert.equal(validateEvidenceRecords(records).ok, true);
+  assert.equal(validateEvidenceGate(records).ok, true);
+  assert.ok(!records.some((r) => r.verdict === "PASS"));
+});
+
+// --- the preflight-only rehearsal --------------------------------------------
+
+test("PF: the preflight-only mode creates exactly one session and runs only the preflight", async () => {
+  const psql = dummyPsql();
+  const evidenceDir = mkdtempSync(path.join(tmpdir(), "t6r-pf-run-"));
+  const mock = mockPreflightRunner({ preflightOk: true });
+  try {
+    const out = await runPreflightOnly(mock, { evidenceDir, psqlPath: psql.file });
+    // Exactly one session: the preflight. No observer, no acting session.
+    assert.deepEqual(mock.spawned, [PREFLIGHT_TAG]);
+    assert.ok(!mock.spawned.includes(OBSERVER_TAG));
+    assert.ok(!mock.spawned.includes(HOLDER_TAG));
+    assert.ok(!mock.spawned.includes(WAITER_TAG));
+    // Exactly two statements on that one session: the read-only preflight
+    // section and the terminating ROLLBACK. Nothing else.
+    assert.equal(mock.wires.length, 2);
+    assert.ok(mock.wires[0].includes("t6-group-r-preflight/v1"));
+    assert.ok(mock.wires[1].includes("ROLLBACK;"));
+    // No fixture and no write statement was ever issued.
+    for (const w of mock.wires) {
+      assert.ok(!/INSERT INTO public\./.test(w), "no fixture INSERT may be issued");
+      assert.ok(!/request_storage_deletion\(|claim_storage_deletion_request\(|fence_storage_key_for_deletion\(/.test(w), "no fixture call may be issued");
+    }
+    // No case ran.
+    for (const r of out.results) {
+      assert.equal(r.assertion, "NOT RUN");
+      assert.equal(r.verdict, "BLOCKED");
+    }
+    assert.notEqual(out.verdict, "PASS");
+    assert.equal(out.mode, "preflight-only");
+  } finally {
+    rmSync(psql.dir, { recursive: true, force: true });
+    rmSync(evidenceDir, { recursive: true, force: true });
+  }
+});
+
+test("PF: a successful preflight writes a verifiable diagnostic bundle", async () => {
+  const psql = dummyPsql();
+  const evidenceDir = mkdtempSync(path.join(tmpdir(), "t6r-pf-ok-"));
+  const mock = mockPreflightRunner({ preflightOk: true });
+  try {
+    const out = await runPreflightOnly(mock, { evidenceDir, psqlPath: psql.file });
+    assert.equal(out.evidence.ok, true, out.evidence.error);
+    assert.equal(verifyEvidenceBundle({ evidenceDir }).ok, true);
+    const manifest = JSON.parse(readFileSync(out.evidence.manifestPath, "utf8"));
+    assert.equal(manifest.mode, "preflight-only");
+    assert.equal(manifest.preflight.ok, true);
+    assert.equal(manifest.preflight.checks, 57);
+    assert.deepEqual(manifest.preflight.failures, []);
+    // The fingerprint verdict is recorded in full.
+    assert.equal(manifest.preflight.fingerprint.contract, "t6-group-r-fingerprint/v2");
+    assert.equal(manifest.preflight.fingerprint.expected, "a85fea6468487830a4ca9afc268d9aef");
+    assert.equal(manifest.preflight.fingerprint.computed, "a85fea6468487830a4ca9afc268d9aef");
+    assert.equal(manifest.preflight.fingerprint.functionCount, 17);
+    assert.equal(manifest.preflight.fingerprint.serverVersion, "17.11");
+    assert.equal(manifest.preflight.fingerprint.baselineServerVersion, "17.11");
+    assert.equal(manifest.preflight.fingerprint.ok, true);
+    // The residue gate is NOT RUN and nothing is a PASS.
+    assert.equal(manifest.residueGate, "NOT RUN");
+    assert.equal(manifest.caseOutcomes.PASS, 0);
+    assert.equal(manifest.caseOutcomes.BLOCKED, 8);
+    assert.notEqual(out.verdict, "PASS");
+    // No credential and no connection detail may enter the bundle.
+    const text = `${readFileSync(out.evidence.evidencePath, "utf8")}${readFileSync(out.evidence.manifestPath, "utf8")}`;
+    assert.ok(!text.includes("dummy-credential"));
+    assert.ok(!/password=/i.test(text));
+  } finally {
+    rmSync(psql.dir, { recursive: true, force: true });
+    rmSync(evidenceDir, { recursive: true, force: true });
+  }
+});
+
+test("PF: a failed preflight still writes a non-PASS diagnostic bundle", async () => {
+  const psql = dummyPsql();
+  const evidenceDir = mkdtempSync(path.join(tmpdir(), "t6r-pf-fail-"));
+  // A drifted fingerprint: the computed digest differs from the pinned one.
+  const mock = mockPreflightRunner({ preflightOk: false, computed: "0".repeat(32) });
+  try {
+    const out = await runPreflightOnly(mock, { evidenceDir, psqlPath: psql.file });
+    assert.equal(out.evidence.ok, true, out.evidence.error);
+    assert.equal(verifyEvidenceBundle({ evidenceDir }).ok, true);
+    assert.notEqual(out.verdict, "PASS");
+    assert.equal(out.preflight.ok, false);
+    assert.equal(out.preflight.fingerprint.ok, false, "a fingerprint mismatch blocks the rehearsal");
+    const manifest = JSON.parse(readFileSync(out.evidence.manifestPath, "utf8"));
+    assert.equal(manifest.mode, "preflight-only");
+    assert.equal(manifest.preflight.ok, false);
+    assert.equal(manifest.preflight.fingerprint.computed, "0".repeat(32));
+    assert.equal(manifest.preflight.fingerprint.ok, false);
+    assert.ok(manifest.preflight.failures.length > 0);
+    assert.equal(manifest.caseOutcomes.PASS, 0);
+    assert.equal(manifest.caseOutcomes.BLOCKED, 8);
+    // The failure reason is recorded, the credential never is.
+    const text = `${readFileSync(out.evidence.evidencePath, "utf8")}${readFileSync(out.evidence.manifestPath, "utf8")}`;
+    assert.ok(!text.includes("dummy-credential"));
+    // Still exactly one session: the preflight and its ROLLBACK.
+    assert.deepEqual(mock.spawned, [PREFLIGHT_TAG]);
+    assert.equal(mock.wires.length, 2);
+    assert.ok(mock.wires[1].includes("ROLLBACK;"));
+  } finally {
+    rmSync(psql.dir, { recursive: true, force: true });
+    rmSync(evidenceDir, { recursive: true, force: true });
+  }
+});
+
+test("PF: without the live authorization no evidence is written", async () => {
+  const psql = dummyPsql();
+  const evidenceDir = mkdtempSync(path.join(tmpdir(), "t6r-pf-noauth-"));
+  const mock = mockPreflightRunner({ preflightOk: true });
+  const keys = ["SLMM_LIVE_TESTS", "SLMM_LIVE_TARGET", "SLMM_LIVE_ACK"];
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  const savedExit = process.exit;
+  let exitCode = null;
+  try {
+    for (const k of keys) delete process.env[k];
+    // The guard refuses by exiting; the stub keeps the test process alive.
+    process.exit = (code) => { exitCode = code; throw new Error(`process.exit(${code})`); };
+    await assert.rejects(() => runGroupR({
+      endpoint: PF_ENDPOINT,
+      password: "dummy-credential",
+      psqlPath: psql.file,
+      evidenceDir,
+      spawnFn: mock.spawnFn,
+      preflightOnly: true,
+    }), /process\.exit\(2\)/);
+    assert.equal(exitCode, 2);
+  } finally {
+    process.exit = savedExit;
+    for (const k of keys) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    rmSync(psql.dir, { recursive: true, force: true });
+    rmSync(evidenceDir, { recursive: true, force: true });
+  }
+  // No session, no statement and no evidence file.
+  assert.deepEqual(mock.spawned, []);
+  assert.equal(mock.wires.length, 0);
+});
+
+test("PF: a cancellation during the preflight is recorded as an interruption", async () => {
+  const psql = dummyPsql();
+  const evidenceDir = mkdtempSync(path.join(tmpdir(), "t6r-pf-cancel-"));
+  // The operator's SIGINT arrives while the preflight is running.
+  const handlers = new Map();
+  const fakeProcess = {
+    on: (sig, handler) => { handlers.set(sig, handler); },
+    off: (sig) => { handlers.delete(sig); },
+  };
+  const mock = mockPreflightRunner({
+    preflightOk: true,
+    onPreflightWire: (child) => {
+      // The signal handler cancels the run and the child is terminated.
+      const handler = handlers.get("SIGINT");
+      if (handler) handler();
+    },
+  });
+  try {
+    const out = await runPreflightOnly(mock, {
+      evidenceDir,
+      psqlPath: psql.file,
+      extra: { signalProcess: fakeProcess },
+    });
+    assert.ok(out.abort, "the cancellation must be recorded as an abort");
+    assert.equal(out.abort.kind, "signal");
+    assert.notEqual(out.verdict, "PASS");
+    // No case ran and no fixture was issued.
+    for (const r of out.results) assert.equal(r.verdict, "BLOCKED");
+    for (const w of mock.wires) assert.ok(!/INSERT INTO public\./.test(w));
+    // The bundle exists and records the interruption.
+    assert.equal(out.evidence.ok, true, out.evidence.error);
+    const manifest = JSON.parse(readFileSync(out.evidence.manifestPath, "utf8"));
+    assert.equal(manifest.abort.kind, "signal");
+    assert.equal(manifest.caseOutcomes.PASS, 0);
+  } finally {
+    rmSync(psql.dir, { recursive: true, force: true });
+    rmSync(evidenceDir, { recursive: true, force: true });
+  }
+});
+
+test("PF: the ordinary Group-R path is unchanged", async () => {
+  const psql = dummyPsql();
+  const evidenceDir = mkdtempSync(path.join(tmpdir(), "t6r-pf-normal-"));
+  const mock = mockPreflightRunner({ preflightOk: true });
+  try {
+    const out = await withLiveAuthorization(() => runGroupR({
+      endpoint: PF_ENDPOINT,
+      password: "dummy-credential",
+      psqlPath: psql.file,
+      evidenceDir,
+      spawnFn: mock.spawnFn,
+    }));
+    // The observer and the acting sessions exist exactly as before.
+    assert.ok(mock.spawned.includes(PREFLIGHT_TAG));
+    assert.ok(mock.spawned.includes(OBSERVER_TAG));
+    assert.ok(mock.spawned.includes(HOLDER_TAG));
+    assert.ok(mock.spawned.includes(WAITER_TAG));
+    assert.ok(mock.wires.length > 1, "the ordinary path executes the cases");
+    assert.equal(out.mode, "group-r");
+    assert.notEqual(out.verdict, "PASS");
+    const manifest = JSON.parse(readFileSync(out.evidence.manifestPath, "utf8"));
+    assert.equal(manifest.mode, "group-r");
+  } finally {
+    rmSync(psql.dir, { recursive: true, force: true });
+    rmSync(evidenceDir, { recursive: true, force: true });
+  }
+});
+
+test("PF: the source keeps the preflight-only guards wired in", () => {
+  // The preflight-only mode never creates the observer and never runs a case.
+  assert.match(runnerSrc, /if \(!preflightOnly\) \{/);
+  assert.match(runnerSrc, /if \(preflightOnly\) \{\s*record\(id, "NOT RUN"/);
+  assert.match(runnerSrc, /finalizePreflightOnlyResults\(preflight\)/);
+  assert.match(runnerSrc, /mode: preflightOnly \? "preflight-only" : "group-r",/);
+  assert.match(runnerSrc, /preflight: \(meta && meta\.preflight\) \|\| null,/);
+  // The live-authorization gate and the TEST-only endpoint guards are intact.
+  assert.match(runnerSrc, /requireLiveAuthorization\(\{ harness: HARNESS, services: \["supabase-test-postgres"\] \}\);/);
+  assert.match(runnerSrc, /ref = assertTestEndpointIdentity\(endpoint\);/);
+  assert.match(runnerSrc, /assertNonProductionTarget\(`https:\/\/\$\{ref\}\.supabase\.co`, \{ harness: HARNESS \}\);/);
 });
