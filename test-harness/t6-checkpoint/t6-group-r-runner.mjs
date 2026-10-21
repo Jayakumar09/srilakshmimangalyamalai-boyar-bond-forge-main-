@@ -92,6 +92,10 @@ export const T6_KEY_PREFIX = `${T6_OWNER}/t6/`;
 export const HOLDER_TAG = "slmm-t6-a";
 export const WAITER_TAG = "slmm-t6-b";
 export const OBSERVER_TAG = "slmm-t6-obs";
+// The preflight gets its OWN session and its OWN bounded READ ONLY
+// transaction, so it can never be confused with the observer or with an
+// acting session, and it is closed before the residue measurement.
+export const PREFLIGHT_TAG = "slmm-t6-pf";
 
 // ---------------------------------------------------------------------------
 // Endpoint identity guards (pure)
@@ -295,6 +299,7 @@ export function parseHarnessSections(text) {
 
 /** The sections the runner requires. A missing one is a hard error. */
 export const REQUIRED_SECTIONS = Object.freeze([
+  "preflight.schema",
   "prelude.authenticated", "prelude.service_role", "prelude.observer",
   "prelude.isolation_check",
   "escalate.service_role", "escalate.authenticated",
@@ -492,6 +497,13 @@ export function classifySqlFailure({ sqlstate = "", message = "", label = "" } =
   const msg = String(message || "");
   const ctx = String(label || "");
   if (!st || st === "00000") return { outcome: "NONE", kind: "none", reason: "no failure" };
+  if (st === "TPF01") {
+    return {
+      outcome: "BLOCKED",
+      kind: "preflight",
+      reason: `the hosted-schema preflight failed at ${ctx}: ${msg}`,
+    };
+  }
   if (st === "40P01") {
     return { outcome: "FAIL", kind: "deadlock", reason: `a deadlock (40P01) was reported at ${ctx}` };
   }
@@ -566,6 +578,7 @@ BEGIN
   PERFORM set_config('t6r.pay_id', '', false);
   PERFORM set_config('t6r.hygiene', '', false);
   PERFORM set_config('t6r.residue', '', false);
+  PERFORM set_config('t6r.preflight', '', false);
 END
 $t6r$;`;
 
@@ -657,6 +670,79 @@ export function interpretExec(tag, label, lines) {
   };
 }
 
+/**
+ * Interpret the preflight result. Fail closed: anything that is not an
+ * explicit, complete, all-zero preflight payload is a failure.
+ */
+export const PREFLIGHT_SCHEMA = "t6-group-r-preflight/v1";
+
+// Every relation the preflight must prove free of the synthetic namespace.
+export const PREFLIGHT_NAMESPACE_KEYS = Object.freeze([
+  "auth.users", "storage_deletion_requests", "storage_deletion_fences", "documents",
+  "profiles", "user_roles", "payments", "jathagam_requests", "support_threads",
+  "support_messages", "payment_events",
+]);
+
+export function interpretPreflight(r) {
+  const fail = (reason, extra = {}) => ({
+    ok: false, reason, failures: [], checks: 0, namespace: null, ...extra,
+  });
+  if (!r || r.fatal) {
+    return fail(`the preflight produced no completion probe${r && r.message ? `: ${r.message}` : ""}`);
+  }
+  // The diagnostic payload is parsed on EVERY path, so a FAILED preflight
+  // still reports how many objects were checked and exactly what failed. The
+  // payload is NEVER proof of success: only the success path below can return
+  // ok:true, and it does so only after the runner re-verifies the namespace
+  // counts itself.
+  const raw = r.probe ? r.probe.preflight : null;
+  let payload = null;
+  try { payload = (typeof raw === "string" && raw.trim()) ? JSON.parse(raw) : null; } catch { payload = null; }
+  const payloadOk = !!(payload && typeof payload === "object" && !Array.isArray(payload)
+    && payload.schema === PREFLIGHT_SCHEMA);
+  const failures = payloadOk && Array.isArray(payload.failures) ? payload.failures.map((f) => String(f)) : [];
+  const checks = payloadOk && Number.isFinite(Number(payload.checks)) ? Number(payload.checks) : 0;
+  const namespace = payloadOk && payload.namespace && typeof payload.namespace === "object" && !Array.isArray(payload.namespace)
+    ? payload.namespace : null;
+
+  if (!r.ok) {
+    // The SQL operation itself failed. Whatever the payload says, this is not
+    // a success: the contract, the namespace and the object checks were never
+    // all satisfied.
+    const why = failures.length ? `: ${failures.join(" | ")}` : "";
+    return {
+      ok: false,
+      reason: `the preflight statement failed (${describeFailure(r)})${why}`,
+      failures, checks, namespace, diagnostic: true,
+    };
+  }
+  if (!payloadOk) {
+    return fail("the preflight published no usable result");
+  }
+  if (payload.ok !== true || failures.length > 0) {
+    return {
+      ok: false,
+      reason: failures.length ? failures.join(" | ") : "the preflight reported a failure",
+      failures, checks, namespace,
+    };
+  }
+  // Independent re-verification: the runner never takes the preflight's own
+  // "ok" on trust. Every relation must be present and exactly zero.
+  if (!namespace) return fail("the preflight published no namespace counts", { failures, checks });
+  const missing = PREFLIGHT_NAMESPACE_KEYS.filter((k) => !Object.prototype.hasOwnProperty.call(namespace, k));
+  if (missing.length) {
+    return fail(`the preflight did not count: ${missing.join(", ")}`, { failures, checks, namespace });
+  }
+  const bad = Object.entries(namespace).filter(([, n]) => !Number.isInteger(n) || n !== 0);
+  if (bad.length) {
+    return {
+      ok: false,
+      reason: `the synthetic namespace is not empty: ${bad.map(([k, n]) => `${k}=${n}`).join(", ")}`,
+      failures, checks, namespace,
+    };
+  }
+  return { ok: true, reason: "", failures: [], checks, namespace };
+}
 /** Describe a failed statement for a case detail string. */
 export function describeFailure(r) {
   if (!r) return "an unknown failure";
@@ -1278,7 +1364,37 @@ export async function runGroupR({ endpoint, password, psqlPath = "psql", evidenc
     }
   };
 
+  /** The mandatory fail-closed hosted-schema preflight. */
+  const runPreflight = async () => {
+    const pf = mk("pf", PREFLIGHT_TAG, {}, true);
+    try {
+      await pf.start();
+      const r = await pf.exec(S("preflight.schema"), { label: "preflight.schema" });
+      return interpretPreflight(r);
+    } catch (e) {
+      return {
+        ok: false,
+        reason: `the preflight session failed: ${e && e.message ? e.message : String(e)}`,
+        failures: [],
+        checks: 0,
+        namespace: null,
+      };
+    } finally {
+      try { await pf.rollback(); } catch { /* already gone */ }
+      try { pf.close(); } catch { /* already gone */ }
+    }
+  };
+
+  // The preflight result is declared OUTSIDE the try block so the evidence
+  // manifest below can record it even when the run aborts.
+  let preflight = null;
+
   try {
+    // MANDATORY fail-closed hosted-schema preflight. It runs on its own
+    // session, in its own bounded READ ONLY transaction, before the observer
+    // and before any acting session or synthetic fixture exists.
+    preflight = await runPreflight();
+
     await observer.start();
     const obsPre = await openSession(observer, "prelude.observer");
     if (!obsPre.ok) throw new Error(`T6-R: the observer session could not be opened: ${obsPre.detail}`);
@@ -1288,6 +1404,9 @@ export async function runGroupR({ endpoint, password, psqlPath = "psql", evidenc
     // fence row); B's documents INSERT must then WAIT, and must succeed once
     // A rolls back, because no fence was ever committed.
     await runCase("T6-R01", async () => {
+      if (!preflight.ok) {
+        return { status: "BLOCKED", detail: `the hosted-schema preflight blocked this case: ${preflight.reason}` };
+      }
       await openCase(keyFor("r01"));
       try {
         const a = await openSession(holder, "prelude.authenticated");
@@ -1332,6 +1451,9 @@ export async function runGroupR({ endpoint, password, psqlPath = "psql", evidenc
     // The payments fixture is inserted with service_role: payments exposes only
     // SELECT to authenticated on the hosted schema.
     await runCase("T6-R02", async () => {
+      if (!preflight.ok) {
+        return { status: "BLOCKED", detail: `the hosted-schema preflight blocked this case: ${preflight.reason}` };
+      }
       await openCase(keyFor("r02"));
       try {
         const a = await openSession(holder, "prelude.authenticated");
@@ -1377,6 +1499,9 @@ export async function runGroupR({ endpoint, password, psqlPath = "psql", evidenc
     // per-key advisory lock. A's request creation must then WAIT, and once B
     // rolls back A's fence must re-check freshly and return 'fenced'.
     await runCase("T6-R03", async () => {
+      if (!preflight.ok) {
+        return { status: "BLOCKED", detail: `the hosted-schema preflight blocked this case: ${preflight.reason}` };
+      }
       await openCase(keyFor("r03"));
       try {
         const b = await openSession(waiter, "prelude.authenticated");
@@ -1422,6 +1547,9 @@ export async function runGroupR({ endpoint, password, psqlPath = "psql", evidenc
     // A holds the lock; B shortens lock_timeout and attempts the INSERT, which
     // must fail with 55P03 and never with a deadlock (40P01) and never hang.
     await runCase("T6-R04", async () => {
+      if (!preflight.ok) {
+        return { status: "BLOCKED", detail: `the hosted-schema preflight blocked this case: ${preflight.reason}` };
+      }
       await openCase(keyFor("r04"));
       try {
         const a = await openSession(holder, "prelude.authenticated");
@@ -1481,6 +1609,9 @@ export async function runGroupR({ endpoint, password, psqlPath = "psql", evidenc
     // from inside request_storage_deletion; B must wait, and after A's
     // rollback B creates its own request (no committed duplicate can exist).
     await runCase("T6-R05", async () => {
+      if (!preflight.ok) {
+        return { status: "BLOCKED", detail: `the hosted-schema preflight blocked this case: ${preflight.reason}` };
+      }
       await openCase(keyFor("r05"));
       try {
         const a = await openSession(holder, "prelude.authenticated");
@@ -1614,7 +1745,12 @@ export async function runGroupR({ endpoint, password, psqlPath = "psql", evidenc
       projectRef: ref,
       statementsIssued: statements.length,
       forbiddenStatements: auditStatementLog(statements.map((s) => s.stmt)).length,
-    },
+      preflight: {
+        ok: preflight.ok === true,
+        checks: preflight.checks || 0,
+        failures: (preflight.failures || []).map((f) => redactSensitive(f)),
+        reason: redactSensitive(preflight.reason || ""),
+      },    },
   });
   const verdict = finalSuiteVerdict(results, evidence);
   if (evidence.ok) {

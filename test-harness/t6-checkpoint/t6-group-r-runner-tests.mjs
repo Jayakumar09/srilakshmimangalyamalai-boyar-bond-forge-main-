@@ -70,6 +70,10 @@ import {
   verifyEvidenceBundle,
   finalizeEvidence,
   finalSuiteVerdict,
+  PREFLIGHT_TAG,
+  PREFLIGHT_SCHEMA,
+  PREFLIGHT_NAMESPACE_KEYS,
+  interpretPreflight,
 } from "./t6-group-r-runner.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -952,4 +956,465 @@ test("E9d: a record without a valid status is refused", () => {
   assert.equal(validateEvidenceRecords(records).ok, false);
   records[0] = { ...records[0], verdict: "PASS", detail: "" };
   assert.equal(validateEvidenceRecords(records).ok, false);
+});
+
+// ===========================================================================
+// PREFLIGHT (matrix namespaces.collision_rule): a mandatory, fail-closed
+// hosted-schema preflight that runs before any synthetic fixture is created.
+// ===========================================================================
+
+const preflightSection = () => parseHarnessSections(harnessText).get("preflight.schema") || "";
+
+// --- P1: the preflight is a separate, bounded, READ ONLY transaction --------
+test("P1: the preflight section is its own bounded READ ONLY transaction", () => {
+  const s = preflightSection();
+  assert.ok(s.length > 0, "the preflight.schema section must exist");
+  assert.match(s, /BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY;/);
+  assert.match(s, /SET LOCAL statement_timeout = '30s';/);
+  assert.match(s, /SET LOCAL lock_timeout = '5s';/);
+  assert.equal(stripSqlNoise(s).trim().endsWith("ROLLBACK;"), true, "the preflight must end with ROLLBACK");
+  // It must never write.
+  assert.ok(!/^\s*(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|COPY)\b/mi.test(s), "the preflight must not write");
+  // It must not open a transaction that is not read only.
+  // The PL/pgSQL BEGIN of the DO block lives inside a dollar-quoted body, so
+  // it is removed before the transaction count is taken.
+  const outside = stripSqlNoise(s);
+  assert.equal((outside.match(/BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY;/g) || []).length, 1);
+  assert.equal(/BEGIN(?! ISOLATION LEVEL READ COMMITTED READ ONLY;)/i.test(outside), false,
+    "the preflight opens exactly one transaction");
+});
+
+// --- P2: the function contract is explicit and complete ---------------------
+test("P2: the preflight asserts every required lifecycle and fence function", () => {
+  const s = preflightSection();
+  const expected = [
+    ["request_storage_deletion", "text", "uuid"],
+    ["get_document_storage_reference_state", "text", "record"],
+    ["get_storage_reference_state", "text", "record"],
+    ["check_storage_deletion_references", "text", "record"],
+    ["claim_storage_deletion_request", "uuid", "record"],
+    ["claim_storage_deletion_requests", "integer", "record"],
+    ["block_storage_deletion", "uuid, uuid, text", "boolean"],
+    ["record_storage_deletion_failure", "uuid, uuid, text, integer", "text"],
+    ["set_r2_confirmed_absent", "uuid, uuid", "boolean"],
+    ["finalize_storage_deletion", "uuid, uuid", "boolean"],
+    ["mark_storage_deletion_quota_resynced", "uuid", "void"],
+    ["list_storage_deletion_quota_resyncs", "integer", "record"],
+    ["cancel_storage_deletion", "uuid", "boolean"],
+    ["enforce_storage_key_fence", "", "trigger"],
+    ["fence_storage_key_for_deletion", "uuid, uuid", "text"],
+    ["is_storage_key_fenced", "text", "boolean"],
+    ["has_role", "uuid, public.app_role", "boolean"],
+  ];
+  for (const [fn, args, ret] of expected) {
+    assert.ok(s.includes(`'${fn}'`), `the preflight must assert the function ${fn}`);
+    assert.ok(s.includes(`'${args}'`), `the preflight must assert the argument types of ${fn}`);
+    assert.ok(s.includes(`'${ret}'`), `the preflight must assert the return type of ${fn}`);
+  }
+  // The checks are fail-closed: a missing function, a wrong return type, a
+  // wrong set-returning shape and a non-SECURITY-DEFINER function all fail.
+  assert.match(s, /is missing/);
+  assert.match(s, /returns %s, expected %s/);
+  assert.match(s, /different set-returning shape/);
+  assert.match(s, /is not SECURITY DEFINER/);
+});
+
+// --- P3: the trigger contract ----------------------------------------------
+test("P3: the preflight asserts every fence trigger, table and column", () => {
+  const s = preflightSection();
+  const expected = [
+    ["public.documents", "documents_50_storage_key_fence", "storage_key"],
+    ["public.payments", "payments_50_proof_key_fence", "proof_key"],
+    ["public.jathagam_requests", "jathagam_requests_50_report_key_fence", "report_key"],
+    ["public.support_messages", "support_messages_50_attachment_key_fence", "attachment_key"],
+    ["public.profiles", "profiles_50_photo_url_fence", "photo_url"],
+    ["public.payment_events", "payment_events_50_receipt_key_fence", "receipt_key"],
+  ];
+  for (const [rel, trg, col] of expected) {
+    assert.ok(s.includes(`'${rel}'`), `the preflight must assert the relation ${rel}`);
+    assert.ok(s.includes(`'${trg}'`), `the preflight must assert the trigger ${trg}`);
+    assert.ok(s.includes(`'${col}'`), `the preflight must assert the guarded column ${col}`);
+  }
+  assert.match(s, /is not enabled/);
+  assert.match(s, /row-level BEFORE INSERT OR UPDATE/);
+  assert.match(s, /enforce_storage_key_fence/);
+  // The guarded column is verified by column number and by the UPDATE OF
+  // clause, never by a substring of the trigger name (see the M2 tests).
+  assert.match(s, /a\.attnum/);
+  assert.match(s, /tg\.tgattr::text/);
+  assert.match(s, /v_upd_clause IS DISTINCT FROM v_col/);
+});
+
+// --- P4: the namespace purity check -----------------------------------------
+test("P4: the preflight proves the synthetic namespace is empty everywhere", () => {
+  const s = preflightSection();
+  for (const rel of [
+    "auth.users", "public.storage_deletion_requests", "public.storage_deletion_fences",
+    "public.documents", "public.profiles", "public.user_roles", "public.payments",
+    "public.jathagam_requests", "public.support_threads", "public.support_messages",
+    "public.payment_events",
+  ]) {
+    assert.ok(s.includes(rel), `the preflight must count ${rel}`);
+  }
+  // All three synthetic identities and the key prefix must be part of every
+  // identity-bearing count.
+  assert.match(s, /v_owner, v_other, v_admin/);
+  assert.match(s, /v_prefix \|\| '%'/);
+  // A nonzero count is a failure, never a warning.
+  assert.match(s, /IF v_n <> 0 THEN/);
+  assert.match(s, /synthetic row\(s\)/);
+  // A missing relation is a failure too.
+  assert.match(s, /missing relation\(s\)/);
+  assert.match(s, /to_regclass\(r\) IS NULL/);
+});
+
+// --- P5: constraints, indexes and permissions -------------------------------
+test("P5: the preflight asserts the constraints, indexes and permissions", () => {
+  const s = preflightSection();
+  for (const name of [
+    "storage_deletion_requests_owner_prefix_check",
+    "payments_method_allowed",
+    "storage_deletion_requests_live_key",
+    "storage_deletion_fences_pkey",
+    "payments_manual_utr_user_item_uniq",
+    "payments_manual_submitted_user_item_uniq",
+  ]) {
+    assert.ok(s.includes(name), `the preflight must assert ${name}`);
+  }
+  // Row-level security, policies and table privileges.
+  assert.match(s, /relrowsecurity/);
+  assert.match(s, /row-level security is not enabled/);
+  assert.match(s, /pg_policies/);
+  assert.match(s, /row-level policy\/policies/);
+  assert.match(s, /has_table_privilege\('service_role'/);
+  assert.match(s, /has_table_privilege\('anon'/);
+  assert.match(s, /has_table_privilege\('authenticated'/);
+  // Function EXECUTE grants.
+  assert.match(s, /has_function_privilege\('authenticated'/);
+  assert.match(s, /has_function_privilege\('service_role'/);
+  assert.match(s, /has_function_privilege\('anon'/);
+  // The expected EXECUTE holders are explicit.
+  for (const [fn, holder] of [
+    ["request_storage_deletion", "authenticated"],
+    ["fence_storage_key_for_deletion", "service_role"],
+    ["is_storage_key_fenced", "service_role"],
+    ["enforce_storage_key_fence", "authenticated,service_role"],
+  ]) {
+    assert.ok(s.includes(`'${fn}'`), `the preflight must assert the EXECUTE grant of ${fn}`);
+    assert.ok(s.includes(`'${holder}'`), `the preflight must assert that ${fn} is executable by ${holder}`);
+  }
+});
+
+// --- P6: the preflight fails closed and publishes every failure ------------
+test("P6: the preflight publishes its result and raises with its own SQLSTATE", () => {
+  const s = preflightSection();
+  assert.match(s, /set_config\('t6r\.preflight'/);
+  assert.match(s, /'t6-group-r-preflight\/v1'/);
+  assert.match(s, /'failures'/);
+  assert.match(s, /'namespace'/);
+  assert.match(s, /USING ERRCODE = 'TPF01'/);
+  // The runner classifies the preflight SQLSTATE as BLOCKED, never as a FAIL.
+  const c = classifySqlFailure({ sqlstate: "TPF01", message: "preflight failed", label: "preflight.schema" });
+  assert.equal(c.outcome, "BLOCKED");
+  assert.equal(c.kind, "preflight");
+});
+
+// --- P7: the runner interprets the preflight fail closed --------------------
+test("P7: a complete all-zero preflight payload is accepted", () => {
+  const namespace = Object.fromEntries(PREFLIGHT_NAMESPACE_KEYS.map((k) => [k, 0]));
+  const payload = JSON.stringify({
+    schema: PREFLIGHT_SCHEMA, ok: true, checks: 57, failures: [], namespace,
+  });
+  const probe = `${PROBE_PREFIX}${JSON.stringify({ sqlstate: "00000", preflight: payload })}`;
+  const r = interpretExec("pf", "preflight.schema", [probe]);
+  const v = interpretPreflight(r);
+  assert.equal(v.ok, true, v.reason);
+  assert.equal(v.failures.length, 0);
+  assert.equal(v.checks, 57);
+});
+
+test("P7: every incomplete or inconsistent preflight is refused", () => {
+  const ns = Object.fromEntries(PREFLIGHT_NAMESPACE_KEYS.map((k) => [k, 0]));
+  const withPayload = (payload) => interpretPreflight(interpretExec("pf", "preflight.schema", [
+    `${PROBE_PREFIX}${JSON.stringify({ sqlstate: "00000", preflight: payload })}`,
+  ]));
+  // no probe at all
+  assert.equal(interpretPreflight(interpretExec("pf", "preflight.schema", [])).ok, false);
+  // a failed statement
+  const failed = interpretPreflight(interpretExec("pf", "preflight.schema", [
+    `${PROBE_PREFIX}${JSON.stringify({ sqlstate: "TPF01", message: "boom" })}`,
+  ]));
+  assert.equal(failed.ok, false);
+  assert.match(failed.reason, /TPF01|failed/);
+  // no payload
+  assert.equal(withPayload("").ok, false);
+  // malformed payload
+  assert.equal(withPayload("{not json").ok, false);
+  // wrong schema
+  assert.equal(withPayload(JSON.stringify({ schema: "other/v1", ok: true, failures: [], namespace: ns })).ok, false);
+  // failures reported
+  const failedOne = withPayload(JSON.stringify({
+    schema: PREFLIGHT_SCHEMA, ok: false, checks: 57, failures: ["documents holds 1 synthetic row(s)"], namespace: ns,
+  }));
+  assert.equal(failedOne.ok, false);
+  assert.match(failedOne.reason, /documents holds 1/);
+  // ok:true but a nonzero namespace count
+  const dirty = { ...ns, documents: 1 };
+  assert.equal(withPayload(JSON.stringify({ schema: PREFLIGHT_SCHEMA, ok: true, failures: [], namespace: dirty })).ok, false);
+  // ok:true but a relation was never counted
+  const partial = { ...ns };
+  delete partial.payments;
+  assert.equal(withPayload(JSON.stringify({ schema: PREFLIGHT_SCHEMA, ok: true, failures: [], namespace: partial })).ok, false);
+  // no namespace at all
+  assert.equal(withPayload(JSON.stringify({ schema: PREFLIGHT_SCHEMA, ok: true, failures: [], namespace: null })).ok, false);
+});
+
+// --- P8: the preflight runs before any fixture is created -------------------
+test("P8: the preflight runs before the observer and before every case", () => {
+  const preflightAt = runnerSrc.indexOf("preflight = await runPreflight();");
+  const observerAt = runnerSrc.indexOf("await observer.start();");
+  const firstCaseAt = runnerSrc.indexOf('runCase("T6-R01"');
+  assert.ok(preflightAt > 0, "the runner must run the preflight");
+  assert.ok(preflightAt < observerAt, "the preflight must run before the observer session opens");
+  assert.ok(preflightAt < firstCaseAt, "the preflight must run before the first case");
+  // The preflight session is created with its own tag and its own connection.
+  assert.match(runnerSrc, /const pf = mk\("pf", PREFLIGHT_TAG, \{\}, true\);/);
+  assert.equal(PREFLIGHT_TAG, "slmm-t6-pf");
+  // It is closed before the residue measurement.
+  const closeAt = runnerSrc.indexOf("try { pf.close(); }");
+  assert.ok(closeAt > 0, "the preflight session must be closed");
+  assert.ok(closeAt < runnerSrc.indexOf('runCase("T6-R07"'), "the preflight session must be closed before R07");
+});
+
+test("P8b: every stateful case is blocked when the preflight failed", () => {
+  for (const id of ["T6-R01", "T6-R02", "T6-R03", "T6-R04", "T6-R05"]) {
+    const at = runnerSrc.indexOf(`runCase("${id}"`);
+    assert.ok(at > 0, `${id} must exist`);
+    const guard = runnerSrc.slice(at, at + 400);
+    assert.match(guard, /if \(!preflight\.ok\)/, `${id} must be blocked by a failed preflight`);
+    assert.match(guard, /status: "BLOCKED"/, `${id} must record BLOCKED`);
+    // The reason must be a TEMPLATE literal, so the operator sees WHY.
+    assert.match(guard, /detail: `the hosted-schema preflight blocked this case: \$\{preflight\.reason\}`/,
+      `${id} must interpolate the preflight reason into the detail`);
+  }
+  // A blocked preflight can never yield a successful suite verdict.
+  const assertions = Object.create(null);
+  for (const id of ["T6-R01", "T6-R02", "T6-R03", "T6-R04", "T6-R05"]) {
+    assertions[id] = { assertion: "BLOCKED", detail: "the hosted-schema preflight blocked this case" };
+  }
+  // The residue and hygiene cases still ran and passed.
+  for (const id of ["T6-R06", "T6-R07", "T6-R08"]) {
+    assertions[id] = { assertion: "PASS", detail: "ok" };
+  }
+  const results = finalizeResults(assertions, "PASS");
+  assert.equal(suiteVerdict(results), "BLOCKED");
+  assert.notEqual(suiteVerdict(results), "PASS");
+  for (const id of ["T6-R01", "T6-R02", "T6-R03", "T6-R04", "T6-R05"]) {
+    assert.equal(results.find((r) => r.id === id).verdict, "BLOCKED");
+  }
+});
+
+// --- P9: the preflight is a required harness section ------------------------
+test("P9: the preflight section is required and its payload is reset per statement", () => {
+  assert.ok(REQUIRED_SECTIONS.includes("preflight.schema"));
+  assert.deepEqual(missingHarnessSections(parseHarnessSections(harnessText)), []);
+  // A stale preflight payload must never be readable by a later statement.
+  assert.match(RESET_SQL, /set_config\('t6r\.preflight', '', false\)/);
+});
+
+test("P9b: the preflight namespace contract is the reviewed eleven relations", () => {
+  assert.equal(PREFLIGHT_NAMESPACE_KEYS.length, 11);
+  for (const k of ["auth.users", "documents", "payments", "payment_events"]) {
+    assert.ok(PREFLIGHT_NAMESPACE_KEYS.includes(k), k);
+  }
+});
+
+test("P10: the preflight result stays in scope for the evidence manifest", () => {
+  // A block-scoped declaration inside the try block would make the manifest
+  // reference a binding that does not exist on the tail path.
+  const decl = runnerSrc.indexOf("let preflight = null;");
+  const assign = runnerSrc.indexOf("preflight = await runPreflight();");
+  const use = runnerSrc.indexOf("preflight: {");
+  assert.ok(decl > 0, "the preflight result must be declared");
+  assert.ok(assign > decl, "the preflight result must be assigned after it is declared");
+  assert.ok(use > assign, "the evidence manifest must be able to read the preflight result");
+  const observerStart = runnerSrc.indexOf("await observer.start();");
+  const mainTry = runnerSrc.lastIndexOf("try {", observerStart);
+  assert.ok(decl < mainTry, "the preflight declaration must be outside the try block");
+  assert.ok(mainTry < observerStart, "the main try block must wrap the observer start");
+});
+
+// ===========================================================================
+// M1 / M2 / M3 regression tests -- the corrections of the independent
+// hosted-schema preflight contract audit.
+//
+//   M1  the function contract must resolve by FUNCTION IDENTITY, never by a
+//       rendered type string, so public.has_role(uuid, public.app_role) is
+//       accepted and a wrong signature is rejected;
+//   M2  the guarded trigger column must be verified by COLUMN NUMBER and by
+//       the rendered UPDATE OF clause, never by a substring of the trigger
+//       name;
+//   M3  a failed preflight must still report its diagnostics, and a
+//       diagnostic payload must never be treated as proof of success.
+// ===========================================================================
+
+const pfSection = () => parseHarnessSections(harnessText).get("preflight.schema") || "";
+
+// --- M1: identity resolution ------------------------------------------------
+test("M1: the function contract resolves by identity, not by a rendered type string", () => {
+  const s = pfSection();
+  // The rendered-string comparison is gone.
+  assert.ok(!/oidvectortypes/.test(s), "the contract must not compare a rendered argument-type string");
+  assert.match(s, /to_regprocedure/);
+  // The non-builtin argument type is written in the regprocedure input form.
+  assert.ok(s.includes("'uuid, public.app_role'"), "has_role must be contracted as public.has_role(uuid, public.app_role)");
+  assert.ok(!s.includes("'uuid, app_role'"), "the unqualified spelling would never match the catalog");
+});
+
+test("M1: public.has_role(uuid, public.app_role) is accepted by the contract", () => {
+  const s = pfSection();
+  // The contract names the function with the qualified type ...
+  assert.match(s, /\('has_role',\s+'uuid, public\.app_role','boolean', false\)/);
+  // ... and resolves it through the catalog by identity, so the qualified
+  // spelling is what the catalog is asked for.
+  assert.match(s, /to_regprocedure\('public\.' \|\| v_fn \|\| '\(' \|\| v_exp_args \|\| '\)'\)/);
+  // The other return-type, set-returning and SECURITY DEFINER checks survive.
+  assert.match(s, /returns %s, expected %s/);
+  assert.match(s, /different set-returning shape/);
+  assert.match(s, /is not SECURITY DEFINER/);
+});
+
+test("M1: a wrong function signature is rejected, and a missing function is distinguished", () => {
+  const s = pfSection();
+  // A function that exists under another name/signature is NOT accepted: the
+  // resolution is by identity, and the failure says so.
+  assert.match(s, /exists but NOT with the expected argument types/);
+  assert.match(s, /is missing/);
+  // The resolution must not fall back to a name-only lookup.
+  assert.ok(!/p\.proname = v_fn\s+AND/.test(s), "the lookup must not be name-only");
+});
+
+// --- M2: the trigger column verification ------------------------------------
+test("M2: the guarded trigger column is verified by column number and by the UPDATE OF clause", () => {
+  const s = pfSection();
+  // The column number of the expected column is resolved from pg_attribute.
+  assert.match(s, /pg_catalog\.pg_attribute/);
+  assert.match(s, /a\.attnum/);
+  assert.match(s, /a\.attname = v_col/);
+  assert.match(s, /NOT a\.attisdropped/);
+  // The trigger's own column set is read from pg_trigger.tgattr and must be
+  // EXACTLY the expected column.
+  assert.match(s, /tg\.tgattr::text/);
+  assert.match(s, /v_tgattr <> v_attnum::text/);
+  // And the rendered UPDATE OF clause must name exactly that column.
+  assert.match(s, /substring\(v_def from 'UPDATE OF \(\[\^ \]\+\)'\)/);
+  assert.match(s, /v_upd_clause IS DISTINCT FROM v_col/);
+  // The weak name-substring test is gone: the trigger name itself contains the
+  // column name, so a LIKE test could be satisfied by the name alone.
+  assert.ok(!/v_def NOT LIKE \('%' \|\| v_col \|\| '%'\)/.test(s),
+    "the guarded column must not be checked by a name substring");
+  // The trigger-function, enabled and event checks all survive.
+  assert.match(s, /enforce_storage_key_fence/);
+  assert.match(s, /is not enabled/);
+  assert.match(s, /row-level BEFORE INSERT OR UPDATE/);
+  assert.match(s, /tgenabled/);
+  assert.match(s, /tgtype/);
+  assert.match(s, /column %s does not exist on %s/);
+});
+
+// --- M3: the diagnostics of a failed preflight ------------------------------
+test("M3: a failed preflight keeps its diagnostics and is never a success", () => {
+  const payload = JSON.stringify({
+    schema: PREFLIGHT_SCHEMA,
+    ok: false,
+    checks: 57,
+    failures: ["documents holds 1 synthetic row(s)", "function public.has_role(uuid, public.app_role) is missing"],
+    namespace: Object.fromEntries(PREFLIGHT_NAMESPACE_KEYS.map((k) => [k, 0])),
+  });
+  // The SQL operation failed (TPF01) and the payload carries the details.
+  const r = interpretExec("pf", "preflight.schema", [
+    `${PROBE_PREFIX}${JSON.stringify({ sqlstate: "TPF01", message: "preflight failed", preflight: payload })}`,
+  ]);
+  const v = interpretPreflight(r);
+  assert.equal(v.ok, false, "a failed preflight must never be a success");
+  assert.equal(v.failures.length, 2, "the failure list must be preserved");
+  assert.equal(v.checks, 57, "the checked-object count must be preserved");
+  assert.match(v.reason, /documents holds 1 synthetic row/);
+  assert.match(v.reason, /TPF01/);
+  assert.ok(v.namespace, "the namespace counts must be preserved as a diagnostic");
+  // The failure is still a BLOCKED outcome, never a FAIL.
+  const c = classifySqlFailure({ sqlstate: "TPF01", message: "preflight failed", label: "preflight.schema" });
+  assert.equal(c.outcome, "BLOCKED");
+});
+
+test("M3: a diagnostic payload can never make a failed statement look successful", () => {
+  // A payload that CLAIMS success while the SQL operation failed must still be
+  // refused.
+  const lying = JSON.stringify({
+    schema: PREFLIGHT_SCHEMA,
+    ok: true,
+    checks: 57,
+    failures: [],
+    namespace: Object.fromEntries(PREFLIGHT_NAMESPACE_KEYS.map((k) => [k, 0])),
+  });
+  const r = interpretExec("pf", "preflight.schema", [
+    `${PROBE_PREFIX}${JSON.stringify({ sqlstate: "23514", message: "boom", preflight: lying })}`,
+  ]);
+  const v = interpretPreflight(r);
+  assert.equal(v.ok, false, "a failing statement with a success payload is still a failure");
+  assert.match(v.reason, /the preflight statement failed/);
+});
+
+test("M3: a missing or malformed diagnostic payload fails closed", () => {
+  const withPayload = (p) => interpretPreflight(interpretExec("pf", "preflight.schema", [
+    `${PROBE_PREFIX}${JSON.stringify({ sqlstate: "00000", preflight: p })}`,
+  ]));
+  assert.equal(withPayload("").ok, false);
+  assert.equal(withPayload("{not json").ok, false);
+  assert.equal(withPayload(JSON.stringify({ schema: "other/v1", ok: true, failures: [], namespace: {} })).ok, false);
+  // A failed statement with NO payload at all is still a failure.
+  const noPayload = interpretPreflight(interpretExec("pf", "preflight.schema", [
+    `${PROBE_PREFIX}${JSON.stringify({ sqlstate: "TPF01", message: "boom" })}`,
+  ]));
+  assert.equal(noPayload.ok, false);
+  assert.equal(noPayload.failures.length, 0);
+});
+
+// --- mocked correct TEST metadata passes ------------------------------------
+test("M1/M3: correct mocked TEST metadata passes the preflight", () => {
+  const namespace = Object.fromEntries(PREFLIGHT_NAMESPACE_KEYS.map((k) => [k, 0]));
+  const payload = JSON.stringify({
+    schema: PREFLIGHT_SCHEMA,
+    ok: true,
+    checks: 57,
+    failures: [],
+    namespace,
+  });
+  const r = interpretExec("pf", "preflight.schema", [
+    `${PROBE_PREFIX}${JSON.stringify({ sqlstate: "00000", preflight: payload })}`,
+  ]);
+  const v = interpretPreflight(r);
+  assert.equal(v.ok, true, v.reason);
+  assert.equal(v.failures.length, 0);
+  assert.equal(v.checks, 57);
+  // A single dirty relation is enough to refuse it.
+  const dirty = { ...namespace, payments: 1 };
+  const v2 = interpretPreflight(interpretExec("pf", "preflight.schema", [
+    `${PROBE_PREFIX}${JSON.stringify({
+      sqlstate: "00000",
+      preflight: JSON.stringify({ schema: PREFLIGHT_SCHEMA, ok: true, checks: 57, failures: [], namespace: dirty }),
+    })}`,
+  ]));
+  assert.equal(v2.ok, false);
+  assert.match(v2.reason, /payments=1/);
+});
+
+// --- the manifest records redacted diagnostics ------------------------------
+test("M3: the evidence manifest records the redacted preflight diagnostics", () => {
+  assert.match(runnerSrc, /failures: \(preflight\.failures \|\| \[\]\)\.map\(\(f\) => redactSensitive\(f\)\)/);
+  assert.match(runnerSrc, /reason: redactSensitive\(preflight\.reason \|\| ""\)/);
+  // The redaction itself must cover the dangerous shapes.
+  const r = redactSensitive("host=db.example.supabase.co password=hunter2 postgres://u:p@h/db");
+  assert.ok(!r.includes("hunter2"), "a password must never survive redaction");
+  assert.ok(!r.includes("db.example.supabase.co"), "a connection detail must never survive redaction");
 });

@@ -97,6 +97,504 @@
 -- =============================================================================
 
 
+-- >>> SECTION: preflight.schema
+-- MANDATORY, FAIL-CLOSED hosted-schema preflight.
+--
+-- It runs in its OWN bounded READ ONLY transaction, on its OWN session
+-- (application_name slmm-t6-pf), after the live-authorization gate and the
+-- TEST endpoint identity checks, and BEFORE any T6-R01..T6-R05 fixture is
+-- created. The two acting sessions are not even connected yet.
+--
+-- The expected contract below is reviewed and explicit. It is derived from
+-- the committed migrations:
+--   20261017120000_document_storage_reference_state.sql
+--   20261017130000_storage_reference_state.sql
+--   20261017140000_storage_deletion_lifecycle.sql
+--   20261017150000_storage_deletion_fence.sql
+--
+-- Every check is fail-closed: a missing, unreadable, unexpected or drifted
+-- object is a FAILURE, never a warning. All failures are reported together
+-- so one blocked run names every gap. The runner treats a failed preflight
+-- as BLOCKED for T6-R01..T6-R05 and never starts the cases.
+--
+-- Checks:
+--   1. every relevant relation exists (10 T6 relations + auth.users);
+--   2. the synthetic T6 namespace is COMPLETELY empty: all three synthetic
+--      identities and the storage-key prefix must count zero everywhere;
+--   3. every required lifecycle/fence function exists with the expected
+--      argument types, return type, set-returning shape and SECURITY
+--      DEFINER property;
+--   4. every fence trigger exists, is enabled, is a row-level BEFORE INSERT
+--      OR UPDATE trigger and guards the expected column;
+--   5. the expected constraints are present with the expected definitions;
+--   6. the expected indexes are present, unique, valid and (where required)
+--      partial;
+--   7. row-level security is ENABLED on the two T6 tables with no policies,
+--      service_role keeps full access, and anon/authenticated hold no data
+--      privilege on them;
+--   8. the expected function EXECUTE grants hold and nobody else has them.
+BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY;
+SET LOCAL search_path = pg_catalog, public;
+SET LOCAL statement_timeout = '30s';
+SET LOCAL lock_timeout = '5s';
+SELECT set_config('t6r.owner', :'owner', false);
+SELECT set_config('t6r.other', :'other', false);
+SELECT set_config('t6r.admin', :'admin', false);
+SELECT set_config('t6r.prefix', :'prefix', false);
+DO $t6r$
+DECLARE
+  v_fail     text[] := ARRAY[]::text[];
+  v_checked  int := 0;
+  v_missing  text[];
+  v_owner    constant uuid := nullif(current_setting('t6r.owner', true), '')::uuid;
+  v_other    constant uuid := nullif(current_setting('t6r.other', true), '')::uuid;
+  v_admin    constant uuid := nullif(current_setting('t6r.admin', true), '')::uuid;
+  v_prefix   constant text := current_setting('t6r.prefix');
+  v_rel      text;
+  v_trg      text;
+  v_col      text;
+  v_fn       text;
+  v_idx      text;
+  v_kind     text;
+  v_exp_args text;
+  v_exp_ret  text;
+  v_exp_set  boolean;
+  v_exp_exec text;
+  v_oid      oid;
+  v_act_ret  text;
+  v_act_set  boolean;
+  v_secdef   boolean;
+  v_def      text;
+  v_enabled  text;
+  v_tgtype   smallint;
+  v_trg_oid  oid;
+  v_attnum   smallint;
+  v_tgattr   text;
+  v_upd_clause text;
+  v_upd_names text[];
+  v_actual_cols int2[];
+  v_n_listed int;
+  v_n        bigint;
+  v_uniq     boolean;
+  v_valid    boolean;
+  v_partial  boolean;
+  v_rls      boolean;
+  v_counts   jsonb := '{}'::jsonb;
+BEGIN
+  -- 1. every relevant relation must exist -----------------------------------
+  SELECT array_agg(r ORDER BY r) INTO v_missing
+    FROM unnest(ARRAY[
+      'public.storage_deletion_requests', 'public.storage_deletion_fences',
+      'public.documents', 'public.profiles', 'public.user_roles', 'public.payments',
+      'public.jathagam_requests', 'public.support_threads', 'public.support_messages',
+      'public.payment_events', 'auth.users'
+    ]) AS r
+   WHERE to_regclass(r) IS NULL;
+  IF v_missing IS NOT NULL THEN
+    v_fail := array_append(v_fail, 'missing relation(s): ' || array_to_string(v_missing, ', '));
+  END IF;
+
+  -- 2. the synthetic T6 namespace must be completely empty -------------------
+  IF v_missing IS NULL THEN
+    SELECT count(*) INTO v_n FROM auth.users u WHERE u.id IN (v_owner, v_other, v_admin);
+    v_counts := v_counts || jsonb_build_object('auth.users', v_n);
+    v_checked := v_checked + 1;
+    IF v_n <> 0 THEN
+      v_fail := array_append(v_fail, format('auth.users holds %s synthetic identity row(s)', v_n));
+    END IF;
+
+    SELECT count(*) INTO v_n FROM public.storage_deletion_requests r
+     WHERE r.owner_id IN (v_owner, v_other, v_admin) OR r.requested_by IN (v_owner, v_other, v_admin)
+        OR r.storage_key LIKE v_prefix || '%';
+    v_counts := v_counts || jsonb_build_object('storage_deletion_requests', v_n);
+    v_checked := v_checked + 1;
+    IF v_n <> 0 THEN
+      v_fail := array_append(v_fail, format('storage_deletion_requests holds %s synthetic row(s)', v_n));
+    END IF;
+
+    SELECT count(*) INTO v_n FROM public.storage_deletion_fences f WHERE f.storage_key LIKE v_prefix || '%';
+    v_counts := v_counts || jsonb_build_object('storage_deletion_fences', v_n);
+    v_checked := v_checked + 1;
+    IF v_n <> 0 THEN
+      v_fail := array_append(v_fail, format('storage_deletion_fences holds %s synthetic row(s)', v_n));
+    END IF;
+
+    SELECT count(*) INTO v_n FROM public.documents d
+     WHERE d.user_id IN (v_owner, v_other, v_admin) OR d.storage_key LIKE v_prefix || '%';
+    v_counts := v_counts || jsonb_build_object('documents', v_n);
+    v_checked := v_checked + 1;
+    IF v_n <> 0 THEN
+      v_fail := array_append(v_fail, format('documents holds %s synthetic row(s)', v_n));
+    END IF;
+
+    SELECT count(*) INTO v_n FROM public.profiles p
+     WHERE p.id IN (v_owner, v_other, v_admin) OR p.photo_url LIKE v_prefix || '%';
+    v_counts := v_counts || jsonb_build_object('profiles', v_n);
+    v_checked := v_checked + 1;
+    IF v_n <> 0 THEN
+      v_fail := array_append(v_fail, format('profiles holds %s synthetic row(s)', v_n));
+    END IF;
+
+    SELECT count(*) INTO v_n FROM public.user_roles ur WHERE ur.user_id IN (v_owner, v_other, v_admin);
+    v_counts := v_counts || jsonb_build_object('user_roles', v_n);
+    v_checked := v_checked + 1;
+    IF v_n <> 0 THEN
+      v_fail := array_append(v_fail, format('user_roles holds %s synthetic row(s)', v_n));
+    END IF;
+
+    SELECT count(*) INTO v_n FROM public.payments p
+     WHERE p.user_id IN (v_owner, v_other, v_admin) OR p.proof_key LIKE v_prefix || '%';
+    v_counts := v_counts || jsonb_build_object('payments', v_n);
+    v_checked := v_checked + 1;
+    IF v_n <> 0 THEN
+      v_fail := array_append(v_fail, format('payments holds %s synthetic row(s)', v_n));
+    END IF;
+
+    SELECT count(*) INTO v_n FROM public.jathagam_requests j
+     WHERE j.user_id IN (v_owner, v_other, v_admin) OR j.report_key LIKE v_prefix || '%';
+    v_counts := v_counts || jsonb_build_object('jathagam_requests', v_n);
+    v_checked := v_checked + 1;
+    IF v_n <> 0 THEN
+      v_fail := array_append(v_fail, format('jathagam_requests holds %s synthetic row(s)', v_n));
+    END IF;
+
+    SELECT count(*) INTO v_n FROM public.support_threads st WHERE st.user_id IN (v_owner, v_other, v_admin);
+    v_counts := v_counts || jsonb_build_object('support_threads', v_n);
+    v_checked := v_checked + 1;
+    IF v_n <> 0 THEN
+      v_fail := array_append(v_fail, format('support_threads holds %s synthetic row(s)', v_n));
+    END IF;
+
+    SELECT count(*) INTO v_n FROM public.support_messages m
+     WHERE m.sender_id IN (v_owner, v_other, v_admin) OR m.attachment_key LIKE v_prefix || '%';
+    v_counts := v_counts || jsonb_build_object('support_messages', v_n);
+    v_checked := v_checked + 1;
+    IF v_n <> 0 THEN
+      v_fail := array_append(v_fail, format('support_messages holds %s synthetic row(s)', v_n));
+    END IF;
+
+    SELECT count(*) INTO v_n FROM public.payment_events e
+     WHERE e.user_id IN (v_owner, v_other, v_admin) OR e.receipt_key LIKE v_prefix || '%';
+    v_counts := v_counts || jsonb_build_object('payment_events', v_n);
+    v_checked := v_checked + 1;
+    IF v_n <> 0 THEN
+      v_fail := array_append(v_fail, format('payment_events holds %s synthetic row(s)', v_n));
+    END IF;
+  END IF;
+
+  -- 3. the required lifecycle and fence functions ---------------------------
+  FOR v_fn, v_exp_args, v_exp_ret, v_exp_set IN
+    SELECT * FROM (VALUES
+      ('request_storage_deletion',                 'text',                 'uuid',    false),
+      ('get_document_storage_reference_state',     'text',                 'record',  true),
+      ('get_storage_reference_state',              'text',                 'record',  true),
+      ('check_storage_deletion_references',        'text',                 'record',  true),
+      ('claim_storage_deletion_request',           'uuid',                 'record',  true),
+      ('claim_storage_deletion_requests',          'integer',              'record',  true),
+      ('block_storage_deletion',                   'uuid, uuid, text',     'boolean', false),
+      ('record_storage_deletion_failure',          'uuid, uuid, text, integer', 'text', false),
+      ('set_r2_confirmed_absent',                  'uuid, uuid',           'boolean', false),
+      ('finalize_storage_deletion',                'uuid, uuid',           'boolean', false),
+      ('mark_storage_deletion_quota_resynced',     'uuid',                 'void',    false),
+      ('list_storage_deletion_quota_resyncs',      'integer',              'record',  true),
+      ('cancel_storage_deletion',                  'uuid',                 'boolean', false),
+      ('enforce_storage_key_fence',                '',                     'trigger', false),
+      ('fence_storage_key_for_deletion',           'uuid, uuid',           'text',    false),
+      ('is_storage_key_fenced',                    'text',                 'boolean', false),
+      ('has_role',                                 'uuid, public.app_role','boolean', false)
+    ) AS t(fn, args, ret, setret)
+  LOOP
+    v_checked := v_checked + 1;
+    -- The function is resolved by IDENTITY (schema, name and the EXACT
+    -- argument types) through the catalog, never by comparing a RENDERED type
+    -- string. A rendered string schema-qualifies every non-builtin type, so
+    -- an unqualified literal would never match and a correctly configured
+    -- project would be refused. The argument list below is written in the
+    -- regprocedure input form, which resolves to an OID.
+    v_oid := pg_catalog.to_regprocedure('public.' || v_fn || '(' || v_exp_args || ')')::oid;
+    IF v_oid IS NULL THEN
+      SELECT count(*) INTO v_n FROM pg_catalog.pg_proc p
+        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public' AND p.proname = v_fn;
+      IF v_n = 0 THEN
+        v_fail := array_append(v_fail, format('function public.%s(%s) is missing', v_fn, v_exp_args));
+      ELSE
+        v_fail := array_append(v_fail, format('function public.%s exists but NOT with the expected argument types (%s)', v_fn, v_exp_args));
+      END IF;
+    ELSE
+      SELECT pg_catalog.format_type(p.prorettype, NULL), p.proretset, p.prosecdef
+        INTO v_act_ret, v_act_set, v_secdef
+        FROM pg_catalog.pg_proc p
+       WHERE p.oid = v_oid;
+      IF v_act_ret <> v_exp_ret THEN
+        v_fail := array_append(v_fail, format('function public.%s(%s) returns %s, expected %s',
+          v_fn, v_exp_args, v_act_ret, v_exp_ret));
+      ELSIF v_act_set <> v_exp_set THEN
+        v_fail := array_append(v_fail, format('function public.%s(%s) has a different set-returning shape', v_fn, v_exp_args));
+      ELSIF NOT v_secdef THEN
+        v_fail := array_append(v_fail, format('function public.%s(%s) is not SECURITY DEFINER', v_fn, v_exp_args));
+      END IF;
+    END IF;
+  END LOOP;
+  -- 4. the fence triggers ----------------------------------------------------
+  FOR v_rel, v_trg, v_col IN
+    SELECT * FROM (VALUES
+      ('public.documents',         'documents_50_storage_key_fence',         'storage_key'),
+      ('public.payments',          'payments_50_proof_key_fence',            'proof_key'),
+      ('public.jathagam_requests', 'jathagam_requests_50_report_key_fence',  'report_key'),
+      ('public.support_messages',  'support_messages_50_attachment_key_fence','attachment_key'),
+      ('public.profiles',          'profiles_50_photo_url_fence',             'photo_url'),
+      ('public.payment_events',    'payment_events_50_receipt_key_fence',    'receipt_key')
+    ) AS t(rel, trg, col)
+  LOOP
+    v_checked := v_checked + 1;
+    SELECT pg_catalog.pg_get_triggerdef(tg.oid), tg.tgenabled, tg.tgtype, tg.oid
+      INTO v_def, v_enabled, v_tgtype, v_trg_oid
+      FROM pg_catalog.pg_trigger tg
+     WHERE tg.tgrelid = to_regclass(v_rel) AND tg.tgname = v_trg AND NOT tg.tgisinternal;
+    IF NOT FOUND THEN
+      v_fail := array_append(v_fail, format('trigger %s is missing on %s', v_trg, v_rel));
+    ELSIF v_enabled NOT IN ('O', 'A') THEN
+      v_fail := array_append(v_fail, format('trigger %s on %s is not enabled (%s)', v_trg, v_rel, v_enabled));
+    ELSIF (v_tgtype & 1) <> 1 OR (v_tgtype & 2) <> 2 OR (v_tgtype & 4) <> 4 OR (v_tgtype & 16) <> 16 THEN
+      v_fail := array_append(v_fail, format('trigger %s on %s is not a row-level BEFORE INSERT OR UPDATE trigger (tgtype=%s)',
+        v_trg, v_rel, v_tgtype));
+    ELSIF v_def NOT LIKE '%enforce_storage_key_fence%' THEN
+      v_fail := array_append(v_fail, format('trigger %s on %s does not execute enforce_storage_key_fence', v_trg, v_rel));
+    ELSE
+      -- The guarded column is verified by COLUMN NUMBER, never by a substring:
+      -- the rendered definition always begins with the trigger NAME, and every
+      -- fence trigger name already contains the column name, so a substring
+      -- test could be satisfied by the name alone.
+      SELECT a.attnum INTO v_attnum
+        FROM pg_catalog.pg_attribute a
+       WHERE a.attrelid = to_regclass(v_rel) AND a.attname = v_col
+         AND a.attnum > 0 AND NOT a.attisdropped;
+      IF v_attnum IS NULL THEN
+        v_fail := array_append(v_fail, format('column %s does not exist on %s', v_col, v_rel));
+      ELSE
+        -- The rendered UPDATE OF clause must name the expected column. The
+        -- clause comes from the trigger's RECONSTRUCTED command, and
+        -- pg_get_triggerdef's documented contract is to reconstruct the
+        -- creating command, whose documented syntax is
+        -- "UPDATE [ OF column_name [, ... ] ]".
+        v_upd_clause := pg_catalog.substring(v_def from 'UPDATE OF ([^ ]+)');
+        IF v_upd_clause IS DISTINCT FROM v_col THEN
+          v_fail := array_append(v_fail, format('trigger %s on %s does not guard column %s (it guards "%s")',
+            v_trg, v_rel, v_col, coalesce(v_upd_clause, 'nothing')));
+        ELSE
+          -- AUTHORITATIVE CHECK: the trigger's COMPLETE UPDATE-column set,
+          -- as an ARRAY OF COLUMN NUMBERS, must be exactly the expected
+          -- pg_attribute.attnum.
+          --
+          -- The set is rebuilt from the reconstructed command and every
+          -- listed name is resolved to its attnum, so the comparison does not
+          -- depend on how any catalog vector is rendered. A wrong column, an
+          -- extra column and a listed column that no longer exists all make
+          -- the resolved set differ from the expected attnum.
+          v_upd_names := pg_catalog.string_to_array(pg_catalog.replace(btrim(v_upd_clause), ' ', ''), ',');
+          SELECT count(*) INTO v_n_listed FROM pg_catalog.unnest(v_upd_names);
+          SELECT array_agg(a.attnum ORDER BY a.attnum) INTO v_actual_cols
+            FROM pg_catalog.unnest(v_upd_names) AS s(cname)
+            JOIN pg_catalog.pg_attribute a
+              ON a.attrelid = to_regclass(v_rel) AND a.attname = s.cname
+             AND a.attnum > 0 AND NOT a.attisdropped;
+          IF v_n_listed <> coalesce(pg_catalog.cardinality(v_actual_cols), 0) THEN
+            v_fail := array_append(v_fail, format('trigger %s on %s lists a column that does not exist on %s',
+              v_trg, v_rel, v_rel));
+          ELSIF v_actual_cols IS DISTINCT FROM ARRAY[v_attnum]::int2[] THEN
+            v_fail := array_append(v_fail, format('trigger %s on %s guards column number(s) %s instead of %s (attnum %s)',
+              v_trg, v_rel, coalesce(v_actual_cols::text, 'none'), v_col, v_attnum));
+          END IF;
+          -- CROSS-CHECK against the trigger's OWN stored column numbers.
+          -- int2vector is an array-LIKE type (its element type is int2 and
+          -- it supports subscripting) and its TEXT rendering differs between
+          -- PostgreSQL releases, so the braces are canonicalised away before
+          -- the comparison. This check can therefore no longer refuse a
+          -- correct trigger because of a rendering difference.
+          SELECT pg_catalog.replace(pg_catalog.replace(pg_catalog.btrim(tg.tgattr::text), '{', ''), '}', '')
+            INTO v_tgattr
+            FROM pg_catalog.pg_trigger tg
+           WHERE tg.oid = v_trg_oid;
+          IF v_tgattr IS NOT NULL AND v_tgattr <> '' AND v_tgattr <> v_attnum::text THEN
+            v_fail := array_append(v_fail, format('trigger %s on %s stores column number(s) %s instead of %s (attnum %s)',
+              v_trg, v_rel, v_tgattr, v_col, v_attnum));
+          END IF;
+        END IF;
+      END IF;
+    END IF;  END LOOP;
+
+  -- 5. the expected constraints ----------------------------------------------
+  v_checked := v_checked + 1;
+  SELECT pg_catalog.pg_get_constraintdef(c.oid) INTO v_def
+    FROM pg_catalog.pg_constraint c
+   WHERE c.conrelid = to_regclass('public.storage_deletion_requests')
+     AND c.conname = 'storage_deletion_requests_owner_prefix_check';
+  IF NOT FOUND THEN
+    v_fail := array_append(v_fail, 'constraint storage_deletion_requests_owner_prefix_check is missing');
+  ELSIF v_def NOT LIKE '%split_part%' OR v_def NOT LIKE '%owner_id%' THEN
+    v_fail := array_append(v_fail, 'constraint storage_deletion_requests_owner_prefix_check has an unexpected definition: ' || v_def);
+  END IF;
+
+  v_checked := v_checked + 1;
+  SELECT pg_catalog.pg_get_constraintdef(c.oid) INTO v_def
+    FROM pg_catalog.pg_constraint c
+   WHERE c.conrelid = to_regclass('public.payments') AND c.conname = 'payments_method_allowed';
+  IF NOT FOUND THEN
+    v_fail := array_append(v_fail, 'constraint payments_method_allowed is missing');
+  ELSIF v_def NOT LIKE '%online%' OR v_def NOT LIKE '%upi%' OR v_def NOT LIKE '%bank_transfer%' THEN
+    v_fail := array_append(v_fail, 'constraint payments_method_allowed has an unexpected definition: ' || v_def);
+  END IF;
+
+  v_checked := v_checked + 1;
+  SELECT c.conname INTO v_def
+    FROM pg_catalog.pg_constraint c
+   WHERE c.conrelid = to_regclass('public.storage_deletion_fences') AND c.contype = 'p';
+  IF NOT FOUND THEN
+    v_fail := array_append(v_fail, 'public.storage_deletion_fences has no primary key');
+  END IF;
+
+  -- 6. the expected indexes ---------------------------------------------------
+  FOR v_idx, v_kind IN
+    SELECT * FROM (VALUES
+      ('storage_deletion_requests_live_key',   'unique-partial'),
+      ('storage_deletion_fences_pkey',          'unique'),
+      ('payments_manual_utr_user_item_uniq',    'unique-partial'),
+      ('payments_manual_submitted_user_item_uniq','unique-partial')
+    ) AS t(idx, kind)
+  LOOP
+    v_checked := v_checked + 1;
+    SELECT i.indisunique, i.indisvalid, (i.indpred IS NOT NULL)
+      INTO v_uniq, v_valid, v_partial
+      FROM pg_catalog.pg_index i
+      JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public' AND c.relname = v_idx;
+    IF NOT FOUND THEN
+      v_fail := array_append(v_fail, format('index %s is missing', v_idx));
+    ELSIF NOT v_uniq THEN
+      v_fail := array_append(v_fail, format('index %s is not unique', v_idx));
+    ELSIF NOT v_valid THEN
+      v_fail := array_append(v_fail, format('index %s is not valid', v_idx));
+    ELSIF v_kind = 'unique-partial' AND NOT v_partial THEN
+      v_fail := array_append(v_fail, format('index %s is not the expected partial index', v_idx));
+    END IF;
+  END LOOP;
+
+  v_checked := v_checked + 1;
+  SELECT pg_catalog.pg_get_indexdef(i.indexrelid) INTO v_def
+    FROM pg_catalog.pg_index i
+    JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'public' AND c.relname = 'storage_deletion_requests_live_key';
+  IF NOT FOUND THEN
+    v_fail := array_append(v_fail, 'index storage_deletion_requests_live_key is missing');
+  ELSIF v_def NOT LIKE '%storage_key%' OR v_def NOT LIKE '%pending%' THEN
+    v_fail := array_append(v_fail, 'index storage_deletion_requests_live_key has an unexpected definition: ' || v_def);
+  END IF;
+
+  -- 7. row-level security, policies and table privileges --------------------
+  FOR v_rel IN SELECT unnest(ARRAY['public.storage_deletion_requests', 'public.storage_deletion_fences']) LOOP
+    v_checked := v_checked + 1;
+    SELECT c.relrowsecurity INTO v_rls FROM pg_catalog.pg_class c WHERE c.oid = to_regclass(v_rel);
+    IF NOT FOUND THEN
+      v_fail := array_append(v_fail, format('relation %s does not exist', v_rel));
+    ELSIF NOT v_rls THEN
+      v_fail := array_append(v_fail, format('row-level security is not enabled on %s', v_rel));
+    END IF;
+
+    v_checked := v_checked + 1;
+    SELECT count(*) INTO v_n FROM pg_catalog.pg_policies
+     WHERE schemaname = split_part(v_rel, '.', 1) AND tablename = split_part(v_rel, '.', 2);
+    IF v_n <> 0 THEN
+      v_fail := array_append(v_fail, format('%s exposes %s row-level policy/policies', v_rel, v_n));
+    END IF;
+
+    v_checked := v_checked + 1;
+    IF NOT has_table_privilege('service_role', v_rel, 'SELECT,INSERT,UPDATE,DELETE') THEN
+      v_fail := array_append(v_fail, format('service_role does not hold full data access on %s', v_rel));
+    END IF;
+
+    v_checked := v_checked + 1;
+    IF has_table_privilege('anon', v_rel, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE') THEN
+      v_fail := array_append(v_fail, format('anon holds a data privilege on %s', v_rel));
+    END IF;
+
+    v_checked := v_checked + 1;
+    IF has_table_privilege('authenticated', v_rel, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE') THEN
+      v_fail := array_append(v_fail, format('authenticated holds a data privilege on %s', v_rel));
+    END IF;
+  END LOOP;
+
+  -- 8. the expected function EXECUTE grants ----------------------------------
+  FOR v_fn, v_exp_args, v_exp_exec IN
+    SELECT * FROM (VALUES
+      ('request_storage_deletion',              'text',                 'authenticated'),
+      ('cancel_storage_deletion',                'uuid',                 'authenticated'),
+      ('get_document_storage_reference_state',  'text',                 'authenticated'),
+      ('get_storage_reference_state',           'text',                 'authenticated'),
+      ('enforce_storage_key_fence',             '',                     'authenticated,service_role'),
+      ('check_storage_deletion_references',     'text',                 'service_role'),
+      ('claim_storage_deletion_request',        'uuid',                 'service_role'),
+      ('claim_storage_deletion_requests',       'integer',              'service_role'),
+      ('block_storage_deletion',                'uuid, uuid, text',     'service_role'),
+      ('record_storage_deletion_failure',       'uuid, uuid, text, integer', 'service_role'),
+      ('set_r2_confirmed_absent',               'uuid, uuid',           'service_role'),
+      ('finalize_storage_deletion',             'uuid, uuid',           'service_role'),
+      ('mark_storage_deletion_quota_resynced',  'uuid',                 'service_role'),
+      ('list_storage_deletion_quota_resyncs',   'integer',              'service_role'),
+      ('fence_storage_key_for_deletion',        'uuid, uuid',           'service_role'),
+      ('is_storage_key_fenced',                 'text',                 'service_role')
+    ) AS t(fn, args, exec)
+  LOOP
+    v_checked := v_checked + 1;
+    -- Resolved by identity, exactly as the contract check above.
+    v_oid := pg_catalog.to_regprocedure('public.' || v_fn || '(' || v_exp_args || ')')::oid;
+    IF v_oid IS NULL THEN
+      v_fail := array_append(v_fail, format('function public.%s(%s) is missing, so its EXECUTE grant cannot be verified', v_fn, v_exp_args));
+      CONTINUE;
+    END IF;
+    IF v_exp_exec LIKE '%authenticated%' AND NOT has_function_privilege('authenticated', v_oid, 'EXECUTE') THEN AND NOT has_function_privilege('authenticated', v_oid, 'EXECUTE') THEN
+      v_fail := array_append(v_fail, format('authenticated cannot EXECUTE public.%s(%s)', v_fn, v_exp_args));
+    END IF;
+    IF v_exp_exec LIKE '%service_role%' AND NOT has_function_privilege('service_role', v_oid, 'EXECUTE') THEN
+      v_fail := array_append(v_fail, format('service_role cannot EXECUTE public.%s(%s)', v_fn, v_exp_args));
+    END IF;
+    IF v_exp_exec NOT LIKE '%authenticated%' AND has_function_privilege('authenticated', v_oid, 'EXECUTE') THEN
+      v_fail := array_append(v_fail, format('authenticated may EXECUTE public.%s(%s) but must not', v_fn, v_exp_args));
+    END IF;
+    IF v_exp_exec NOT LIKE '%service_role%' AND has_function_privilege('service_role', v_oid, 'EXECUTE') THEN
+      v_fail := array_append(v_fail, format('service_role may EXECUTE public.%s(%s) but must not', v_fn, v_exp_args));
+    END IF;
+    IF has_function_privilege('anon', v_oid, 'EXECUTE') THEN
+      v_fail := array_append(v_fail, format('anon may EXECUTE public.%s(%s) but must not', v_fn, v_exp_args));
+    END IF;
+  END LOOP;
+
+  -- publish the result and fail closed --------------------------------------
+  PERFORM set_config('t6r.preflight', jsonb_build_object(
+    'schema', 't6-group-r-preflight/v1',
+    'ok', (v_missing IS NULL AND array_length(v_fail, 1) IS NULL),
+    'checks', v_checked,
+    'failures', coalesce(to_jsonb(v_fail), '[]'::jsonb),
+    'namespace', v_counts
+  )::text, false);
+
+  IF array_length(v_fail, 1) IS NOT NULL THEN
+    PERFORM set_config('t6r.sqlstate', 'TPF01', false);
+    PERFORM set_config('t6r.message',
+      'T6-R hosted-schema preflight failed: ' || array_to_string(v_fail, ' | '), false);
+    RAISE EXCEPTION 'T6-R hosted-schema preflight failed: %', array_to_string(v_fail, ' | ')
+      USING ERRCODE = 'TPF01';
+  END IF;
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('t6r.sqlstate', SQLSTATE, false);
+  PERFORM set_config('t6r.message', SQLERRM, false);
+END
+$t6r$;
+ROLLBACK;
+
+
 -- >>> SECTION: prelude.authenticated
 -- Open a transaction as an AUTHENTICATED end user (the synthetic T6 owner).
 -- Used by the cases that call request_storage_deletion, which refuses every
