@@ -76,6 +76,11 @@ export const LIVE_SQL_HARNESSES = Object.freeze([
   "profile-admin-identity-plan-guard.sql",
   "profile-admin-self-approval-guard.sql",
   "profile-admin-self-approval-insert-guard.sql",
+  "slmm-storage-deletion-t3-live-test.sql",
+  "slmm-storage-deletion-t3-residue.sql",
+  "slmm-storage-deletion-t4-cli-session.sql",
+  "slmm-storage-deletion-t4-live-test.sql",
+  "slmm-storage-deletion-t4-residue.sql",
 ]);
 
 export const offlineSuiteFiles = () => OFFLINE_SUITES.map((s) => s.file);
