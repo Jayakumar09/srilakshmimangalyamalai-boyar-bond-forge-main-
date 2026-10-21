@@ -98,6 +98,112 @@ export const OBSERVER_TAG = "slmm-t6-obs";
 export const PREFLIGHT_TAG = "slmm-t6-pf";
 
 // ---------------------------------------------------------------------------
+// The pinned T6 function-definition fingerprint
+// ---------------------------------------------------------------------------
+// The contract (T6-specific, version-stable):
+//
+//   md5( jsonb_build_object('schema', 't6-group-r-fingerprint/v2',
+//                           'functions', <jsonb_agg> )::text )
+//
+// where <jsonb_agg> aggregates, ORDER BY proname, one object per CONTRACT
+// function, each contributing exactly these ten catalog-derived fields:
+//   name      proname
+//   args      oidvectortypes(proargtypes)
+//   returns   format_type(prorettype, NULL)
+//   setof     proretset
+//   secdef    prosecdef
+//   volatile  provolatile
+//   parallel  proparallel
+//   leakproof proleakproof
+//   owner     pg_get_userbyid(proowner)
+//   body_md5  md5(prosrc)
+//
+// The expected digest was OBSERVED on Supabase TEST (PostgreSQL 17.11) and
+// independently reproduced from that capture; it is pinned as the expected
+// baseline. PostgreSQL 17.11 is recorded as the OBSERVED baseline version but
+// is NOT a blocking condition: the digest and the other contracts decide.
+//
+// The v1 fingerprint (which mixes in pg_get_functiondef, a per-server-version
+// rendering) is kept for historical reference only and is never asserted.
+export const T6_FINGERPRINT_CONTRACT = "t6-group-r-fingerprint/v2";
+export const T6_FINGERPRINT_EXPECTED = "a85fea6468487830a4ca9afc268d9aef";
+export const T6_FINGERPRINT_SERVER_VERSION = "17.11";
+export const T6_FINGERPRINT_FUNCTION_COUNT = 17;
+export const T6_FINGERPRINT_FIELDS = Object.freeze([
+  "name", "args", "returns", "setof", "secdef", "volatile", "parallel", "leakproof", "owner", "body_md5",
+]);
+
+// jsonb orders object keys by length, then bytewise.
+const jsonbKeyOrder = (keys) => [...keys].sort((a, b) => (a.length - b.length) || (a < b ? -1 : a > b ? 1 : 0));
+const RAW_JSON = Symbol("raw-json");
+const jsonbValue = (v) => {
+  if (v && typeof v === "object" && v[RAW_JSON] !== undefined) return v[RAW_JSON];
+  if (typeof v === "boolean") return v ? "true" : "false";
+  if (v === null || v === undefined) return "null";
+  if (typeof v === "number") return String(v);
+  return JSON.stringify(String(v));
+};
+const jsonbObject = (pairs) => {
+  const ordered = jsonbKeyOrder(pairs.map(([k]) => k)).map((k) => pairs.find(([kk]) => kk === k));
+  return `{${ordered.map(([k, v]) => `${JSON.stringify(k)}: ${jsonbValue(v)}`).join(", ")}}`;
+};
+
+/**
+ * Independently compute the v2 fingerprint from the captured catalog
+ * material, using the exact PostgreSQL jsonb serialisation and md5 contract
+ * verified against the hosted TEST capture. Returns null when the material is
+ * absent or incomplete -- the caller then fails closed.
+ */
+export function computeT6Fingerprint(functions = []) {
+  if (!Array.isArray(functions) || functions.length === 0) return null;
+  for (const f of functions) {
+    if (!f || typeof f.name !== "string" || !f.name) return null;
+    for (const k of T6_FINGERPRINT_FIELDS) {
+      if (f[k] === undefined || f[k] === null) return null;
+    }
+  }
+  const ordered = [...functions].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const objects = ordered.map((f) => jsonbObject(T6_FINGERPRINT_FIELDS.map((k) => [k, f[k]])));
+  const canonical = jsonbObject([
+    ["schema", T6_FINGERPRINT_CONTRACT],
+    ["functions", { [RAW_JSON]: `[${objects.join(", ")}]` }],
+  ]);
+  return createHash("md5").update(Buffer.from(canonical, "utf8")).digest("hex");
+}
+
+/**
+ * Evaluate the fingerprint the preflight published. FAIL CLOSED: a missing
+ * function, a changed body or checked attribute, a digest that differs, a
+ * digest that cannot be calculated, and a missing or malformed digest are all
+ * failures. A PostgreSQL version difference alone is NOT a failure.
+ */
+export function evaluateT6Fingerprint(fingerprint = {}) {
+  const problems = [];
+  const fp = fingerprint && typeof fingerprint === "object" ? fingerprint : {};
+  if (fp.schema !== T6_FINGERPRINT_CONTRACT) {
+    problems.push(`the fingerprint contract is "${fp.schema ?? "<missing>"}", expected "${T6_FINGERPRINT_CONTRACT}"`);
+  }
+  if (fp.functionCount !== T6_FINGERPRINT_FUNCTION_COUNT) {
+    problems.push(`the fingerprint set holds ${fp.functionCount ?? "<missing>"} functions, expected ${T6_FINGERPRINT_FUNCTION_COUNT}`);
+  }
+  if (typeof fp.computed !== "string" || !/^[0-9a-f]{32}$/.test(fp.computed)) {
+    problems.push("the fingerprint digest is missing or malformed");
+  } else if (fp.computed !== T6_FINGERPRINT_EXPECTED) {
+    problems.push(`the T6 fingerprint drifted: expected ${T6_FINGERPRINT_EXPECTED}, computed ${fp.computed}`);
+  }
+  if (fp.expected !== T6_FINGERPRINT_EXPECTED) {
+    problems.push(`the preflight's expected digest is "${fp.expected ?? "<missing>"}", expected ${T6_FINGERPRINT_EXPECTED}`);
+  }
+  return {
+    ok: problems.length === 0,
+    problems,
+    expected: T6_FINGERPRINT_EXPECTED,
+    computed: typeof fp.computed === "string" ? fp.computed : null,
+    serverVersion: typeof fp.serverVersion === "string" ? fp.serverVersion : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Endpoint identity guards (pure)
 // ---------------------------------------------------------------------------
 
@@ -598,7 +704,8 @@ export const PROBE_SQL = `SELECT '${PROBE_PREFIX}' || jsonb_build_object(
   'docId', coalesce(current_setting('t6r.doc_id', true), ''),
   'payId', coalesce(current_setting('t6r.pay_id', true), ''),
   'hygiene', coalesce(current_setting('t6r.hygiene', true), ''),
-  'residue', coalesce(current_setting('t6r.residue', true), '')
+  'residue', coalesce(current_setting('t6r.residue', true), ''),
+  'preflight', coalesce(current_setting('t6r.preflight', true), '')
 )::text;`;
 
 /**
@@ -671,6 +778,28 @@ export function interpretExec(tag, label, lines) {
 }
 
 /**
+ * Remove the final ROLLBACK terminator of a harness section.
+ *
+ * The preflight section ends with ROLLBACK (the harness invariant: every
+ * session ends with ROLLBACK). The runner removes that final terminator
+ * before it runs the section, because the completion probe has to run INSIDE
+ * the preflight's read-only transaction: the published payload lives in a
+ * session setting, and a session setting made inside a transaction is undone
+ * by that transaction's ROLLBACK. The session still ends with a ROLLBACK --
+ * the runner issues it itself, in its finally block -- so the invariant is
+ * preserved.
+ *
+ * Only a trailing terminator is removed. A ROLLBACK anywhere else in the
+ * section is left untouched.
+ */
+export function stripTrailingRollback(section) {
+  const text = String(section == null ? "" : section);
+  const m = text.match(/\s*ROLLBACK\s*;\s*$/i);
+  if (!m) return text;
+  return text.slice(0, text.length - m[0].length);
+}
+
+/**
  * Interpret the preflight result. Fail closed: anything that is not an
  * explicit, complete, all-zero preflight payload is a failure.
  */
@@ -723,7 +852,7 @@ export function interpretPreflight(r) {
     return {
       ok: false,
       reason: failures.length ? failures.join(" | ") : "the preflight reported a failure",
-      failures, checks, namespace,
+      failures, checks, namespace, fingerprint: evaluateT6Fingerprint(payload.fingerprint || {}),
     };
   }
   // Independent re-verification: the runner never takes the preflight's own
@@ -738,10 +867,20 @@ export function interpretPreflight(r) {
     return {
       ok: false,
       reason: `the synthetic namespace is not empty: ${bad.map(([k, n]) => `${k}=${n}`).join(", ")}`,
-      failures, checks, namespace,
+      failures, checks, namespace, fingerprint: evaluateT6Fingerprint(payload.fingerprint || {}),
     };
   }
-  return { ok: true, reason: "", failures: [], checks, namespace };
+  // The fingerprint is evaluated LAST and fails closed: the preflight is not
+  // accepted unless the pinned T6 baseline digest is reproduced exactly.
+  const fingerprint = evaluateT6Fingerprint(payload.fingerprint || {});
+  if (!fingerprint.ok) {
+    return {
+      ok: false,
+      reason: `the T6 fingerprint check failed: ${fingerprint.problems.join(" | ")}`,
+      failures, checks, namespace, fingerprint,
+    };
+  }
+  return { ok: true, reason: "", failures: [], checks, namespace, fingerprint };
 }
 /** Describe a failed statement for a case detail string. */
 export function describeFailure(r) {
@@ -1369,7 +1508,11 @@ export async function runGroupR({ endpoint, password, psqlPath = "psql", evidenc
     const pf = mk("pf", PREFLIGHT_TAG, {}, true);
     try {
       await pf.start();
-      const r = await pf.exec(S("preflight.schema"), { label: "preflight.schema" });
+      // The trailing ROLLBACK is removed so the completion probe runs
+      // inside the preflight's read-only transaction and can read the
+      // published payload. The session is rolled back by the finally block
+      // below.
+      const r = await pf.exec(stripTrailingRollback(S("preflight.schema")), { label: "preflight.schema" });
       return interpretPreflight(r);
     } catch (e) {
       return {
@@ -1750,6 +1893,13 @@ export async function runGroupR({ endpoint, password, psqlPath = "psql", evidenc
         checks: preflight.checks || 0,
         failures: (preflight.failures || []).map((f) => redactSensitive(f)),
         reason: redactSensitive(preflight.reason || ""),
+        fingerprint: {
+          contract: T6_FINGERPRINT_CONTRACT,
+          expected: T6_FINGERPRINT_EXPECTED,
+          computed: (preflight.fingerprint && preflight.fingerprint.computed) || null,
+          serverVersion: (preflight.fingerprint && preflight.fingerprint.serverVersion) || null,
+          ok: !!(preflight.fingerprint && preflight.fingerprint.ok),
+        },
       },    },
   });
   const verdict = finalSuiteVerdict(results, evidence);

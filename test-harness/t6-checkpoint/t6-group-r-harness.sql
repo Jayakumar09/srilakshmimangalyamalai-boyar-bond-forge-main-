@@ -175,6 +175,9 @@ DECLARE
   v_actual_cols int2[];
   v_n_listed int;
   v_n        bigint;
+  v_fp_expected constant text := 'a85fea6468487830a4ca9afc268d9aef';
+  v_fp_count int := 0;
+  v_fp_digest text := NULL;
   v_uniq     boolean;
   v_valid    boolean;
   v_partial  boolean;
@@ -554,7 +557,7 @@ BEGIN
       v_fail := array_append(v_fail, format('function public.%s(%s) is missing, so its EXECUTE grant cannot be verified', v_fn, v_exp_args));
       CONTINUE;
     END IF;
-    IF v_exp_exec LIKE '%authenticated%' AND NOT has_function_privilege('authenticated', v_oid, 'EXECUTE') THEN AND NOT has_function_privilege('authenticated', v_oid, 'EXECUTE') THEN
+    IF v_exp_exec LIKE '%authenticated%' AND NOT has_function_privilege('authenticated', v_oid, 'EXECUTE') THEN
       v_fail := array_append(v_fail, format('authenticated cannot EXECUTE public.%s(%s)', v_fn, v_exp_args));
     END IF;
     IF v_exp_exec LIKE '%service_role%' AND NOT has_function_privilege('service_role', v_oid, 'EXECUTE') THEN
@@ -571,13 +574,83 @@ BEGIN
     END IF;
   END LOOP;
 
+  -- 9. THE PINNED T6 FUNCTION-DEFINITION FINGERPRINT -------------------------
+  -- Fail closed. The contract is T6-specific and version-stable:
+  --   md5(jsonb_build_object('schema','t6-group-r-fingerprint/v2','functions',
+  --        jsonb_agg( jsonb_build_object(
+  --            'name',p.proname, 'args',pg_catalog.oidvectortypes(p.proargtypes),
+  --            'returns',pg_catalog.format_type(p.prorettype,NULL), 'setof',p.proretset,
+  --            'secdef',p.prosecdef, 'volatile',p.provolatile, 'parallel',p.proparallel,
+  --            'leakproof',p.proleakproof, 'owner',pg_get_userbyid(p.proowner),
+  --            'body_md5',md5(p.prosrc) ) ORDER BY p.proname) ))::text)
+  -- The expected digest was OBSERVED on Supabase TEST and independently
+  -- reproduced from that capture. PostgreSQL 17.11 is recorded as the observed
+  -- baseline version but is NOT a blocking condition: the digest and the other
+  -- contracts decide. The v1 fingerprint is kept for historical reference only
+  -- and is never asserted.
+  SELECT count(*) INTO v_fp_count
+    FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'public'
+     AND p.proname = ANY(ARRAY[
+       'request_storage_deletion','get_document_storage_reference_state','get_storage_reference_state',
+       'check_storage_deletion_references','claim_storage_deletion_request','claim_storage_deletion_requests',
+       'block_storage_deletion','record_storage_deletion_failure','set_r2_confirmed_absent',
+       'finalize_storage_deletion','mark_storage_deletion_quota_resynced','list_storage_deletion_quota_resyncs',
+       'cancel_storage_deletion','enforce_storage_key_fence','fence_storage_key_for_deletion',
+       'is_storage_key_fenced','has_role']);
+  SELECT md5(jsonb_build_object(
+           'schema', 't6-group-r-fingerprint/v2',
+           'functions', (
+             SELECT coalesce(jsonb_agg(jsonb_build_object(
+               'name', p.proname,
+               'args', pg_catalog.oidvectortypes(p.proargtypes),
+               'returns', pg_catalog.format_type(p.prorettype, NULL),
+               'setof', p.proretset,
+               'secdef', p.prosecdef,
+               'volatile', p.provolatile,
+               'parallel', p.proparallel,
+               'leakproof', p.proleakproof,
+               'owner', pg_get_userbyid(p.proowner),
+               'body_md5', md5(p.prosrc)
+             ) ORDER BY p.proname), '[]'::jsonb)
+             FROM pg_catalog.pg_proc p
+             JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'public'
+              AND p.proname = ANY(ARRAY[
+                'request_storage_deletion','get_document_storage_reference_state','get_storage_reference_state',
+                'check_storage_deletion_references','claim_storage_deletion_request','claim_storage_deletion_requests',
+                'block_storage_deletion','record_storage_deletion_failure','set_r2_confirmed_absent',
+                'finalize_storage_deletion','mark_storage_deletion_quota_resynced','list_storage_deletion_quota_resyncs',
+                'cancel_storage_deletion','enforce_storage_key_fence','fence_storage_key_for_deletion',
+                'is_storage_key_fenced','has_role'])
+           ))::text) INTO v_fp_digest;
+
+  IF v_fp_count <> 17 THEN
+    v_fail := array_append(v_fail, format('the fingerprint set is incomplete: expected 17 contract functions, found %s', v_fp_count));
+  END IF;
+  IF v_fp_digest IS NULL OR v_fp_digest !~ '^[0-9a-f]{32}$' THEN
+    v_fail := array_append(v_fail, 'the T6 fingerprint could not be calculated or is malformed');
+  ELSIF v_fp_digest <> v_fp_expected THEN
+    v_fail := array_append(v_fail, format('the T6 fingerprint drifted: expected %s, computed %s', v_fp_expected, v_fp_digest));
+  END IF;
+  PERFORM set_config('t6r.fingerprint', jsonb_build_object(
+    'schema', 't6-group-r-fingerprint/v2',
+    'expected', v_fp_expected,
+    'computed', coalesce(v_fp_digest, ''),
+    'functionCount', v_fp_count,
+    'serverVersion', current_setting('server_version'),
+    'observedBaselineServerVersion', '17.11'
+  )::text, false);
+
   -- publish the result and fail closed --------------------------------------
   PERFORM set_config('t6r.preflight', jsonb_build_object(
     'schema', 't6-group-r-preflight/v1',
     'ok', (v_missing IS NULL AND array_length(v_fail, 1) IS NULL),
     'checks', v_checked,
     'failures', coalesce(to_jsonb(v_fail), '[]'::jsonb),
-    'namespace', v_counts
+    'namespace', v_counts,
+    'fingerprint', coalesce(nullif(current_setting('t6r.fingerprint', true), '')::jsonb, '{}'::jsonb)
   )::text, false);
 
   IF array_length(v_fail, 1) IS NOT NULL THEN

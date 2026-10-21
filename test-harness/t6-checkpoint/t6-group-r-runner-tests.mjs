@@ -74,6 +74,14 @@ import {
   PREFLIGHT_SCHEMA,
   PREFLIGHT_NAMESPACE_KEYS,
   interpretPreflight,
+  T6_FINGERPRINT_CONTRACT,
+  T6_FINGERPRINT_EXPECTED,
+  T6_FINGERPRINT_SERVER_VERSION,
+  T6_FINGERPRINT_FUNCTION_COUNT,
+  T6_FINGERPRINT_FIELDS,
+  computeT6Fingerprint,
+  evaluateT6Fingerprint,
+  stripTrailingRollback,
 } from "./t6-group-r-runner.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -87,6 +95,50 @@ const goodEndpoint = {
 };
 const runnerSrc = readFileSync(path.join(HERE, "t6-group-r-runner.mjs"), "utf8");
 const harnessText = readFileSync(HARNESS_SQL, "utf8");
+// The OBSERVED hosted TEST catalog material for the 17 contract functions.
+// Source: the read-only TEST capture t6r-metadata-20261021-191614.json
+// (sha256 2d17f5a67a0c19fdce46c9247fbeb79999bfcdb6c4b30625d32846a834f73a48).
+// The v2 digest computed from this material is the pinned baseline
+// a85fea6468487830a4ca9afc268d9aef.
+const CAPTURED_MATERIAL = [
+  { name: "block_storage_deletion", args: "uuid, uuid, text", returns: "boolean", setof: false, secdef: true, volatile: "v", parallel: "u", leakproof: false, owner: "postgres", body_md5: "63693af8bf74baab111686dee7f4d9bc" },
+  { name: "cancel_storage_deletion", args: "uuid", returns: "boolean", setof: false, secdef: true, volatile: "v", parallel: "u", leakproof: false, owner: "postgres", body_md5: "c2eab0d8e9fbfc0567b86551c206a45d" },
+  { name: "check_storage_deletion_references", args: "text", returns: "record", setof: true, secdef: true, volatile: "s", parallel: "u", leakproof: false, owner: "postgres", body_md5: "777935e771d0c471096effbc14f397e9" },
+  { name: "claim_storage_deletion_request", args: "uuid", returns: "record", setof: true, secdef: true, volatile: "v", parallel: "u", leakproof: false, owner: "postgres", body_md5: "e1b6a31005cdf451abe79d341a55c325" },
+  { name: "claim_storage_deletion_requests", args: "integer", returns: "record", setof: true, secdef: true, volatile: "v", parallel: "u", leakproof: false, owner: "postgres", body_md5: "729dbbbf63dba091cababb0acb4976be" },
+  { name: "enforce_storage_key_fence", args: "", returns: "trigger", setof: false, secdef: true, volatile: "v", parallel: "u", leakproof: false, owner: "postgres", body_md5: "b58d911ce90572e2ea23ec3563bba8de" },
+  { name: "fence_storage_key_for_deletion", args: "uuid, uuid", returns: "text", setof: false, secdef: true, volatile: "v", parallel: "u", leakproof: false, owner: "postgres", body_md5: "868fd89fd6b73c0f014b537736256bd1" },
+  { name: "finalize_storage_deletion", args: "uuid, uuid", returns: "boolean", setof: false, secdef: true, volatile: "v", parallel: "u", leakproof: false, owner: "postgres", body_md5: "af663a3b599b46c11a617dccb7ff3f15" },
+  { name: "get_document_storage_reference_state", args: "text", returns: "record", setof: true, secdef: true, volatile: "s", parallel: "u", leakproof: false, owner: "postgres", body_md5: "ccd1f831f80e953b1f14da1b9e083eb3" },
+  { name: "get_storage_reference_state", args: "text", returns: "record", setof: true, secdef: true, volatile: "s", parallel: "u", leakproof: false, owner: "postgres", body_md5: "60cfdb7e04dce5fa7b77c2ee79e3619e" },
+  { name: "has_role", args: "uuid, app_role", returns: "boolean", setof: false, secdef: true, volatile: "s", parallel: "u", leakproof: false, owner: "postgres", body_md5: "6b9bca1cc09de70841cac113efbdd41a" },
+  { name: "is_storage_key_fenced", args: "text", returns: "boolean", setof: false, secdef: true, volatile: "s", parallel: "u", leakproof: false, owner: "postgres", body_md5: "9ce9f3df50aedc088ee2401fb780f321" },
+  { name: "list_storage_deletion_quota_resyncs", args: "integer", returns: "record", setof: true, secdef: true, volatile: "s", parallel: "u", leakproof: false, owner: "postgres", body_md5: "7462004c6beba1fecbd6e2b44e81a46b" },
+  { name: "mark_storage_deletion_quota_resynced", args: "uuid", returns: "void", setof: false, secdef: true, volatile: "v", parallel: "u", leakproof: false, owner: "postgres", body_md5: "8d6fa4cec8ca9bda34220807b9a18168" },
+  { name: "record_storage_deletion_failure", args: "uuid, uuid, text, integer", returns: "text", setof: false, secdef: true, volatile: "v", parallel: "u", leakproof: false, owner: "postgres", body_md5: "afc9c2767d615d8baee46c79308efcb9" },
+  { name: "request_storage_deletion", args: "text", returns: "uuid", setof: false, secdef: true, volatile: "v", parallel: "u", leakproof: false, owner: "postgres", body_md5: "7a6bd512b597dcdedf14c25e2823aa25" },
+  { name: "set_r2_confirmed_absent", args: "uuid, uuid", returns: "boolean", setof: false, secdef: true, volatile: "v", parallel: "u", leakproof: false, owner: "postgres", body_md5: "06d5cdaef8601e4283751f10340cb1d9" },
+];
+
+
+const goodFingerprint = Object.freeze({
+  schema: T6_FINGERPRINT_CONTRACT,
+  expected: T6_FINGERPRINT_EXPECTED,
+  computed: T6_FINGERPRINT_EXPECTED,
+  functionCount: T6_FINGERPRINT_FUNCTION_COUNT,
+  serverVersion: T6_FINGERPRINT_SERVER_VERSION,
+});
+
+const fpPayload = (fingerprint, over = {}) => JSON.stringify({
+  schema: PREFLIGHT_SCHEMA,
+  ok: true,
+  checks: 57,
+  failures: [],
+  namespace: Object.fromEntries(PREFLIGHT_NAMESPACE_KEYS.map((k) => [k, 0])),
+  fingerprint,
+  ...over,
+});
+
 
 // ---------------------------------------------------------------------------
 // 1. Endpoint identity guards
@@ -1124,6 +1176,7 @@ test("P7: a complete all-zero preflight payload is accepted", () => {
   const namespace = Object.fromEntries(PREFLIGHT_NAMESPACE_KEYS.map((k) => [k, 0]));
   const payload = JSON.stringify({
     schema: PREFLIGHT_SCHEMA, ok: true, checks: 57, failures: [], namespace,
+    fingerprint: goodFingerprint,
   });
   const probe = `${PROBE_PREFIX}${JSON.stringify({ sqlstate: "00000", preflight: payload })}`;
   const r = interpretExec("pf", "preflight.schema", [probe]);
@@ -1263,8 +1316,17 @@ const pfSection = () => parseHarnessSections(harnessText).get("preflight.schema"
 // --- M1: identity resolution ------------------------------------------------
 test("M1: the function contract resolves by identity, not by a rendered type string", () => {
   const s = pfSection();
-  // The rendered-string comparison is gone.
-  assert.ok(!/oidvectortypes/.test(s), "the contract must not compare a rendered argument-type string");
+  // The rendered-string comparison is gone. The rendered argument type is
+  // only ever READ as fingerprint material (the digest input), never
+  // COMPARED with the expected contract.
+  const fpAt = s.indexOf("THE PINNED T6 FUNCTION-DEFINITION FINGERPRINT");
+  const contract = fpAt > 0 ? s.slice(0, fpAt) : s;
+  const fingerprint = fpAt > 0 ? s.slice(fpAt) : "";
+  assert.ok(!/oidvectortypes/.test(contract), "the contract must not compare a rendered argument-type string");
+  assert.ok(
+    !/oidvectortypes\s*(=|<>|!=|LIKE|ILIKE|IS)\b/.test(fingerprint),
+    "the fingerprint must read the rendered argument type, never compare it",
+  );
   assert.match(s, /to_regprocedure/);
   // The non-builtin argument type is written in the regprocedure input form.
   assert.ok(s.includes("'uuid, public.app_role'"), "has_role must be contracted as public.has_role(uuid, public.app_role)");
@@ -1389,6 +1451,7 @@ test("M1/M3: correct mocked TEST metadata passes the preflight", () => {
     checks: 57,
     failures: [],
     namespace,
+    fingerprint: goodFingerprint,
   });
   const r = interpretExec("pf", "preflight.schema", [
     `${PROBE_PREFIX}${JSON.stringify({ sqlstate: "00000", preflight: payload })}`,
@@ -1417,4 +1480,267 @@ test("M3: the evidence manifest records the redacted preflight diagnostics", () 
   const r = redactSensitive("host=db.example.supabase.co password=hunter2 postgres://u:p@h/db");
   assert.ok(!r.includes("hunter2"), "a password must never survive redaction");
   assert.ok(!r.includes("db.example.supabase.co"), "a connection detail must never survive redaction");
+});
+
+// ---------------------------------------------------------------------------
+// FP: the pinned T6 function-definition fingerprint (contract v2)
+// ---------------------------------------------------------------------------
+// The fingerprint is a T6-specific, version-stable digest over the catalog
+// definition of the 17 contract functions. It is pinned to the value that was
+// OBSERVED on Supabase TEST (PostgreSQL 17.11) and independently reproduced
+// from the read-only capture. Every deviation fails closed.
+
+test("FP1: the pinned fingerprint constants are the approved ones", () => {
+  assert.equal(T6_FINGERPRINT_CONTRACT, "t6-group-r-fingerprint/v2");
+  assert.equal(T6_FINGERPRINT_EXPECTED, "a85fea6468487830a4ca9afc268d9aef");
+  assert.match(T6_FINGERPRINT_EXPECTED, /^[0-9a-f]{32}$/);
+  assert.equal(T6_FINGERPRINT_SERVER_VERSION, "17.11");
+  assert.equal(T6_FINGERPRINT_FUNCTION_COUNT, 17);
+  assert.deepEqual([...T6_FINGERPRINT_FIELDS], [
+    "name", "args", "returns", "setof", "secdef", "volatile", "parallel", "leakproof", "owner", "body_md5",
+  ]);
+});
+
+test("FP2: the independent implementation reproduces the pinned digest from the captured material", () => {
+  assert.equal(CAPTURED_MATERIAL.length, 17);
+  const digest = computeT6Fingerprint(CAPTURED_MATERIAL);
+  assert.equal(digest, T6_FINGERPRINT_EXPECTED, "the implementation must reproduce the observed hosted digest");
+});
+
+test("FP3: the digest is deterministic and independent of the input order", () => {
+  const a = computeT6Fingerprint(CAPTURED_MATERIAL);
+  const b = computeT6Fingerprint([...CAPTURED_MATERIAL].reverse());
+  assert.equal(a, b);
+  assert.equal(a, computeT6Fingerprint([...CAPTURED_MATERIAL]));
+});
+
+test("FP4: a changed function body changes the digest", () => {
+  const drifted = CAPTURED_MATERIAL.map((f) => (f.name === "has_role"
+    ? { ...f, body_md5: "00000000000000000000000000000000" }
+    : f));
+  const digest = computeT6Fingerprint(drifted);
+  assert.notEqual(digest, T6_FINGERPRINT_EXPECTED, "a changed body must change the digest");
+  assert.equal(evaluateT6Fingerprint({ ...goodFingerprint, computed: digest }).ok, false);
+});
+
+test("FP5: attribute drift changes the digest", () => {
+  const mutations = {
+    secdef: (f) => ({ ...f, secdef: !f.secdef }),
+    volatile: (f) => ({ ...f, volatile: f.volatile === "v" ? "s" : "v" }),
+    parallel: (f) => ({ ...f, parallel: f.parallel === "u" ? "s" : "u" }),
+    leakproof: (f) => ({ ...f, leakproof: !f.leakproof }),
+    setof: (f) => ({ ...f, setof: !f.setof }),
+    owner: (f) => ({ ...f, owner: "someone_else" }),
+    returns: (f) => ({ ...f, returns: "text" }),
+    args: (f) => ({ ...f, args: "uuid, uuid, text, text" }),
+  };
+  for (const [label, mutate] of Object.entries(mutations)) {
+    const drifted = CAPTURED_MATERIAL.map((f, i) => (i === 3 ? mutate(f) : f));
+    const digest = computeT6Fingerprint(drifted);
+    assert.notEqual(digest, T6_FINGERPRINT_EXPECTED, `${label} drift must change the digest`);
+  }
+});
+
+test("FP6: a missing function cannot produce the pinned digest", () => {
+  const short = CAPTURED_MATERIAL.slice(1);
+  assert.equal(computeT6Fingerprint(short) === T6_FINGERPRINT_EXPECTED, false);
+  assert.equal(evaluateT6Fingerprint({ ...goodFingerprint, functionCount: 16 }).ok, false);
+  assert.match(evaluateT6Fingerprint({ ...goodFingerprint, functionCount: 16 }).problems.join(" "), /16 functions/);
+});
+
+test("FP7: incomplete material cannot be calculated at all", () => {
+  assert.equal(computeT6Fingerprint([]), null);
+  assert.equal(computeT6Fingerprint(null), null);
+  assert.equal(computeT6Fingerprint("nope"), null);
+  const missingField = CAPTURED_MATERIAL.map((f, i) => (i === 0 ? { ...f, body_md5: undefined } : f));
+  assert.equal(computeT6Fingerprint(missingField), null);
+  const unnamed = CAPTURED_MATERIAL.map((f, i) => (i === 0 ? { ...f, name: "" } : f));
+  assert.equal(computeT6Fingerprint(unnamed), null);
+});
+
+test("FP8: the exact pinned fingerprint is accepted", () => {
+  const v = evaluateT6Fingerprint(goodFingerprint);
+  assert.equal(v.ok, true, v.problems.join(" | "));
+  assert.equal(v.problems.length, 0);
+  assert.equal(v.expected, T6_FINGERPRINT_EXPECTED);
+  assert.equal(v.computed, T6_FINGERPRINT_EXPECTED);
+  assert.equal(v.serverVersion, "17.11");
+});
+
+test("FP9: every wrong, missing or malformed fingerprint is refused", () => {
+  const bad = [
+    { ...goodFingerprint, computed: "0".repeat(32) },
+    { ...goodFingerprint, computed: "a85fea6468487830a4ca9afc268d9ae" },
+    { ...goodFingerprint, computed: "A85FEA6468487830A4CA9AFC268D9AEF" },
+    { ...goodFingerprint, computed: "a85fea6468487830a4ca9afc268d9ae" },
+    { ...goodFingerprint, computed: "" },
+    { ...goodFingerprint, computed: "not-a-digest" },
+    { ...goodFingerprint, computed: null },
+    { ...goodFingerprint, computed: undefined },
+    { ...goodFingerprint, computed: 42 },
+    { ...goodFingerprint, expected: "0".repeat(32) },
+    { ...goodFingerprint, expected: undefined },
+    { ...goodFingerprint, schema: "t6-group-r-fingerprint/v1" },
+    { ...goodFingerprint, schema: undefined },
+    { ...goodFingerprint, functionCount: 18 },
+    { ...goodFingerprint, functionCount: "17" },
+    { ...goodFingerprint, functionCount: undefined },
+    {},
+    null,
+    undefined,
+  ];
+  for (const fp of bad) {
+    const v = evaluateT6Fingerprint(fp);
+    assert.equal(v.ok, false, `must refuse ${JSON.stringify(fp)}`);
+    assert.ok(v.problems.length > 0, "a refusal must always carry a reason");
+  }
+});
+
+test("FP10: a PostgreSQL version difference alone does not block", () => {
+  for (const version of ["17.10", "17.12", "18.1", undefined]) {
+    const v = evaluateT6Fingerprint({ ...goodFingerprint, serverVersion: version });
+    assert.equal(v.ok, true, `the version ${version} must not be a blocker`);
+  }
+});
+
+test("FP11: the preflight fails closed when the fingerprint is wrong", () => {
+  const withFingerprint = (fp) => interpretPreflight(interpretExec("pf", "preflight.schema", [
+    `${PROBE_PREFIX}${JSON.stringify({ sqlstate: "00000", preflight: fpPayload(fp) })}`,
+  ]));
+  const good = withFingerprint(goodFingerprint);
+  assert.equal(good.ok, true, good.reason);
+  assert.equal(good.fingerprint.ok, true);
+  // A missing fingerprint is a refusal, not a pass.
+  const missing = withFingerprint(undefined);
+  assert.equal(missing.ok, false);
+  assert.match(missing.reason, /fingerprint/i);
+  // A drifted digest is a refusal.
+  const drifted = withFingerprint({ ...goodFingerprint, computed: "0".repeat(32) });
+  assert.equal(drifted.ok, false);
+  assert.match(drifted.reason, /fingerprint drifted/i);
+  assert.equal(drifted.fingerprint.ok, false);
+});
+
+test("FP12: the evidence manifest records the fingerprint outcome", () => {
+  assert.match(runnerSrc, /fingerprint: \{\s*contract: T6_FINGERPRINT_CONTRACT,/);
+  assert.match(runnerSrc, /expected: T6_FINGERPRINT_EXPECTED,/);
+  assert.match(runnerSrc, /computed: \(preflight\.fingerprint && preflight\.fingerprint\.computed\) \|\| null,/);
+  assert.match(runnerSrc, /serverVersion: \(preflight\.fingerprint && preflight\.fingerprint\.serverVersion\) \|\| null,/);
+});
+
+test("FP13: the harness computes the fingerprint with the exact pinned contract", () => {
+  // The pinned baseline is present in the SQL, and it is the same value the
+  // runner pins.
+  assert.match(harnessText, /a85fea6468487830a4ca9afc268d9aef/);
+  // The construction: md5 over the jsonb serialisation of the 17 functions.
+  assert.match(harnessText, /'schema', 't6-group-r-fingerprint\/v2'/);
+  assert.match(harnessText, /md5\(jsonb_build_object\(/);
+  assert.match(harnessText, /jsonb_agg\(jsonb_build_object\([\s\S]*?ORDER BY p\.proname\)/);
+  // Exactly the ten catalog-derived fields.
+  for (const field of ["name", "args", "returns", "setof", "secdef", "volatile", "parallel", "leakproof", "owner", "body_md5"]) {
+    assert.match(harnessText, new RegExp(`'${field}',`), `the harness must contribute the ${field} field`);
+  }
+  // The sources of the ten fields are the catalog, not a rendering.
+  assert.match(harnessText, /'args', pg_catalog\.oidvectortypes\(p\.proargtypes\)/);
+  assert.match(harnessText, /'returns', pg_catalog\.format_type\(p\.prorettype, NULL\)/);
+  assert.match(harnessText, /'owner', pg_get_userbyid\(p\.proowner\)/);
+  assert.match(harnessText, /'body_md5', md5\(p\.prosrc\)/);
+  // The observed baseline version is recorded but never asserted.
+  assert.match(harnessText, /'observedBaselineServerVersion', '17\.11'/);
+});
+
+test("FP14: the harness fails closed on every fingerprint deviation", () => {
+  // A missing function.
+  assert.match(harnessText, /IF v_fp_count <> 17 THEN/);
+  assert.match(harnessText, /the fingerprint set is incomplete/);
+  // A digest that cannot be calculated or is malformed.
+  assert.match(harnessText, /IF v_fp_digest IS NULL OR v_fp_digest !~ '\^\[0-9a-f\]\{32\}\$' THEN/);
+  assert.match(harnessText, /the T6 fingerprint could not be calculated or is malformed/);
+  // A digest that differs.
+  assert.match(harnessText, /ELSIF v_fp_digest <> v_fp_expected THEN/);
+  assert.match(harnessText, /the T6 fingerprint drifted/);
+  // The failures are appended to the preflight failure list, which is
+  // published and then raises TPF01 (fail closed).
+  assert.match(harnessText, /array_append\(v_fail, format\('the T6 fingerprint/);
+  assert.match(harnessText, /USING ERRCODE = 'TPF01'/);
+});
+
+test("FP15: the fingerprint is validated before any fixture or case runs", () => {
+  // In the SQL: the fingerprint block precedes the publication of the
+  // preflight result.
+  const fpAt = harnessText.indexOf("THE PINNED T6 FUNCTION-DEFINITION FINGERPRINT");
+  const publishAt = harnessText.indexOf("-- publish the result and fail closed");
+  assert.ok(fpAt > 0, "the harness must compute the fingerprint");
+  assert.ok(publishAt > 0, "the harness must publish the preflight result");
+  assert.ok(fpAt < publishAt, "the fingerprint must be computed before the preflight result is published");
+  // In the runner: the preflight (which carries the fingerprint gate) runs
+  // before the observer and before the first case.
+  const preflightAt = runnerSrc.indexOf("preflight = await runPreflight();");
+  const observerAt = runnerSrc.indexOf("await observer.start();");
+  const firstCaseAt = runnerSrc.indexOf('runCase("T6-R01"');
+  assert.ok(preflightAt < observerAt);
+  assert.ok(preflightAt < firstCaseAt);
+  // Every case is gated on the preflight verdict.
+  assert.match(runnerSrc, /if \(!preflight\.ok\) \{/);
+});
+
+test("FP16: the harness fingerprint set is exactly the 17 contract functions", () => {
+  const block = harnessText.slice(harnessText.indexOf("THE PINNED T6 FUNCTION-DEFINITION FINGERPRINT"));
+  const arrays = [...block.matchAll(/proname = ANY\(ARRAY\[([\s\S]*?)\]\)/g)].map((m) => m[1]);
+  assert.equal(arrays.length, 2, "the count and the digest must use the same function set");
+  for (const a of arrays) {
+    const names = [...a.matchAll(/'([a-z0-9_]+)'/g)].map((m) => m[1]);
+    assert.equal(names.length, 17, "the fingerprint set must hold 17 functions");
+    assert.equal(new Set(names).size, 17, "the fingerprint set must hold 17 distinct functions");
+    assert.deepEqual([...names].sort(), CAPTURED_MATERIAL.map((f) => f.name).sort());
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PFX: the preflight payload (and therefore the fingerprint verdict) must
+//      actually reach the runner
+// ---------------------------------------------------------------------------
+
+test("PFX1: the completion probe publishes the preflight payload", () => {
+  assert.match(runnerSrc, /'preflight', coalesce\(current_setting\('t6r\.preflight', true\), ''\)/);
+  // The reset clears the setting before every statement, so no other
+  // statement can inherit a stale payload.
+  assert.match(runnerSrc, /PERFORM set_config\('t6r\.preflight', '', false\);/);
+  // A probe row that carries the payload is read by the preflight verdict.
+  const payload = fpPayload(goodFingerprint);
+  const r = interpretExec("pf", "preflight.schema", [
+    `${PROBE_PREFIX}${JSON.stringify({ sqlstate: "00000", preflight: payload })}`,
+  ]);
+  assert.equal(r.ok, true);
+  assert.equal(r.probe.preflight, payload);
+  assert.equal(interpretPreflight(r).ok, true);
+});
+
+test("PFX2: only a trailing ROLLBACK terminator is removed", () => {
+  assert.equal(stripTrailingRollback("BEGIN;\nDO $$ BEGIN END $$;\nROLLBACK;"), "BEGIN;\nDO $$ BEGIN END $$;");
+  assert.equal(stripTrailingRollback("BEGIN;\nROLLBACK;\n"), "BEGIN;");
+  assert.equal(stripTrailingRollback("BEGIN;\nrollback ;"), "BEGIN;");
+  // A section without a terminator is returned unchanged.
+  assert.equal(stripTrailingRollback("BEGIN;\nSELECT 1;"), "BEGIN;\nSELECT 1;");
+  // A ROLLBACK that is not the final terminator is left untouched.
+  const middle = "ROLLBACK;\nBEGIN;\nSELECT 1;";
+  assert.equal(stripTrailingRollback(middle), middle);
+  // Degenerate inputs never throw.
+  assert.equal(stripTrailingRollback(""), "");
+  assert.equal(stripTrailingRollback(null), "");
+  assert.equal(stripTrailingRollback(undefined), "");
+});
+
+test("PFX3: the preflight is executed without its trailing rollback and the session is still rolled back", () => {
+  assert.match(runnerSrc, /pf\.exec\(stripTrailingRollback\(S\("preflight\.schema"\)\)/);
+  // The session is closed with a ROLLBACK in the finally block.
+  assert.match(runnerSrc, /try \{ await pf\.rollback\(\); \} catch \{ \/\* already gone \*\/ \}/);
+  assert.match(runnerSrc, /try \{ pf\.close\(\); \} catch \{ \/\* already gone \*\/ \}/);
+});
+
+test("PFX4: the harness preflight section still ends with ROLLBACK", () => {
+  const section = parseHarnessSections(harnessText).get("preflight.schema") || "";
+  assert.match(section, /BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY;/);
+  assert.match(section, /ROLLBACK;\s*$/);
+  assert.match(section, /USING ERRCODE = 'TPF01'/);
 });
