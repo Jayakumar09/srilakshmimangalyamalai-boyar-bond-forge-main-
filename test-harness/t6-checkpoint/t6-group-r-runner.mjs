@@ -122,6 +122,11 @@ export const OBSERVER_TAG = "slmm-t6-obs";
 // acting session, and it is closed before the residue measurement.
 export const PREFLIGHT_TAG = "slmm-t6-pf";
 
+// The maximum number of stderr characters kept for the classification. The
+// classification needs only the first lines, and a chatty child must never be
+// able to grow the buffer without bound.
+export const STDERR_LIMIT = 65536;
+
 // ---------------------------------------------------------------------------
 // The pinned T6 function-definition fingerprint
 // ---------------------------------------------------------------------------
@@ -1056,6 +1061,54 @@ export function finalizePreflightOnlyResults(preflight = {}) {
   }));
 }
 
+// --- the connection-failure classification ------------------------------------
+
+/**
+ * The ONLY values that may ever classify a connection failure. A class name
+ * is a fixed word: no host, no user, no database, no password and no raw
+ * server text can ever appear in it.
+ */
+export const CONNECTION_FAILURE_KINDS = Object.freeze([
+  "authentication_failed",
+  "host_resolution_failed",
+  "connection_refused_or_timeout",
+  "tls_ssl_error",
+  "role_or_database_missing",
+  "unknown",
+]);
+
+/**
+ * Classify a PostgreSQL/libpq connection failure from the child's stderr.
+ *
+ * The function is PURE and it returns ONE of the predefined class names only.
+ * The raw stderr is read here and never returned, never logged and never
+ * written to the evidence. An unrecognised error is "unknown": it is NEVER
+ * reported as an authentication failure without supporting stderr.
+ */
+export function classifyConnectionFailure(stderr) {
+  const raw = stderr === null || stderr === undefined ? "" : String(stderr);
+  const text = raw.toLowerCase();
+  if (!text.trim()) return "unknown";
+  // The specific classes are checked first, so a TLS or a role error that
+  // also mentions a connection is classified by its cause.
+  if (/password authentication failed|authentication failed|no password supplied|invalid password|no pg_hba\.conf entry|authentication method/.test(text)) {
+    return "authentication_failed";
+  }
+  if (/could not translate host name|name or service not known|nodename nor servname|unknown host|no such host|could not resolve/.test(text)) {
+    return "host_resolution_failed";
+  }
+  if (/role "?[^"\s]+"? does not exist|database "?[^"\s]+"? does not exist/.test(text)) {
+    return "role_or_database_missing";
+  }
+  if (/ssl error|ssl connection|ssl handshake|certificate verify failed|ssl not enabled|sslmode/.test(text)) {
+    return "tls_ssl_error";
+  }
+  if (/connection refused|connection timed out|timeout expired|could not connect|connection failure|connection reset|server closed the connection unexpectedly|eof detected|network is unreachable|no route to host/.test(text)) {
+    return "connection_refused_or_timeout";
+  }
+  return "unknown";
+}
+
 // --- H6: the psql executable -------------------------------------------------
 
 /** The executable names the runner will ever run. */
@@ -1330,7 +1383,12 @@ export class PgSession {
     if (this.child.stdout && typeof this.child.stdout.setEncoding === "function") this.child.stdout.setEncoding("utf8");
     this.child.stdout.on("data", (d) => this.#onData(d));
     if (this.child.stderr && typeof this.child.stderr.setEncoding === "function") this.child.stderr.setEncoding("utf8");
-    this.child.stderr.on("data", (d) => { this.stderr += d; });
+    // The stderr is captured (and BOUNDED) for the connection-failure
+    // classification only. The runner never reads it for a verdict.
+    this.child.stderr.on("data", (d) => {
+      this.stderr += d;
+      if (this.stderr.length > STDERR_LIMIT) this.stderr = this.stderr.slice(-STDERR_LIMIT);
+    });
     this.child.on("exit", (code, signal) => {
       this.closed = true; this.exitCode = code; this.exitSignal = signal || null;
       const w = this.waiter; this.waiter = null;
@@ -1997,12 +2055,16 @@ export async function runGroupR({
       const r = await pf.exec(stripTrailingRollback(S("preflight.schema")), { label: "preflight.schema" });
       return interpretPreflight(r);
     } catch (e) {
+      // The child's stderr is classified into ONE fixed word. The raw text
+      // never leaves this function and never reaches the evidence.
+      const connectionFailure = classifyConnectionFailure(pf.stderr);
       return {
         ok: false,
-        reason: `the preflight session failed: ${e && e.message ? e.message : String(e)}`,
+        reason: `the preflight session failed: ${e && e.message ? e.message : String(e)} (${connectionFailure})`,
         failures: [],
         checks: 0,
         namespace: null,
+        connectionFailure,
       };
     } finally {
       try { await pf.rollback(); } catch { /* already gone */ }
@@ -2436,6 +2498,8 @@ export async function runGroupR({
         checks: preflight.checks || 0,
         failures: (preflight.failures || []).map((f) => redactSensitive(f)),
         reason: redactSensitive(preflight.reason || ""),
+        // The connection-failure class: a fixed word, never a server message.
+        connectionFailure: preflight.connectionFailure || null,
         fingerprint: {
           contract: T6_FINGERPRINT_CONTRACT,
           expected: T6_FINGERPRINT_EXPECTED,
@@ -2472,6 +2536,7 @@ export async function runGroupR({
       checks: preflight.checks || 0,
       failures: (preflight.failures || []).map((f) => redactSensitive(f)),
       reason: redactSensitive(preflight.reason || ""),
+      connectionFailure: preflight.connectionFailure || null,
       fingerprint: {
         contract: T6_FINGERPRINT_CONTRACT,
         expected: T6_FINGERPRINT_EXPECTED,

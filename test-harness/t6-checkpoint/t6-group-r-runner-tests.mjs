@@ -102,6 +102,8 @@ import {
   PREFLIGHT_ONLY_FLAG,
   parseRunMode,
   runGroupR,
+  CONNECTION_FAILURE_KINDS,
+  classifyConnectionFailure,
   finalizePreflightOnlyResults,
 } from "./t6-group-r-runner.mjs";
 
@@ -533,7 +535,25 @@ test("F2: the verdict is derived from the ordered stdout stream only", () => {
   assert.equal(r.ok, false, "a late 23514 must not be ignored");
   // The runner must not read stderr for correctness anywhere.
   assert.ok(!/errBefore/.test(runnerSrc), "the runner must not slice stderr around a statement");
-  assert.ok(!/this\.stderr\.slice/.test(runnerSrc), "the runner must not read stderr for a verdict");
+    // The stderr is CAPTURED and BOUNDED, and it is READ only to classify a
+    // connection failure into one fixed word. It never contributes to a
+    // verdict. Every use of the field is enumerated here, so a new reader
+    // cannot slip in.
+    const stderrUses = [...runnerSrc.matchAll(/this\.stderr[^\n]*/g)].map((m) => m[0].trim());
+    assert.ok(stderrUses.length > 0, "the stderr capture must still exist");
+    for (const u of stderrUses) {
+      assert.ok(
+        u === 'this.stderr = "";'
+        || u.startsWith("this.stderr += d")
+        || u.startsWith("this.stderr = this.stderr.slice")
+        || u.startsWith("this.stderr.length")
+        || u.startsWith("// ")
+        || u.startsWith("* "),
+        `the stderr field is used outside the capture and the bound: ${u}`,
+      );
+    }
+    // The one consumer of the captured stderr.
+    assert.match(runnerSrc, /classifyConnectionFailure\(pf\.stderr\)/);
 });
 
 test("F2: a disconnected session cannot produce a PASS", () => {
@@ -2261,6 +2281,9 @@ function mockPreflightRunner({
   computed = T6_FINGERPRINT_EXPECTED,
   functionCount = T6_FINGERPRINT_FUNCTION_COUNT,
   onPreflightWire = null,
+  // When set, the mocked child writes this text to stderr and exits with
+  // code 2 instead of answering: that is a connection failure.
+  failWithStderr = null,
 } = {}) {
   const spawned = [];
   const wires = [];
@@ -2284,6 +2307,13 @@ function mockPreflightRunner({
         wires.push(wire);
         const isPreflight = wire.includes("t6-group-r-preflight/v1");
         if (isPreflight && typeof onPreflightWire === "function") onPreflightWire(child, wire);
+        if (isPreflight && typeof failWithStderr === "string") {
+          // A connection failure: the server message goes to stderr and the
+          // child exits without ever producing a probe row.
+          child.stderr.emit("data", failWithStderr);
+          child.emit("exit", 2, null);
+          return true;
+        }
         const payload = isPreflight
           ? {
             sqlstate: preflightOk ? "00000" : "TPF01",
@@ -2597,4 +2627,138 @@ test("PF: the source keeps the preflight-only guards wired in", () => {
   assert.match(runnerSrc, /requireLiveAuthorization\(\{ harness: HARNESS, services: \["supabase-test-postgres"\] \}\);/);
   assert.match(runnerSrc, /ref = assertTestEndpointIdentity\(endpoint\);/);
   assert.match(runnerSrc, /assertNonProductionTarget\(`https:\/\/\$\{ref\}\.supabase\.co`, \{ harness: HARNESS \}\);/);
+});
+
+// ---------------------------------------------------------------------------
+// CD: the PostgreSQL connection-failure classification
+// ---------------------------------------------------------------------------
+// The classification is a PURE function over the child's stderr. It returns
+// exactly one predefined word, and the raw stderr never reaches the evidence.
+
+test("CD: the classification returns only the predefined classes", () => {
+  assert.deepEqual([...CONNECTION_FAILURE_KINDS], [
+    "authentication_failed",
+    "host_resolution_failed",
+    "connection_refused_or_timeout",
+    "tls_ssl_error",
+    "role_or_database_missing",
+    "unknown",
+  ]);
+});
+
+test("CD: each failure category is classified from the PostgreSQL stderr", () => {
+  const cases = [
+    ["authentication_failed", 'psql: error: connection to server at "aws-0-ap-northeast-1.pooler.supabase.com" (172.26.0.1), port 5432 failed: FATAL:  password authentication failed for user "postgres.nqadtfqyurkpmxcodswc"'],
+    ["authentication_failed", "FATAL:  no pg_hba.conf entry for host \"10.0.0.1\", user \"postgres.x\", database \"postgres\""],
+    ["authentication_failed", "fe_sendauth: no password supplied"],
+    ["host_resolution_failed", "psql: error: could not translate host name \"aws-0-ap-northeast-1.pooler.supabase.com\" to address: Name or service not known"],
+    ["host_resolution_failed", "could not resolve host: nodename nor servname provided, or not known"],
+    ["connection_refused_or_timeout", "psql: error: connection to server at \"db\", port 5432 failed: Connection refused"],
+    ["connection_refused_or_timeout", "connection to server at \"db\", port 5432 failed: timeout expired"],
+    ["connection_refused_or_timeout", "server closed the connection unexpectedly\n\tThis probably means the server terminated abnormally."],
+    ["tls_ssl_error", "psql: error: SSL error: tlsv1.3 alert protocol version"],
+    ["tls_ssl_error", "psql: error: could not connect to server: SSL error: certificate verify failed"],
+    ["role_or_database_missing", 'FATAL:  role "postgres.nqadtfqyurkpmxcodswc" does not exist'],
+    ["role_or_database_missing", 'FATAL:  database "postgres" does not exist'],
+  ];
+  for (const [expected, stderr] of cases) {
+    const got = classifyConnectionFailure(stderr);
+    assert.equal(got, expected, `the stderr "${stderr.slice(0, 40)}..." must classify as ${expected}`);
+    assert.ok(CONNECTION_FAILURE_KINDS.includes(got), "the classification must be one of the predefined words");
+  }
+});
+
+test("CD: an unrecognised or missing stderr is unknown, never authentication_failed", () => {
+  const unknowns = [
+    "",
+    "   \n  ",
+    null,
+    undefined,
+    "something entirely unexpected happened",
+    "psql: warning: extra command-line argument \"ignored\"",
+    "ERROR:  relation \"documents\" does not exist",
+  ];
+  for (const u of unknowns) {
+    const got = classifyConnectionFailure(u);
+    assert.equal(got, "unknown", `the stderr ${JSON.stringify(u)} must classify as unknown`);
+    assert.notEqual(got, "authentication_failed");
+  }
+  // A text that merely MENTIONS a password is not an authentication failure.
+  assert.equal(classifyConnectionFailure("psql: notice: the password is stored in a secure store"), "unknown");
+});
+
+test("CD: the classification never carries the raw stderr, a host, a user or a credential", () => {
+  const stderr = 'psql: error: connection to server at "aws-0-ap-northeast-1.pooler.supabase.com" (54.64.190.72), port 5432 failed: FATAL:  password authentication failed for user "postgres.nqadtfqyurkpmxcodswc"';
+  const got = classifyConnectionFailure(stderr);
+  assert.equal(got, "authentication_failed");
+  assert.ok(!got.includes("supabase"), "the classification must not carry a hostname");
+  assert.ok(!got.includes("postgres"), "the classification must not carry a user name");
+  assert.ok(!got.includes("54.64"), "the classification must not carry an address");
+  assert.ok(!/password\s*=/i.test(got), "the classification must not carry a credential");
+  assert.ok(CONNECTION_FAILURE_KINDS.includes(got));
+});
+
+test("CD: a failing preflight records the class in the manifest and no raw stderr", async () => {
+  const psql = dummyPsql();
+  const evidenceDir = mkdtempSync(path.join(tmpdir(), "t6r-cd-fail-"));
+  const rawStderr = 'psql: error: connection to server at "aws-0-ap-northeast-1.pooler.supabase.com" (54.64.190.72), port 5432 failed: FATAL:  password authentication failed for user "postgres.nqadtfqyurkpmxcodswc"\n';
+  const mock = mockPreflightRunner({ preflightOk: true, failWithStderr: rawStderr });
+  try {
+    const out = await runPreflightOnly(mock, { evidenceDir, psqlPath: psql.file });
+    // The class is recorded.
+    assert.equal(out.preflight.connectionFailure, "authentication_failed");
+    const manifest = JSON.parse(readFileSync(out.evidence.manifestPath, "utf8"));
+    assert.equal(manifest.preflight.connectionFailure, "authentication_failed");
+    // The raw stderr is NOT in the evidence, and neither is a host, a user,
+    // an address or the credential.
+    const text = `${readFileSync(out.evidence.evidencePath, "utf8")}${readFileSync(out.evidence.manifestPath, "utf8")}`;
+    assert.ok(!text.includes("FATAL"), "the raw server text must never reach the evidence");
+    assert.ok(!text.includes("pooler.supabase.com"), "no hostname may reach the evidence");
+    assert.ok(!text.includes("54.64.190.72"), "no address may reach the evidence");
+    assert.ok(!text.includes("password authentication failed"), "no server message may reach the evidence");
+    assert.ok(!text.includes("dummy-credential"), "no credential may reach the evidence");
+    // The failure is still fail-closed: nothing is a PASS.
+    assert.notEqual(out.verdict, "PASS");
+    assert.equal(manifest.caseOutcomes.PASS, 0);
+    assert.equal(manifest.caseOutcomes.BLOCKED, 8);
+    for (const r of out.results) assert.equal(r.verdict, "BLOCKED");
+    // And no observer, fixture or case ran.
+    assert.deepEqual(mock.spawned, [PREFLIGHT_TAG]);
+  } finally {
+    rmSync(psql.dir, { recursive: true, force: true });
+    rmSync(evidenceDir, { recursive: true, force: true });
+  }
+});
+
+test("CD: a successful preflight is unchanged and records no connection failure", async () => {
+  const psql = dummyPsql();
+  const evidenceDir = mkdtempSync(path.join(tmpdir(), "t6r-cd-ok-"));
+  const mock = mockPreflightRunner({ preflightOk: true });
+  try {
+    const out = await runPreflightOnly(mock, { evidenceDir, psqlPath: psql.file });
+    assert.equal(out.preflight.ok, true);
+    const manifest = JSON.parse(readFileSync(out.evidence.manifestPath, "utf8"));
+    assert.equal(manifest.preflight.ok, true);
+    assert.equal(manifest.preflight.connectionFailure, null);
+    assert.equal(manifest.preflight.fingerprint.computed, T6_FINGERPRINT_EXPECTED);
+    assert.equal(manifest.preflight.fingerprint.ok, true);
+    assert.equal(manifest.preflight.fingerprint.functionCount, 17);
+    assert.equal(manifest.caseOutcomes.PASS, 0);
+    assert.notEqual(out.verdict, "PASS");
+  } finally {
+    rmSync(psql.dir, { recursive: true, force: true });
+    rmSync(evidenceDir, { recursive: true, force: true });
+  }
+});
+
+test("CD: the source keeps the classification fail-closed and verdict-free", () => {
+  // The classifier is pure: it takes the stderr and returns one word.
+  assert.match(runnerSrc, /export function classifyConnectionFailure\(stderr\)/);
+  // The only consumer of the captured stderr.
+  assert.match(runnerSrc, /const connectionFailure = classifyConnectionFailure\(pf\.stderr\);/);
+  // The class is recorded in the manifest, never the raw text.
+  assert.match(runnerSrc, /connectionFailure: preflight\.connectionFailure \|\| null,/);
+  // The stderr is bounded.
+  assert.match(runnerSrc, /export const STDERR_LIMIT = 65536;/);
+  assert.match(runnerSrc, /this\.stderr = this\.stderr\.slice\(-STDERR_LIMIT\);/);
 });
