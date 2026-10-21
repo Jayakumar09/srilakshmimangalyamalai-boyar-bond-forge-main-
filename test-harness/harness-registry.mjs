@@ -51,6 +51,13 @@ export const LIVE_HARNESSES = Object.freeze([
     file: "slmm-receipt-delivery-test.mjs",
     services: ["supabase-auth", "supabase-rest", "cloudflare-r2", "resend-email"],
   },
+  {
+    // T6 Group-R runner. Talks to the Supabase TEST PostgreSQL session
+    // pooler; never to production. It is never wired to an npm script and
+    // must be authorised explicitly before it is run.
+    file: "t6-checkpoint/t6-group-r-runner.mjs",
+    services: ["supabase-test-postgres"],
+  },
 ]);
 
 export const HELPER_MODULES = Object.freeze([
@@ -81,6 +88,7 @@ export const LIVE_SQL_HARNESSES = Object.freeze([
   "slmm-storage-deletion-t4-cli-session.sql",
   "slmm-storage-deletion-t4-live-test.sql",
   "slmm-storage-deletion-t4-residue.sql",
+  "t6-checkpoint/t6-group-r-harness.sql",
 ]);
 
 export const offlineSuiteFiles = () => OFFLINE_SUITES.map((s) => s.file);
