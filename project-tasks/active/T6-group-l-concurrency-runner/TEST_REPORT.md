@@ -55,6 +55,7 @@ tool-call abort, the second ran to completion.
 | M | Candidate v3 final hardening (2026-10-20) | **PASS** | C2f: a truncated or incomplete runner capture is now a **hard failure** (`Assert-NodeCaptureTrustworthy` throws `T6 BLOCKED` on `StdoutTruncated` / `StderrTruncated` / `CaptureIncomplete`), and `Get-T6Verdict` now **requires** a present, well-formed 64-hex-digit runner digest that must match the evidence copy. The evidence byte-identity comparison and both checksum comparisons are **preserved unchanged**. 8/8 mutants killed (digest presence, digest validity, digest-vs-evidence, byte-identity, capture-trust predicate, Node-step gate removal, gate always-throws, gate ordering) |
 | N | Candidate v3 one-shot execution attempt (2026-10-20 19:16 IST) | **BLOCKED (launcher exit 1)** | The approved invocation passed `-EvidenceRoot D:\SLMM-T6-EVIDENCE`, but the candidate did not declare that parameter, so PowerShell failed at **parameter binding before the script body ran** (elapsed 1.4 s, empty stdout/stderr). **No evidence directory created, no PostgreSQL started, port 15432 never bound, all 12 Group-L cases NOT RUN.** Evidence retained under `D:\SLMM-T6-EVIDENCE\launcher-20261020-191622-a1e6bf5c\` (`exitcode.txt` = `exitcode=1`, `DIAGNOSIS.txt`, pre/post state, process snapshot) |
 | O | Candidate v3 one-shot execution attempt (2026-10-20 20:15 IST) | **BLOCKED (wrapper exit 2)** | The `-EvidenceRoot` parameter **worked**: the invocation bound and the candidate created its evidence directory under `D:\SLMM-T6-EVIDENCE\t6-run-20261020-201516-88ef8d45\`. The run then aborted at the **first** step with `FAILED: The variable '$script:ExitCodes' cannot be retrieved because it has not been set.` -- `$script:ExitCodes` was **never initialised**, and under `Set-StrictMode -Version Latest` that assignment is a terminating error. The run stopped **before `pg_ctl start`**: **no PostgreSQL cluster was ever started**, port 15432 was never bound, and **all 12 Group-L cases remained NOT RUN**. The candidate's ownership-verified teardown removed only its own disposable lab tree; the port-5432 service was untouched (PID 4828, 2 listeners, 10 postgres.exe, unchanged). Evidence preserved under `D:\SLMM-T6-EVIDENCE\launcher-20261020-201457-c2476264\` (`exitcode.txt` = `exitcode=2`, empty stderr, pre/post state, process snapshot) and `D:\SLMM-T6-EVIDENCE\t6-run-20261020-201516-88ef8d45\` |
+| P | Candidate v3 one-shot execution attempt (2026-10-20 22:28 IST) | **FAIL (wrapper exit 1)** | The **first** run that reached the Group-L runner. The whole main path executed in 42 s: `initdb`, `pg_ctl start`, `pg_isready`, the identity check, `CREATE DATABASE t6lab`, the bootstrap, the preflight, the Node step, the residue re-check, the evidence copy, the verdict and the teardown. **Every bootstrap and preflight step PASSED** (`initdb=0`, `pgctl_start=0`, `isready=0`, `identity=0`, `create_db=0`, `bootstrap=0`, `preflight=0`, `residue=0`); only `node` exited 1, and the verdict is **FAIL** -- the wrapper correctly refused to report PASS. **T6-L01 = FAIL; the other eleven cases = NOT RUN.** T6-L01 failed because of the runner's **per-case survivor logic**: its detail is byte-for-byte the runner's own success return string for that case plus only ` | force-terminated 2 surviving T6 backend(s)`, so every assertion inside the case passed and **no product RPC failure has been demonstrated**. The check counted the runner's own two long-lived, intentionally reused A/B sessions as leaks. **Evidence digests and residue verified**: the runner-reported digest `d9cdd1c82ec859ef7600306702d7b5604ce42ec9403bff9780d35602cd9058c8` equals the SHA-256 of the evidence copy in `D:\SLMM-T6-EVIDENCE\t6-run-20261020-222837-8ec45d7e\`, and the residue verdict is `{"synthetic_rows":0,"other_t6_backends":0,"t6_advisory_locks":0}`. Teardown proved ownership before stopping; post-run `port15432_listeners=0`, `t6lab_exists=False`, and the port-5432 service was untouched (`Running`, 2 listeners, 10 `postgres.exe`). Evidence preserved under `D:\SLMM-T6-EVIDENCE\launcher-20261020-222834-2248bb69\` and `D:\SLMM-T6-EVIDENCE\t6-run-20261020-222837-8ec45d7e\` |
 
 ## Summary
 
@@ -62,8 +63,9 @@ tool-call abort, the second ran to completion.
 - 2026-10-20 execution attempt: the disposable cluster **started** and stayed healthy
   for 16 minutes, but the wrapper **BLOCKED** inside `Invoke-Native` because of the
   pipe-inheritance defect (C2b) and returned **exit code 2**.
-- **All 12 Group-L concurrency cases remain NOT RUN.** No case result exists. Nothing
-  about concurrency correctness is proven.
+- **One Group-L case (T6-L01) has now executed and produced a result; the other eleven are
+  still NOT RUN, and no case has reported PASS.** Nothing about concurrency correctness
+  is proven.
 - Candidate **v1 was executed and returned BLOCKED**. Candidate **v2**
   (`t6-runner-candidate-v2.ps1`, SHA-256
   `b5a90be2198b186a009971342155e6e4f5ba54cf5f66455d2e8d4bef9d655bce`) carries the
@@ -80,14 +82,27 @@ tool-call abort, the second ran to completion.
   runner digest before PASS is possible). The earlier v3 revision
   (`5faae6ebc0a1e422b465b369ab37da8b3049f88190c81eb2f2a00794da21457a`) is superseded. It is **NOT EXECUTION-APPROVED** and has
   **not been executed**.
-- **No Group-L case has ever run.** Two one-shot execution attempts were made on 2026-10-20 and both
-  BLOCKED before the Group-L runner started. The 19:16 IST attempt failed at **parameter binding**, before
-  the candidate body ran (wrapper exit 1; no evidence directory created, no PostgreSQL started). The 20:15
-  IST attempt ran with the repaired `-EvidenceRoot` binding and created its evidence directory, but aborted
-  at the first step because `$script:ExitCodes` was never initialised (wrapper exit 2); **no PostgreSQL cluster
-  was started and port 15432 was never bound**. Nothing in any candidate's offline validation demonstrates
+- **No Group-L case has ever reported PASS.** Three one-shot execution attempts were made on 2026-10-20.
+  The 19:16 IST attempt failed at **parameter binding**, before the candidate body ran (wrapper exit 1; no
+  evidence directory created, no PostgreSQL started). The 20:15 IST attempt ran with the repaired
+  `-EvidenceRoot` binding and created its evidence directory, but aborted at the first step because
+  `$script:ExitCodes` was never initialised (wrapper exit 2); **no PostgreSQL cluster was started**.
+  The 22:28 IST attempt **started the disposable cluster on 127.0.0.1:15432 and reached the Group-L runner**
+  (wrapper exit 1, verdict FAIL): every bootstrap and preflight step passed, **T6-L01 = FAIL** and the other
+  **eleven cases = NOT RUN**. T6-L01's failure is attributable to the **runner's per-case survivor check**,
+  which counted the runner's own two intentionally reused A/B sessions as leaks; the case body's own
+  assertions all passed, so **no product RPC failure has been demonstrated**. Nothing yet demonstrates
   concurrency correctness.
 
+- **Correction applied offline (2026-10-20), NOT EXECUTION-APPROVED:** `t6-local-runner.mjs` SHA-256
+  `0595bda3562d76056541106a33941638156340ce009a891c6746156922de8fc6` (62766 bytes / 1203 lines) replaces the executed revision `e1719be2ac0d432c903035001fdb0774c93641c0fa308073eefcf55e699aa234` (46751 bytes / 875 lines). The per-case
+  survivor check is replaced by a pid-keyed session audit: healthy, idle, transaction-free A/B sessions are
+  **expected and reusable**, while an unexpected T6 backend, a non-transaction-clean expected session, a
+  missing or ambiguous session identity and a failed cleanup all still FAIL the case. Cleanup stays bounded
+  and restricted to positively identified T6-owned backends; a foreign session is never terminated. Offline
+  validation: `node --check` 0 errors, `--self-test` **30/30 PASS exit 0** (21 original + 10 new C9 checks),
+  **9/9 C9 mutants killed**. All 12 case bodies, the case IDs, the synthetic identities, the digest reporting
+  and the mandatory residue checks are byte-identical.
 ## Evidence and limitations
 
 - The 2026-10-20 attempt's evidence is durable under `D:\SLMM-T6-EVIDENCE\`

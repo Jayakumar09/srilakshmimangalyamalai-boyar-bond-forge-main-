@@ -28,7 +28,7 @@ This is a **local laboratory** task. It does **not** target Supabase TEST
 
 - [ ] All six prerequisites pass before any cluster start.
 - [ ] `t6-runner.ps1` SHA-256 == `fac7926d0de1739f89a9298baf1be0198268fb560ef80ddd151cb6b73720894c`.
-- [ ] `t6-local-runner.mjs` SHA-256 == `e1719be2ac0d432c903035001fdb0774c93641c0fa308073eefcf55e699aa234`.
+- [ ] `t6-local-runner.mjs` SHA-256 == `0595bda3562d76056541106a33941638156340ce009a891c6746156922de8fc6`.
 - [ ] Static negative tests: 20/20 Node, 15/15 PowerShell.
 - [ ] Port `15432` has no listener; `%TEMP%\opencode\t6lab` absent or ownership certain.
 - [ ] No PostgreSQL redirect env vars active.

@@ -4,7 +4,7 @@
 - **Baseline HEAD:** `eef9b2e607346f3560af5baf1f170932455a9b44`
 - **Recovery checkpoint:** `64dafc9298157890877b87e38e6deb5c9dcfa8da` (2026-10-20)
 
-## 1. Current state (2026-10-20) — RECOVERED, NOT EXECUTED
+## 1. Current state (2026-10-20) § RECOVERED; ONE EXECUTION ATTEMPTED (see §2)
 
 The original artifacts lived in the **external, ephemeral** directory
 `%TEMP%\opencode\t6-prep` and were **not tracked by Git**. On 2026-10-20 the
@@ -208,7 +208,7 @@ initdb/pg_ctl defaults.
 | Bytes | 6153 |
 | Purpose | Reproduces the exact 2026-10-20 deadlock shape with `cmd.exe` + `ping` only — **no PostgreSQL, no port 15432, no 5432 service** — and asserts (a) the v1 pipeline pattern blocks while a descendant holds the pipe, (b) the v2 file-redirect pattern returns promptly, (c) a short deadline is reported as a TIMEOUT rather than as success |
 
-### Corrected candidate v3 (2026-10-20) — NOT EXECUTION-APPROVED, NOT EXECUTED
+### Corrected candidate v3 (2026-10-20) § APPROVED, COMMITTED, PUSHED, EXECUTED ONCE (verdict FAIL)
 
 | Item | Value |
 |---|---|
@@ -362,6 +362,62 @@ was found.**
 
 **No PostgreSQL setting was changed** and the option string is unchanged.
 
+### Corrected Group-L runner (2026-10-20) - NOT EXECUTION-APPROVED, NOT EXECUTED
+
+The one-shot execution of 2026-10-20 22:28 IST was the **first** run that
+reached the Group-L runner. It returned **wrapper exit code 1** with verdict
+**FAIL**. **Every bootstrap and preflight step PASSED** (`initdb`, `pg_ctl start`,
+`pg_isready`, identity, `CREATE DATABASE`, bootstrap, preflight and residue all
+exited 0); only the `node` step exited 1.
+
+**Case outcomes:** T6-L01 = **FAIL**; T6-L02, T6-L03, T6-L04, T6-L05, T6-L06,
+T6-L07, T6-L08a, T6-L08b, T6-L09, T6-L10 and T6-L11 = **NOT RUN**. **No
+Group-L case has ever reported PASS.**
+
+**T6-L01 failed because of the runner's per-case survivor logic, not because of
+a demonstrated product RPC failure.** **No product RPC failure has been demonstrated.** Its recorded detail is byte-for-byte the
+runner's own success return string for T6-L01 followed only by
+` | force-terminated 2 surviving T6 backend(s)`, so every assertion inside the
+case passed. The per-case check treated the runner's own two long-lived,
+intentionally reused A/B sessions as leaks.
+
+| Item | Value |
+|---|---|
+| File | `test-harness/t6-checkpoint/t6-local-runner.mjs` (existing file, corrected) |
+| **Corrected SHA-256** | `0595bda3562d76056541106a33941638156340ce009a891c6746156922de8fc6` |
+| **Corrected bytes / lines** | **62766 bytes / 1203 lines** |
+| Previous revision SHA-256 | `e1719be2ac0d432c903035001fdb0774c93641c0fa308073eefcf55e699aa234` (46751 bytes / 875 lines) -- the revision that was executed |
+| Static validation | `node --check` **0 errors**; `node t6-local-runner.mjs --self-test` **30/30 PASS, exit 0** (the 21 original checks preserved + 10 new C9 checks) |
+| Mutation testing | **9/9 C9 mutants killed** (expected-session classification, open-transaction check, advisory-lock check, foreign-session classification, case gate, missing-session check, ambiguous-identity check, cleanup-failure reason, unexpected-backend detection reason) |
+| Preserved | All 12 case bodies byte-identical, the case IDs, the synthetic identities, the digest reporting and the mandatory residue checks |
+
+| # | Correction | Effect |
+|---|---|---|
+| C9-1 | The per-case survivor check is replaced by a **session audit keyed on the runner's own backend pids** | Sessions A and B are created once and intentionally reused across cases; a healthy idle transaction-free A/B session is **expected and reusable**, not a leak. The previous check counted them as survivors, force-terminated them and failed the first case, which aborted the remaining eleven. |
+| C9-2 | **Detection is preserved and strengthened** | The case still fails for an **unexpected** T6 backend, an expected session that is **not transaction-clean** (open transaction, non-idle state, or a held advisory lock), a **missing** expected session, an **ambiguous** session identity, or a **failed cleanup**. Every case still ends with `ROLLBACK` on every session. |
+| C9-3 | Cleanup stays **bounded and restricted** | At most 8 unexpected backends are terminated per case, with a 5-second bound, and only for backends **positively identified as T6-owned** and not one of the runner's own live sessions. A **foreign session is never a termination target**. The audit **fails closed** when the session identity or the observation cannot be established. |
+
+**This correction is NOT EXECUTION-APPROVED and has NOT been executed.**
+
+**Preparation implications that need SEPARATE approval (not performed here):**
+- `test-harness/t6-checkpoint/t6-checksums.txt` still pins
+  `t6-local-runner.mjs` to `e1719be2ac0d432c903035001fdb0774c93641c0fa308073eefcf55e699aa234` and must be updated to `0595bda3562d76056541106a33941638156340ce009a891c6746156922de8fc6`.
+- The executable copy at `%TEMP%\opencode\t6-prep\t6-local-runner.mjs` is
+  still the **old** revision and must be refreshed from the corrected file
+  before any further run.
+- The candidate wrapper `t6-runner-candidate-v3.ps1` hardcodes **no** artifact
+  checksum; it hashes the prep artifacts at run time, so the wrapper itself
+  needs no change.
+
+### Execution record (2026-10-20) - candidate v3 was executed once and returned FAIL
+
+One launcher attempt occurred at 22:28:34 IST
+(`D:\SLMM-T6-EVIDENCE\launcher-20261020-222834-2248bb69\`).
+
+| # | Window (IST) | Outcome | Detail |
+|---|---|---|---|
+| P | Candidate v3 one-shot execution (2026-10-20 22:28 IST) | **FAIL (wrapper exit 1)** | The approved invocation passed `-Confirm I_APPROVE_LOCAL_T6 -EvidenceRoot D:\SLMM-T6-EVIDENCE`. The whole main path ran in 42 s. `initdb`, `pg_ctl start`, `pg_isready`, identity, `CREATE DATABASE t6lab`, bootstrap, preflight and residue all exited **0**; only `node` exited **1**. The verdict is **FAIL**. Evidence: `D:\SLMM-T6-EVIDENCE\t6-run-20261020-222837-8ec45d7e\` (run log, node log, results jsonl, verdict.json, artifact-sha256.txt). The results digest `d9cdd1c82ec859ef7600306702d7b5604ce42ec9403bff9780d35602cd9058c8` matches the evidence copy byte-for-byte; the residue verdict is `{"synthetic_rows":0,"other_t6_backends":0,"t6_advisory_locks":0}`. Teardown proved ownership before stopping. Post-run: `port15432_listeners=0`, `t6lab_exists=False`; the port-5432 service was untouched (`Running`, 2 listeners, 10 `postgres.exe`). |
+
 ### Execution record (2026-10-20) — candidate v1 was executed and returned BLOCKED
 
 Two launcher attempts occurred.
@@ -371,7 +427,7 @@ Two launcher attempts occurred.
 | 1 | 11:15 – 11:33 | **INTERRUPTED** | The agent-side waiting parent was killed by a harness tool-call abort during the `pg_ctl start` step. The wrapper died, the disposable postmaster was orphaned, and it later failed with the Windows `0xC0000142` (`STATUS_DLL_INIT_FAILED`) fault in the autovacuum worker and the startup process at 11:33:21. |
 | 2 | 11:38 – 12:13 | **EXIT CODE 2 (BLOCKED)** | Detached launcher, so an agent-side interrupt could not kill the run. **PostgreSQL started correctly** on `127.0.0.1:15432` and **survived its first 5-minute checkpoint (11:58:03) with no fault — no `0xC0000142` in this attempt.** The wrapper then blocked inside `Invoke-Native` for 20 minutes (0% CPU, no children) until the disposable cluster was stopped, and failed closed with `T6 BLOCKED: cluster did not become ready on port 15432 (pg_isready exit 2)` and exit code 2. Its own teardown removed `%TEMP%\opencode\t6lab`. |
 
-**All 12 Group-L cases remain NOT RUN.** No `t6-lab-results.jsonl`, no node
+**All 12 Group-L cases remained NOT RUN in this attempt.** No `t6-lab-results.jsonl`, no node
 log and no verdict file were ever produced, and no case is labelled PASS. The
 port-5432 service was never touched (PID 4828, unchanged start time and
 listeners).

@@ -314,7 +314,7 @@ BLOCKED.**
   checksum approval, and (c) a separate one-shot execution approval. **All 12
   Group-L cases remain NOT RUN.**
 
-### 8. Corrected candidate v3 prepared (2026-10-20) — NOT EXECUTION-APPROVED, NOT EXECUTED
+### 8. Corrected candidate v3 prepared (2026-10-20) \1 SUPERSEDED BY 8c (approved, pushed, executed once -- verdict FAIL)
 
 - **New file:** `test-harness/t6-checkpoint/t6-runner-candidate-v3.ps1`.
   **Current (final) revision: SHA-256 `30e31c1d2c1f14f04bdff78cfd42fa466cb613efa923f099157a347a649ba97c`, 139325 bytes, 2520 lines.**
@@ -470,9 +470,10 @@ corrected in the final revision.
   unowned, foreign or ambiguous processes (including a `postmaster.pid` that
   names a foreign data directory, one that records port 5432, and one with
   no valid ownership marker).
-- **T6 remains BLOCKED.** Candidate v3 needs (a) review, (b) a fresh explicit
-  checksum approval, and (c) a separate one-shot execution approval.
-  **All 12 Group-L cases remain NOT RUN.**
+- **T6 remained BLOCKED as of this section (2026-10-20, preparation time).**
+  Candidate v3 needed (a) review, (b) a fresh explicit checksum approval, and (c) a
+  separate one-shot execution approval. At this point all 12 Group-L cases were still
+  NOT RUN. **Section 8c supersedes this status.**
 
 ### 8a. Parameter-binding repair and the C2g regression block (2026-10-20)
 
@@ -582,6 +583,67 @@ corrected in the final revision.
 - **All previously passing C2b-C2g assertions are preserved**, together with
   the bounded capture, timeout, ownership, port, digest and evidence
   protections.
+
+### 8c. First successful main-path execution and the Group-L runner session-lifecycle defect (2026-10-20 22:28 IST)
+
+- **The one-shot execution of 2026-10-20 22:28 IST returned wrapper exit code `1`.**
+  This is the **first** run that reached the Group-L runner. The whole main path
+  executed in 42 seconds: `initdb`, `pg_ctl start`, `pg_isready`, the identity
+  check, `CREATE DATABASE t6lab`, the bootstrap, the preflight, the Node step,
+  the residue re-check, the evidence copy, the verdict and the teardown.
+- **Every bootstrap and preflight step PASSED.** The candidate's own exit-code
+  table records `initdb=0`, `pgctl_start=0`, `isready=0`, `identity=0`,
+  `create_db=0`, `bootstrap=0`, `preflight=0` and `residue=0`. **Only `node`
+  exited non-zero (`node=1`).** The verdict is `FAIL` and the wrapper correctly
+  refused to report PASS.
+- **Case outcomes: T6-L01 = FAIL; T6-L02, T6-L03, T6-L04, T6-L05, T6-L06,
+  T6-L07, T6-L08a, T6-L08b, T6-L09, T6-L10 and T6-L11 = NOT RUN** (the runner
+  aborts the suite after the first non-PASS case). **No Group-L case has ever
+  reported PASS.**
+- **T6-L01 failed because of the runner's per-case survivor check, not because
+  of a demonstrated product RPC failure.** The recorded detail is byte-for-byte
+  the runner's own *success* return string for T6-L01
+  (`commit release -> loser 0 rows, attempt=1 committed once; rollback release
+  -> observed waiter won with attempt=1, both rolled back, row unchanged`),
+  followed only by the suffix ` | force-terminated 2 surviving T6 backend(s)`.
+  Every assertion inside T6-L01 therefore passed. **No product RPC failure has
+  been demonstrated.**
+- **The defect.** The per-case cleanup counted *any* backend whose
+  `application_name` was `slmm-t6-a` or `slmm-t6-b` as a leak. Sessions A and B
+  are created once and **intentionally reused across every case**: they are
+  rolled back at the end of a case but stay connected for the next one. The
+  check therefore counted the runner's own two healthy sessions, force-
+  terminated them and marked the case FAIL, which aborted the remaining eleven.
+  The runner's own `preflight()` already models this correctly (it allows the
+  three expected concurrent backends).
+- **Evidence digests and residue are verified.** The runner reported
+  `results_sha256 = d9cdd1c82ec859ef7600306702d7b5604ce42ec9403bff9780d35602cd9058c8`; the evidence copy in
+  `D:\SLMM-T6-EVIDENCE\t6-run-20261020-222837-8ec45d7e\` has exactly that SHA-256; the artifact
+  manifest shows the original results file and the evidence copy with the same
+  digest; and the runner's residue verdict is
+  `{"synthetic_rows":0,"other_t6_backends":0,"t6_advisory_locks":0}`. The
+  teardown proved ownership before stopping, and post-run state is
+  `port15432_listeners=0`, `t6lab_exists=False`, with the port-5432 service
+  unchanged (`Running`, 2 listeners, 10 `postgres.exe`).
+- **Correction applied (C9) to `test-harness/t6-checkpoint/t6-local-runner.mjs`.**
+  The per-case survivor check is replaced by a session audit that identifies the
+  runner's own sessions by their **backend pids**, treats a healthy idle
+  transaction-free A/B session as **expected and reusable**, and fails the case
+  only for an **unexpected** T6 backend, an expected session that is not
+  transaction-clean, an ambiguous session identity, or a failed cleanup. The
+  cleanup stays **bounded** and is restricted to positively identified
+  T6-owned backends; a **foreign session is never a termination target**; the
+  fail-closed behaviour is preserved. All 12 case bodies, the case IDs, the
+  synthetic identities, the digest reporting and the mandatory residue checks
+  are **byte-identical** to the previous revision.
+- **Offline validation of the correction:** `node --check` exit 0; the runner's
+  own `--self-test` is **30/30 PASS, exit 0** (the 21 original checks preserved
+  plus 10 new C9 checks); **9/9 C9 mutants killed**. The corrected runner is
+  **SHA-256 `0595bda3562d76056541106a33941638156340ce009a891c6746156922de8fc6`, 62766 bytes, 1203 lines** (was `e1719be2ac0d432c903035001fdb0774c93641c0fa308073eefcf55e699aa234`, 46751 bytes, 875 lines).
+- **This source correction is NOT EXECUTION-APPROVED.** No run was performed
+  with it, and the preparation step that would let the wrapper use it (refreshing
+  the prep copy and the committed checksum manifest) has **not** been performed
+  and needs separate approval.
 
 ### 9. Next action (single, concrete)
 

@@ -271,6 +271,136 @@ const OBS_T6_BACKENDS = `SELECT count(*) FROM pg_stat_activity WHERE application
 const OBS_T6_ADVISORY = `SELECT count(*) FROM pg_locks l JOIN pg_stat_activity s ON s.pid = l.pid
   WHERE l.granted AND l.locktype = 'advisory' AND s.application_name LIKE 'slmm-t6-%' AND s.pid <> pg_backend_pid();`;
 
+// --------------------------------------------------------------------------- C9: per-case session audit
+//
+// The runner owns exactly FOUR T6-namespace backends for the whole suite:
+// setup, obs, a and b. A and b are intentionally REUSED across cases: they are
+// rolled back at the end of every case but stay CONNECTED for the next one.
+// A healthy, idle, transaction-free A/B session is therefore NOT a leak.
+//
+// A leak is a T6-namespace backend that is NOT one of the runner's own live
+// sessions (a stale predecessor, an extra helper connection, ...). Foreign
+// sessions (any other application_name) are never classified as T6, are never
+// reported and are NEVER terminated.
+const T6_NAMESPACE = "slmm-t6-";
+// Bounded cleanup: at most this many unexpected backends are terminated per case.
+const MAX_T6_CLEANUP = 8;
+const T6_CLEANUP_TIMEOUT_MS = 5000;
+
+// One row per T6-namespace backend visible on the T6 database:
+//   pid | application_name | state | open_transaction(0/1) | advisory_lock_count
+const AUDIT_BACKENDS = `SELECT s.pid || '|' || s.application_name || '|' || coalesce(s.state,'unknown') || '|' ||
+  (CASE WHEN s.xact_start IS NOT NULL THEN 1 ELSE 0 END) || '|' ||
+  (SELECT count(*) FROM pg_locks l WHERE l.pid = s.pid AND l.granted AND l.locktype = 'advisory')
+  FROM pg_stat_activity s
+  WHERE s.datname = '${DB}' AND s.application_name LIKE '${T6_NAMESPACE}%'
+  ORDER BY s.pid;`;
+
+/** Parse the '|'-delimited backend rows produced by AUDIT_BACKENDS. */
+function parseBackendRows(lines) {
+  const out = [];
+  for (const l of rows(lines)) {
+    const t = String(l).trim();
+    if (!t) continue;
+    const parts = t.split("|");
+    if (parts.length < 5) continue;
+    const pid = Number(parts[0]);
+    if (!Number.isFinite(pid)) continue;
+    out.push({
+      pid,
+      application_name: parts[1],
+      state: parts[2],
+      xact_open: parts[3] === "1",
+      advisory_locks: Number(parts[4]) || 0,
+    });
+  }
+  return out;
+}
+
+/**
+ * Classify the observed backends against the runner's own live sessions.
+ * PURE: it performs no I/O, so it is fully covered by the offline self-test.
+ *
+ * backends:     [{ pid, application_name, state, xact_open, advisory_locks }]
+ * expectedPids: { setup, obs, a, b } -- a null/undefined entry means the
+ *                identity of that session could NOT be established.
+ */
+function classifyT6Backends(backends, expectedPids) {
+  const expected = new Map();
+  const ambiguous = [];
+  for (const [name, pid] of Object.entries(expectedPids)) {
+    if (pid === null || pid === undefined || !Number.isFinite(pid)) ambiguous.push(name);
+    else expected.set(pid, name);
+  }
+  const out = { expected: [], unhealthy: [], unexpected: [], foreign: [], ambiguous };
+  for (const b of backends) {
+    const app = String(b.application_name || "");
+    if (!app.startsWith(T6_NAMESPACE)) { out.foreign.push(b); continue; }
+    if (expected.has(b.pid)) {
+      const reasons = [];
+      if (b.xact_open) reasons.push("open transaction");
+      if (b.state && b.state !== "idle") reasons.push(`state=${b.state}`);
+      if (b.advisory_locks > 0) reasons.push(`${b.advisory_locks} advisory lock(s)`);
+      if (reasons.length) out.unhealthy.push({ ...b, expected_as: expected.get(b.pid), reasons });
+      else out.expected.push({ ...b, expected_as: expected.get(b.pid) });
+      continue;
+    }
+    out.unexpected.push(b);
+  }
+  return out;
+}
+
+/**
+ * Decide whether the runner's own session set is healthy after a case, and
+ * which backends may be terminated. PURE: no I/O, fully covered offline.
+ *
+ * cleanup: { detected: [pid], failed: [pid] }
+ *   detected -- T6 backends found in the first observation. They stay reported
+ *               even after a successful cleanup: the detection is the finding.
+ *   failed   -- T6 backends that could NOT be terminated.
+ */
+function decideSessionHealth(backends, expectedPids, cleanup = {}) {
+  const cls = classifyT6Backends(backends, expectedPids);
+  const reasons = [];
+  if (cls.ambiguous.length) {
+    reasons.push(`session identity is ambiguous for ${cls.ambiguous.join(", ")}`);
+  }
+  const seen = new Set(backends.map((b) => b.pid));
+  const missing = [];
+  for (const [name, pid] of Object.entries(expectedPids)) {
+    if (pid === null || pid === undefined || !Number.isFinite(pid)) continue; // already reported as ambiguous
+    if (!seen.has(pid)) missing.push(name);
+  }
+  if (missing.length) reasons.push(`expected T6 session(s) not visible after the case: ${missing.join(", ")}`);
+  for (const u of cls.unhealthy) {
+    reasons.push(`${u.expected_as} session is not healthy (${u.reasons.join(", ")})`);
+  }
+  const detected = Array.isArray(cleanup.detected) ? cleanup.detected : cls.unexpected.map((b) => b.pid);
+  if (detected.length) reasons.push(`unexpected T6 backend(s) detected after the case: ${detected.join(", ")}`);
+  if (cleanup.failed && cleanup.failed.length) {
+    reasons.push(`cleanup failed: ${cleanup.failed.join(", ")} could not be terminated`);
+  }
+  return {
+    healthy: reasons.length === 0,
+    reason: reasons.join("; "),
+    expected: cls.expected,
+    unhealthy: cls.unhealthy,
+    unexpected: cls.unexpected,
+    foreign: cls.foreign,
+    ambiguous: cls.ambiguous,
+    // ONLY these pids may ever be terminated: they are T6-namespace backends
+    // that are not one of the runner's own live sessions.
+    terminable: cls.unexpected.map((b) => b.pid),
+  };
+}
+
+/** Apply the session-health verdict to a case outcome. PURE. */
+function applySessionHealth(status, detail, health) {
+  if (health && health.healthy) return { status, detail };
+  const reason = (health && health.reason) ? health.reason : "session health could not be verified";
+  return { status: "FAIL", detail: detail ? `${detail} | ${reason}` : reason };
+}
+
 // --------------------------------------------------------------------------- SQL helpers
 const beginAs = (s, role, sub) => s.exec(
   `BEGIN ISOLATION LEVEL READ COMMITTED;\n` +
@@ -321,6 +451,68 @@ const register = (id, title, expect, fn) => CASES.push({ id, title, expect, fn }
 const results = [];
 const record = (id, status, detail) => { results.push({ id, status, detail }); console.log(JSON.stringify({ case: id, status, detail })); };
 
+/**
+ * Audit the runner's own session set after a case and clean up any leaked T6
+ * backend.
+ *
+ * NEVER throws: it returns a verdict so the caller can mark the case FAIL
+ * without losing the original error. It FAILS CLOSED: when the identity of a
+ * session or the observation itself cannot be established, the case is not
+ * healthy. The cleanup is BOUNDED and is restricted to the positively
+ * identified T6-owned backends that are not one of the runner's own live
+ * sessions -- a foreign session is never a termination target.
+ */
+async function auditSessionHealth() {
+  const out = { healthy: false, reason: "", terminated: [], failed: [] };
+  const pidOf = async (s) => { if (!s || s.closed) return null; try { return await s.pid(); } catch { return null; } };
+  const expectedPids = { setup: await pidOf(setup), obs: await pidOf(obs), a: await pidOf(a), b: await pidOf(b) };
+
+  let backends = [];
+  try {
+    backends = parseBackendRows(await obs.exec(AUDIT_BACKENDS));
+  } catch (e) {
+    out.reason = `session health could not be observed (${e.message})`;
+    return out;
+  }
+
+  const plan = decideSessionHealth(backends, expectedPids);
+  const targets = plan.terminable.slice(0, MAX_T6_CLEANUP);
+  const overflow = plan.terminable.length - targets.length;
+
+  // Bounded cleanup, restricted to the positively identified T6-owned backends.
+  for (const pid of targets) {
+    try { await obs.exec(`SELECT pg_terminate_backend(${pid});`); out.terminated.push(pid); }
+    catch { out.failed.push(pid); }
+  }
+  if (targets.length) {
+    const deadline = Date.now() + T6_CLEANUP_TIMEOUT_MS;
+    for (;;) {
+      let alive = targets;
+      try {
+        const left = parseBackendRows(await obs.exec(AUDIT_BACKENDS)).map((b) => b.pid);
+        alive = targets.filter((p) => left.includes(p));
+      } catch (e) { out.failed = out.failed.concat(targets); break; }
+      if (alive.length === 0) break;
+      if (Date.now() > deadline) { out.failed = out.failed.concat(alive); break; }
+      await sleep(POLL_MS);
+    }
+  }
+
+  let finalBackends = backends;
+  if (targets.length) {
+    try { finalBackends = parseBackendRows(await obs.exec(AUDIT_BACKENDS)); } catch { finalBackends = backends; }
+  }
+  const final = decideSessionHealth(finalBackends, expectedPids, { detected: plan.terminable, failed: out.failed });
+  let reason = final.reason;
+  if (overflow > 0) {
+    const extra = `${overflow} additional T6 backend(s) exceeded the bounded cleanup limit`;
+    reason = reason ? `${reason}; ${extra}` : extra;
+  }
+  out.healthy = !reason;
+  out.reason = reason;
+  return out;
+}
+
 async function runCase(c) {
   let status = "PASS";
   let detail = "";
@@ -335,13 +527,14 @@ async function runCase(c) {
     detail = msg;
   } finally {
     await a.rollback(); await b.rollback(); await setup.rollback();
-    const survivors = num(await obs.exec(`SELECT count(*) FROM pg_stat_activity WHERE application_name IN ('slmm-t6-a','slmm-t6-b') AND pid <> pg_backend_pid();`));
-    if (survivors > 0) {
-      const killed = num(await obs.exec(`SELECT count(*) FROM (SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-        WHERE application_name IN ('slmm-t6-a','slmm-t6-b') AND pid <> pg_backend_pid()) k;`));
-      status = "FAIL";
-      detail += ` | force-terminated ${killed} surviving T6 backend(s)`;
-    }
+    // C9: the per-case session audit. A and B are intentionally reused across
+    // cases, so a healthy idle A/B session is NOT a leak. The case fails only
+    // when an UNEXPECTED T6 backend is detected, when an expected session is
+    // not transaction-clean, when the session identity is ambiguous, or when
+    // the bounded cleanup fails.
+    const applied = applySessionHealth(status, detail, await auditSessionHealth());
+    status = applied.status;
+    detail = applied.detail;
     if (caseFixtures.length) {
       await setup.exec(`DELETE FROM public.storage_deletion_requests WHERE id = ANY(ARRAY[${caseFixtures.map((x) => `'${x}'`).join(",")}]::uuid[]);`).catch(() => {});
       caseFixtures = [];
@@ -858,6 +1051,141 @@ function runSelfTests() {
       ok(n);
     } catch (err) { bad(n, err.message); }
     finally { rmSync(file, { force: true }); }
+  })();
+
+  // C9: the per-case session audit (offline). A and B are intentionally reused
+  // across cases, so a healthy idle A/B session is NOT a leak. The
+  // classification, the decision and the case gate are PURE functions, so they
+  // are covered here without any database and without spawning any child.
+  (() => {
+    const E = { setup: 100, obs: 101, a: 102, b: 103 };
+    const bk = (pid, app, state = "idle", xact = false, adv = 0) =>
+      ({ pid, application_name: app, state, xact_open: xact, advisory_locks: adv });
+    const healthySet = () => [
+      bk(100, "slmm-t6-setup"), bk(101, "slmm-t6-obs"), bk(102, "slmm-t6-a"), bk(103, "slmm-t6-b"),
+    ];
+
+    (() => {
+      const n = "C9 expected idle A/B sessions are not treated as leaks";
+      try {
+        const r = decideSessionHealth(healthySet(), E);
+        if (!r.healthy) throw new Error(`a healthy session set was rejected: ${r.reason}`);
+        if (r.unexpected.length) throw new Error(`healthy A/B sessions were classified as unexpected: ${JSON.stringify(r.unexpected)}`);
+        if (r.terminable.length) throw new Error("a healthy A/B session became a termination target");
+        if (r.expected.length !== 4) throw new Error(`expected 4 healthy sessions, got ${r.expected.length}`);
+        const applied = applySessionHealth("PASS", "case body succeeded", r);
+        if (applied.status !== "PASS") throw new Error(`a healthy case was failed: ${applied.detail}`);
+        ok(n);
+      } catch (e) { bad(n, e.message); }
+    })();
+
+    (() => {
+      const n = "C9 an unexpected surviving T6 backend is detected";
+      try {
+        const r = decideSessionHealth([...healthySet(), bk(999, "slmm-t6-leak")], E);
+        if (r.healthy) throw new Error("an unexpected T6 backend was accepted as healthy");
+        if (r.unexpected.length !== 1 || r.unexpected[0].pid !== 999) throw new Error("the unexpected backend was not classified as unexpected");
+        if (!r.terminable.includes(999)) throw new Error("the unexpected backend is not a termination target");
+        if (!/detected/.test(r.reason)) throw new Error(`the detection is missing from the reason: ${r.reason}`);
+        if (applySessionHealth("PASS", "case body succeeded", r).status !== "FAIL") throw new Error("the case did not fail");
+        ok(n);
+      } catch (e) { bad(n, e.message); }
+    })();
+
+    (() => {
+      const n = "C9 an A/B session with an open transaction is not accepted as healthy";
+      try {
+        const r = decideSessionHealth([...healthySet(), bk(102, "slmm-t6-a", "idle in transaction", true)], E);
+        if (r.healthy) throw new Error("a session with an open transaction was accepted as healthy");
+        if (r.unhealthy.length !== 1) throw new Error("the open transaction was not detected");
+        if (!/open transaction/.test(r.reason)) throw new Error(`unexpected reason: ${r.reason}`);
+        if (applySessionHealth("PASS", "case body succeeded", r).status !== "FAIL") throw new Error("the case did not fail");
+        ok(n);
+      } catch (e) { bad(n, e.message); }
+    })();
+
+    (() => {
+      const n = "C9 an A/B session holding an advisory lock is not accepted as healthy";
+      try {
+        const r = decideSessionHealth([...healthySet(), bk(103, "slmm-t6-b", "idle", false, 2)], E);
+        if (r.healthy) throw new Error("a session holding an advisory lock was accepted as healthy");
+        if (r.unhealthy.length !== 1) throw new Error("the advisory lock was not detected");
+        if (!/advisory lock/.test(r.reason)) throw new Error(`unexpected reason: ${r.reason}`);
+        ok(n);
+      } catch (e) { bad(n, e.message); }
+    })();
+
+    (() => {
+      const n = "C9 a foreign session is never terminated";
+      try {
+        const r = decideSessionHealth([...healthySet(), bk(500, "some-other-application", "idle in transaction", true, 3)], E);
+        if (r.foreign.length !== 1 || r.foreign[0].pid !== 500) throw new Error("the foreign session was not classified as foreign");
+        if (r.unexpected.some((b) => b.pid === 500)) throw new Error("a foreign session was classified as an unexpected T6 backend");
+        if (r.terminable.includes(500)) throw new Error("a foreign session became a termination target");
+        if (r.unhealthy.some((b) => b.pid === 500)) throw new Error("a foreign session was reported as an unhealthy T6 session");
+        if (!r.healthy) throw new Error(`a foreign session made the healthy set unhealthy: ${r.reason}`);
+        ok(n);
+      } catch (e) { bad(n, e.message); }
+    })();
+
+    (() => {
+      const n = "C9 a cleanup failure remains FAIL";
+      try {
+        const r = decideSessionHealth(healthySet(), E, { detected: [999], failed: [999] });
+        if (r.healthy) throw new Error("a failed cleanup was accepted as healthy");
+        if (!/cleanup failed/.test(r.reason)) throw new Error(`unexpected reason: ${r.reason}`);
+        if (!/detected/.test(r.reason)) throw new Error(`the detection was lost: ${r.reason}`);
+        if (applySessionHealth("PASS", "case body succeeded", r).status !== "FAIL") throw new Error("the case did not fail");
+        ok(n);
+      } catch (e) { bad(n, e.message); }
+    })();
+
+    (() => {
+      const n = "C9 an ambiguous session identity fails closed";
+      try {
+        const r = decideSessionHealth(healthySet(), { ...E, a: null });
+        if (r.healthy) throw new Error("an ambiguous session identity was accepted as healthy");
+        if (!/ambiguous/.test(r.reason)) throw new Error(`unexpected reason: ${r.reason}`);
+        if (applySessionHealth("PASS", "case body succeeded", r).status !== "FAIL") throw new Error("the case did not fail");
+        ok(n);
+      } catch (e) { bad(n, e.message); }
+    })();
+
+    (() => {
+      const n = "C9 a missing expected session fails closed";
+      try {
+        const set = healthySet().filter((b) => b.pid !== 103);
+        const r = decideSessionHealth(set, E);
+        if (r.healthy) throw new Error("a missing expected session was accepted as healthy");
+        if (!/not visible/.test(r.reason)) throw new Error(`unexpected reason: ${r.reason}`);
+        ok(n);
+      } catch (e) { bad(n, e.message); }
+    })();
+
+    (() => {
+      const n = "C9 the backend-row parser ignores malformed rows";
+      try {
+        const parsed = parseBackendRows(["102|slmm-t6-a|idle|0|0", "", "garbage", "abc|slmm-t6-b|idle|0|0", "103|slmm-t6-b|idle|1|2"]);
+        if (parsed.length !== 2) throw new Error(`expected 2 parsed rows, got ${parsed.length}`);
+        if (parsed[0].pid !== 102 || parsed[0].xact_open !== false || parsed[0].advisory_locks !== 0) throw new Error("row 102 was misparsed");
+        if (parsed[1].pid !== 103 || parsed[1].xact_open !== true || parsed[1].advisory_locks !== 2) throw new Error("row 103 was misparsed");
+        ok(n);
+      } catch (e) { bad(n, e.message); }
+    })();
+
+    (() => {
+      const n = "C9 the case gate fails a case whose health verdict is unhealthy";
+      try {
+        const healthy = decideSessionHealth(healthySet(), E);
+        const unhealthy = decideSessionHealth([...healthySet(), bk(999, "slmm-t6-leak")], E);
+        if (applySessionHealth("PASS", "body ok", healthy).status !== "PASS") throw new Error("a healthy case did not continue");
+        const gated = applySessionHealth("PASS", "body ok", unhealthy);
+        if (gated.status !== "FAIL") throw new Error("an unhealthy case continued");
+        if (!gated.detail.includes("body ok")) throw new Error("the case detail was lost");
+        if (!gated.detail.includes("unexpected T6 backend")) throw new Error(`the reason was lost: ${gated.detail}`);
+        ok(n);
+      } catch (e) { bad(n, e.message); }
+    })();
   })();
 
   // The self-test must not have spawned any PostgreSQL client.
