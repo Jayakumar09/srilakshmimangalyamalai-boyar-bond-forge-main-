@@ -286,14 +286,37 @@ const T6_NAMESPACE = "slmm-t6-";
 // Bounded cleanup: at most this many unexpected backends are terminated per case.
 const MAX_T6_CLEANUP = 8;
 const T6_CLEANUP_TIMEOUT_MS = 5000;
+// The runner owns FOUR T6-namespace backends: setup, obs, a and b. The
+// observing connection (`obs`) runs the audit query itself and is NOT an
+// inspected session, so the INSPECTED set is the other THREE. The preflight
+// allowance and the audit expectation are reconciled through this one
+// constant, so the two checks can never drift apart.
+const MAX_T6_INSPECTED_BACKENDS = 3;
 
-// One row per T6-namespace backend visible on the T6 database:
+// One row per T6-namespace backend visible on the T6 database, EXCLUDING the
+// observing connection itself:
 //   pid | application_name | state | open_transaction(0/1) | advisory_lock_count
+//
+// The audit query is executed BY the observer session. While that statement
+// runs, the observer's own backend is necessarily `active` and inside an open
+// transaction (it is executing this very statement), so it can never satisfy
+// the idle / transaction-clean rule that the reusable sessions must satisfy.
+// It is therefore excluded with `pg_backend_pid()` -- the server's own
+// identifier for the connection running the statement. That excludes exactly
+// ONE backend: the observer's. Every other T6-namespace backend, including a
+// stale predecessor or an extra helper connection, is still inspected.
+//
+// The observer is therefore NOT an inspected session. The runner owns FOUR
+// T6-namespace backends (setup, obs, a, b) and the observer is the fourth; the
+// INSPECTED set is the other three (setup, a, b). This is the same count the
+// preflight allows: `OBS_T6_BACKENDS` also excludes pg_backend_pid(), so it
+// counts at most the three non-observer sessions.
 const AUDIT_BACKENDS = `SELECT s.pid || '|' || s.application_name || '|' || coalesce(s.state,'unknown') || '|' ||
   (CASE WHEN s.xact_start IS NOT NULL THEN 1 ELSE 0 END) || '|' ||
   (SELECT count(*) FROM pg_locks l WHERE l.pid = s.pid AND l.granted AND l.locktype = 'advisory')
   FROM pg_stat_activity s
   WHERE s.datname = '${DB}' AND s.application_name LIKE '${T6_NAMESPACE}%'
+    AND s.pid <> pg_backend_pid()
   ORDER BY s.pid;`;
 
 /** Parse the '|'-delimited backend rows produced by AUDIT_BACKENDS. */
@@ -322,20 +345,32 @@ function parseBackendRows(lines) {
  * PURE: it performs no I/O, so it is fully covered by the offline self-test.
  *
  * backends:     [{ pid, application_name, state, xact_open, advisory_locks }]
- * expectedPids: { setup, obs, a, b } -- a null/undefined entry means the
- *                identity of that session could NOT be established.
+ * expectedPids: { setup, a, b } -- the INSPECTED sessions. A null/undefined
+ *                entry means the identity of that session could NOT be
+ *                established.
+ * observerPid:  the pid of the OBSERVING connection. The observing session is
+ *                NOT an inspected session: it is the connection that runs the
+ *                audit query, so it is necessarily `active` inside an open
+ *                transaction while the audit is taken, and it is excluded from
+ *                the inspection query with pg_backend_pid(). It is never
+ *                classified as a leak and is NEVER a termination target.
  */
-function classifyT6Backends(backends, expectedPids) {
+function classifyT6Backends(backends, expectedPids, observerPid = null) {
   const expected = new Map();
   const ambiguous = [];
   for (const [name, pid] of Object.entries(expectedPids)) {
     if (pid === null || pid === undefined || !Number.isFinite(pid)) ambiguous.push(name);
     else expected.set(pid, name);
   }
-  const out = { expected: [], unhealthy: [], unexpected: [], foreign: [], ambiguous };
+  const out = { expected: [], unhealthy: [], unexpected: [], foreign: [], ambiguous, observer: [] };
   for (const b of backends) {
     const app = String(b.application_name || "");
     if (!app.startsWith(T6_NAMESPACE)) { out.foreign.push(b); continue; }
+    // The observing connection, if it is ever observed, is not a leak.
+    if (observerPid !== null && observerPid !== undefined && Number.isFinite(observerPid) && b.pid === observerPid) {
+      out.observer.push(b);
+      continue;
+    }
     if (expected.has(b.pid)) {
       const reasons = [];
       if (b.xact_open) reasons.push("open transaction");
@@ -354,16 +389,29 @@ function classifyT6Backends(backends, expectedPids) {
  * Decide whether the runner's own session set is healthy after a case, and
  * which backends may be terminated. PURE: no I/O, fully covered offline.
  *
+ * backends:     the inspected backends (the observer's own backend is already
+ *               excluded by the inspection query).
+ * expectedPids: { setup, a, b } -- the INSPECTED sessions. A null/undefined
+ *               entry means that session's identity could NOT be established,
+ *               which is an ambiguous identity and fails closed.
+ * observerPid:  the pid of the observing connection, or null when its identity
+ *               could not be established. When it is null the audit cannot
+ *               exclude the observer's own backend, so the verdict fails
+ *               closed rather than risking the observer being classified as a
+ *               leak.
  * cleanup: { detected: [pid], failed: [pid] }
  *   detected -- T6 backends found in the first observation. They stay reported
  *               even after a successful cleanup: the detection is the finding.
  *   failed   -- T6 backends that could NOT be terminated.
  */
-function decideSessionHealth(backends, expectedPids, cleanup = {}) {
-  const cls = classifyT6Backends(backends, expectedPids);
+function decideSessionHealth(backends, expectedPids, cleanup = {}, observerPid = null) {
+  const cls = classifyT6Backends(backends, expectedPids, observerPid);
   const reasons = [];
   if (cls.ambiguous.length) {
     reasons.push(`session identity is ambiguous for ${cls.ambiguous.join(", ")}`);
+  }
+  if (observerPid === null || observerPid === undefined || !Number.isFinite(observerPid)) {
+    reasons.push("the observing session's identity could not be established");
   }
   const seen = new Set(backends.map((b) => b.pid));
   const missing = [];
@@ -388,6 +436,7 @@ function decideSessionHealth(backends, expectedPids, cleanup = {}) {
     unexpected: cls.unexpected,
     foreign: cls.foreign,
     ambiguous: cls.ambiguous,
+    observer: cls.observer,
     // ONLY these pids may ever be terminated: they are T6-namespace backends
     // that are not one of the runner's own live sessions.
     terminable: cls.unexpected.map((b) => b.pid),
@@ -465,7 +514,13 @@ const record = (id, status, detail) => { results.push({ id, status, detail }); c
 async function auditSessionHealth() {
   const out = { healthy: false, reason: "", terminated: [], failed: [] };
   const pidOf = async (s) => { if (!s || s.closed) return null; try { return await s.pid(); } catch { return null; } };
-  const expectedPids = { setup: await pidOf(setup), obs: await pidOf(obs), a: await pidOf(a), b: await pidOf(b) };
+  // The observing connection is NOT an inspected session: it runs the audit
+  // query itself, so it is necessarily `active` inside an open transaction
+  // while the audit is taken. It is excluded from the inspection query with
+  // pg_backend_pid() and is never judged, never reported and never
+  // terminated. The INSPECTED sessions are the other three the runner owns.
+  const observerPid = await pidOf(obs);
+  const expectedPids = { setup: await pidOf(setup), a: await pidOf(a), b: await pidOf(b) };
 
   let backends = [];
   try {
@@ -475,7 +530,7 @@ async function auditSessionHealth() {
     return out;
   }
 
-  const plan = decideSessionHealth(backends, expectedPids);
+  const plan = decideSessionHealth(backends, expectedPids, {}, observerPid);
   const targets = plan.terminable.slice(0, MAX_T6_CLEANUP);
   const overflow = plan.terminable.length - targets.length;
 
@@ -502,7 +557,7 @@ async function auditSessionHealth() {
   if (targets.length) {
     try { finalBackends = parseBackendRows(await obs.exec(AUDIT_BACKENDS)); } catch { finalBackends = backends; }
   }
-  const final = decideSessionHealth(finalBackends, expectedPids, { detected: plan.terminable, failed: out.failed });
+  const final = decideSessionHealth(finalBackends, expectedPids, { detected: plan.terminable, failed: out.failed }, observerPid);
   let reason = final.reason;
   if (overflow > 0) {
     const extra = `${overflow} additional T6 backend(s) exceeded the bounded cleanup limit`;
@@ -845,7 +900,7 @@ async function preflight() {
   const purity = num(await nsCount());
   if (purity !== 0) throw new Error(`preflight: synthetic namespace is not clean (${purity} rows)`);
   const t6 = num(await obs.exec(OBS_T6_BACKENDS));
-  if (t6 > 3) throw new Error(`preflight: unexpected T6 backend count ${t6}`);
+  if (t6 > MAX_T6_INSPECTED_BACKENDS) throw new Error(`preflight: unexpected T6 backend count ${t6}`);
   PREFLIGHT.ok = true;
   console.log(JSON.stringify({ preflight: "ok", database: db, port: Number(port), server_addr: addr, isolation: iso, listen_addresses: listen, namespace_rows: purity }));
 }
@@ -1054,25 +1109,39 @@ function runSelfTests() {
   })();
 
   // C9: the per-case session audit (offline). A and B are intentionally reused
-  // across cases, so a healthy idle A/B session is NOT a leak. The
-  // classification, the decision and the case gate are PURE functions, so they
-  // are covered here without any database and without spawning any child.
+  // across cases, so a healthy idle A/B session is NOT a leak. The observing
+  // connection (obs) runs the audit query itself, so it is NOT an inspected
+  // session: it is necessarily `active` inside an open transaction while the
+  // audit is taken, and it is excluded from the inspection query with
+  // pg_backend_pid(). The classification, the decision and the case gate are
+  // PURE functions, so they are covered here without any database and without
+  // spawning any child.
   (() => {
-    const E = { setup: 100, obs: 101, a: 102, b: 103 };
+    // The OBSERVING connection: it runs the audit query, so it is never
+    // inspected and never judged.
+    const OBS = 101;
+    // The INSPECTED sessions: setup, a and b.
+    const E = { setup: 100, a: 102, b: 103 };
     const bk = (pid, app, state = "idle", xact = false, adv = 0) =>
       ({ pid, application_name: app, state, xact_open: xact, advisory_locks: adv });
+    // What the audit query actually returns: the observer's own backend is
+    // excluded by pg_backend_pid(), so it is NOT in the observed set.
     const healthySet = () => [
-      bk(100, "slmm-t6-setup"), bk(101, "slmm-t6-obs"), bk(102, "slmm-t6-a"), bk(103, "slmm-t6-b"),
+      bk(100, "slmm-t6-setup"), bk(102, "slmm-t6-a"), bk(103, "slmm-t6-b"),
     ];
+    // The observer as it appears in pg_stat_activity WHILE it is executing the
+    // audit query: active, inside an open transaction, no advisory lock. It
+    // must never be judged, reported or terminated.
+    const activeObserver = () => bk(OBS, "slmm-t6-obs", "active", true, 0);
 
     (() => {
       const n = "C9 expected idle A/B sessions are not treated as leaks";
       try {
-        const r = decideSessionHealth(healthySet(), E);
+        const r = decideSessionHealth(healthySet(), E, {}, OBS);
         if (!r.healthy) throw new Error(`a healthy session set was rejected: ${r.reason}`);
         if (r.unexpected.length) throw new Error(`healthy A/B sessions were classified as unexpected: ${JSON.stringify(r.unexpected)}`);
         if (r.terminable.length) throw new Error("a healthy A/B session became a termination target");
-        if (r.expected.length !== 4) throw new Error(`expected 4 healthy sessions, got ${r.expected.length}`);
+        if (r.expected.length !== 3) throw new Error(`expected 3 healthy inspected sessions, got ${r.expected.length}`);
         const applied = applySessionHealth("PASS", "case body succeeded", r);
         if (applied.status !== "PASS") throw new Error(`a healthy case was failed: ${applied.detail}`);
         ok(n);
@@ -1080,9 +1149,87 @@ function runSelfTests() {
     })();
 
     (() => {
+      const n = "C9 an observer actively executing its own audit query is not a leak";
+      try {
+        // The observer is mid-query: active, in an open transaction. It must
+        // neither fail the case nor become a termination target. This is the
+        // defect that made T6-L01 fail on 2026-10-21.
+        const r = decideSessionHealth([...healthySet(), activeObserver()], E, {}, OBS);
+        if (!r.healthy) throw new Error(`the active observer failed the case: ${r.reason}`);
+        if (r.unexpected.some((b) => b.pid === OBS)) throw new Error("the active observer was classified as an unexpected T6 backend");
+        if (r.unhealthy.some((b) => b.pid === OBS)) throw new Error("the active observer was reported as an unhealthy T6 session");
+        if (r.terminable.includes(OBS)) throw new Error("the active observer became a termination target");
+        if (r.observer.length !== 1 || r.observer[0].pid !== OBS) throw new Error("the active observer was not recognised as the observer");
+        if (applySessionHealth("PASS", "case body succeeded", r).status !== "PASS") throw new Error("the case was failed by the active observer");
+        ok(n);
+      } catch (e) { bad(n, e.message); }
+    })();
+
+    (() => {
+      const n = "C9 an unestablished observer identity fails closed";
+      try {
+        // If the observer's own pid cannot be established the audit cannot
+        // exclude the observer, so the verdict must fail closed rather than
+        // risk the observer being treated as a leak.
+        const r = decideSessionHealth(healthySet(), E, {}, null);
+        if (r.healthy) throw new Error("an unestablished observer identity was accepted as healthy");
+        if (!/observing session/.test(r.reason)) throw new Error(`unexpected reason: ${r.reason}`);
+        if (applySessionHealth("PASS", "case body succeeded", r).status !== "FAIL") throw new Error("the case did not fail");
+        ok(n);
+      } catch (e) { bad(n, e.message); }
+    })();
+
+    (() => {
+      const n = "C9 the inspection query excludes the observer's own backend";
+      try {
+        // The audit query must exclude the observing connection with
+        // pg_backend_pid(); this is the source-level guarantee that the
+        // observer can never be observed as an active, open-transaction row.
+        if (!/pg_backend_pid\(\)/.test(AUDIT_BACKENDS)) throw new Error("the inspection query does not exclude the observer's own backend");
+        if (!/s\.pid\s*<>\s*pg_backend_pid\(\)/.test(AUDIT_BACKENDS)) throw new Error("the observer's own pid is not excluded from the inspection query");
+        ok(n);
+      } catch (e) { bad(n, e.message); }
+    })();
+
+    (() => {
+      const n = "C9 the inspected session count matches the preflight allowance";
+      try {
+        // The preflight allows at most MAX_T6_INSPECTED_BACKENDS other T6
+        // backends, and the audit inspects exactly the same number. The two
+        // must not drift apart.
+        if (Object.keys(E).length !== MAX_T6_INSPECTED_BACKENDS) {
+          throw new Error(`the audit inspects ${Object.keys(E).length} session(s) but the preflight allows ${MAX_T6_INSPECTED_BACKENDS}`);
+        }
+        const r = decideSessionHealth(healthySet(), E, {}, OBS);
+        if (r.expected.length !== MAX_T6_INSPECTED_BACKENDS) {
+          throw new Error(`expected ${MAX_T6_INSPECTED_BACKENDS} inspected sessions, got ${r.expected.length}`);
+        }
+        ok(n);
+      } catch (e) { bad(n, e.message); }
+    })();
+
+    (() => {
+      const n = "C9 the preflight allowance is bound to the audit expectation";
+      try {
+        // The preflight's backend-count comparison must reference the SAME
+        // constant the audit uses, never a hard-coded number, so the two
+        // checks can never drift apart silently.
+        const self = readFileSync(fileURLToPath(import.meta.url), "utf8");
+        const comparisons = [...self.matchAll(/t6\s*>\s*([A-Za-z_][A-Za-z0-9_]*|\d+)/g)].map((m) => m[1]);
+        if (!comparisons.length) throw new Error("the preflight T6 backend-count comparison was not found");
+        for (const c of comparisons) {
+          if (c !== "MAX_T6_INSPECTED_BACKENDS") {
+            throw new Error(`the preflight compares the T6 backend count against '${c}' instead of MAX_T6_INSPECTED_BACKENDS`);
+          }
+        }
+        ok(n);
+      } catch (e) { bad(n, e.message); }
+    })();
+
+    (() => {
       const n = "C9 an unexpected surviving T6 backend is detected";
       try {
-        const r = decideSessionHealth([...healthySet(), bk(999, "slmm-t6-leak")], E);
+        const r = decideSessionHealth([...healthySet(), bk(999, "slmm-t6-leak")], E, {}, OBS);
         if (r.healthy) throw new Error("an unexpected T6 backend was accepted as healthy");
         if (r.unexpected.length !== 1 || r.unexpected[0].pid !== 999) throw new Error("the unexpected backend was not classified as unexpected");
         if (!r.terminable.includes(999)) throw new Error("the unexpected backend is not a termination target");
@@ -1095,7 +1242,7 @@ function runSelfTests() {
     (() => {
       const n = "C9 an A/B session with an open transaction is not accepted as healthy";
       try {
-        const r = decideSessionHealth([...healthySet(), bk(102, "slmm-t6-a", "idle in transaction", true)], E);
+        const r = decideSessionHealth([...healthySet(), bk(102, "slmm-t6-a", "idle in transaction", true)], E, {}, OBS);
         if (r.healthy) throw new Error("a session with an open transaction was accepted as healthy");
         if (r.unhealthy.length !== 1) throw new Error("the open transaction was not detected");
         if (!/open transaction/.test(r.reason)) throw new Error(`unexpected reason: ${r.reason}`);
@@ -1107,7 +1254,7 @@ function runSelfTests() {
     (() => {
       const n = "C9 an A/B session holding an advisory lock is not accepted as healthy";
       try {
-        const r = decideSessionHealth([...healthySet(), bk(103, "slmm-t6-b", "idle", false, 2)], E);
+        const r = decideSessionHealth([...healthySet(), bk(103, "slmm-t6-b", "idle", false, 2)], E, {}, OBS);
         if (r.healthy) throw new Error("a session holding an advisory lock was accepted as healthy");
         if (r.unhealthy.length !== 1) throw new Error("the advisory lock was not detected");
         if (!/advisory lock/.test(r.reason)) throw new Error(`unexpected reason: ${r.reason}`);
@@ -1118,7 +1265,7 @@ function runSelfTests() {
     (() => {
       const n = "C9 a foreign session is never terminated";
       try {
-        const r = decideSessionHealth([...healthySet(), bk(500, "some-other-application", "idle in transaction", true, 3)], E);
+        const r = decideSessionHealth([...healthySet(), bk(500, "some-other-application", "idle in transaction", true, 3)], E, {}, OBS);
         if (r.foreign.length !== 1 || r.foreign[0].pid !== 500) throw new Error("the foreign session was not classified as foreign");
         if (r.unexpected.some((b) => b.pid === 500)) throw new Error("a foreign session was classified as an unexpected T6 backend");
         if (r.terminable.includes(500)) throw new Error("a foreign session became a termination target");
@@ -1131,7 +1278,7 @@ function runSelfTests() {
     (() => {
       const n = "C9 a cleanup failure remains FAIL";
       try {
-        const r = decideSessionHealth(healthySet(), E, { detected: [999], failed: [999] });
+        const r = decideSessionHealth(healthySet(), E, { detected: [999], failed: [999] }, OBS);
         if (r.healthy) throw new Error("a failed cleanup was accepted as healthy");
         if (!/cleanup failed/.test(r.reason)) throw new Error(`unexpected reason: ${r.reason}`);
         if (!/detected/.test(r.reason)) throw new Error(`the detection was lost: ${r.reason}`);
@@ -1143,7 +1290,7 @@ function runSelfTests() {
     (() => {
       const n = "C9 an ambiguous session identity fails closed";
       try {
-        const r = decideSessionHealth(healthySet(), { ...E, a: null });
+        const r = decideSessionHealth(healthySet(), { ...E, a: null }, {}, OBS);
         if (r.healthy) throw new Error("an ambiguous session identity was accepted as healthy");
         if (!/ambiguous/.test(r.reason)) throw new Error(`unexpected reason: ${r.reason}`);
         if (applySessionHealth("PASS", "case body succeeded", r).status !== "FAIL") throw new Error("the case did not fail");
@@ -1155,7 +1302,7 @@ function runSelfTests() {
       const n = "C9 a missing expected session fails closed";
       try {
         const set = healthySet().filter((b) => b.pid !== 103);
-        const r = decideSessionHealth(set, E);
+        const r = decideSessionHealth(set, E, {}, OBS);
         if (r.healthy) throw new Error("a missing expected session was accepted as healthy");
         if (!/not visible/.test(r.reason)) throw new Error(`unexpected reason: ${r.reason}`);
         ok(n);
@@ -1176,8 +1323,8 @@ function runSelfTests() {
     (() => {
       const n = "C9 the case gate fails a case whose health verdict is unhealthy";
       try {
-        const healthy = decideSessionHealth(healthySet(), E);
-        const unhealthy = decideSessionHealth([...healthySet(), bk(999, "slmm-t6-leak")], E);
+        const healthy = decideSessionHealth(healthySet(), E, {}, OBS);
+        const unhealthy = decideSessionHealth([...healthySet(), bk(999, "slmm-t6-leak")], E, {}, OBS);
         if (applySessionHealth("PASS", "body ok", healthy).status !== "PASS") throw new Error("a healthy case did not continue");
         const gated = applySessionHealth("PASS", "body ok", unhealthy);
         if (gated.status !== "FAIL") throw new Error("an unhealthy case continued");

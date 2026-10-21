@@ -362,7 +362,7 @@ was found.**
 
 **No PostgreSQL setting was changed** and the option string is unchanged.
 
-### Corrected Group-L runner (2026-10-20) - NOT EXECUTION-APPROVED, NOT EXECUTED
+### Corrected Group-L runner (2026-10-20) - EXECUTED ONCE on 2026-10-21 (verdict FAIL, observer self-classification)
 
 The one-shot execution of 2026-10-20 22:28 IST was the **first** run that
 reached the Group-L runner. It returned **wrapper exit code 1** with verdict
@@ -390,6 +390,7 @@ intentionally reused A/B sessions as leaks.
 | Static validation | `node --check` **0 errors**; `node t6-local-runner.mjs --self-test` **30/30 PASS, exit 0** (the 21 original checks preserved + 10 new C9 checks) |
 | Mutation testing | **9/9 C9 mutants killed** (expected-session classification, open-transaction check, advisory-lock check, foreign-session classification, case gate, missing-session check, ambiguous-identity check, cleanup-failure reason, unexpected-backend detection reason) |
 | Preserved | All 12 case bodies byte-identical, the case IDs, the synthetic identities, the digest reporting and the mandatory residue checks |
+| Execution status | **EXECUTED ONCE on 2026-10-21** -- see §"Execution record (2026-10-21)" below |
 
 | # | Correction | Effect |
 |---|---|---|
@@ -397,14 +398,81 @@ intentionally reused A/B sessions as leaks.
 | C9-2 | **Detection is preserved and strengthened** | The case still fails for an **unexpected** T6 backend, an expected session that is **not transaction-clean** (open transaction, non-idle state, or a held advisory lock), a **missing** expected session, an **ambiguous** session identity, or a **failed cleanup**. Every case still ends with `ROLLBACK` on every session. |
 | C9-3 | Cleanup stays **bounded and restricted** | At most 8 unexpected backends are terminated per case, with a 5-second bound, and only for backends **positively identified as T6-owned** and not one of the runner's own live sessions. A **foreign session is never a termination target**. The audit **fails closed** when the session identity or the observation cannot be established. |
 
-**This correction is NOT EXECUTION-APPROVED and has NOT been executed.**
+### Execution record (2026-10-21) - the C9 runner was executed once and returned FAIL
 
-**Preparation implications that need SEPARATE approval (not performed here):**
-- `test-harness/t6-checkpoint/t6-checksums.txt` still pins
-  `t6-local-runner.mjs` to `e1719be2ac0d432c903035001fdb0774c93641c0fa308073eefcf55e699aa234` and must be updated to `0595bda3562d76056541106a33941638156340ce009a891c6746156922de8fc6`.
-- The executable copy at `%TEMP%\opencode\t6-prep\t6-local-runner.mjs` is
-  still the **old** revision and must be refreshed from the corrected file
+One launcher attempt occurred at 09:01:07 IST. The run was launched through a
+**detached launcher with a waiting parent**; the launcher's stdout/stderr
+capture ordering was **corrected** so the candidate process is started *before*
+the asynchronous stream reads begin.
+
+| # | Window (IST) | Outcome | Detail |
+|---|---|---|---|
+| Q | Candidate v3 one-shot execution (2026-10-21 09:01 IST) | **FAIL (wrapper exit 1)** | The whole main path executed in 20.7 s. `initdb`, `pg_ctl start`, `pg_isready`, identity, `CREATE DATABASE t6lab`, bootstrap, preflight and residue all exited **0**; only `node` exited **1**. The verdict is **FAIL** -- the wrapper correctly refused to report PASS. **T6-L01 = FAIL; the other eleven = NOT RUN.** Evidence: `D:\SLMM-T6-EVIDENCE\t6-run-20261021-090109-a3e53a67\` (run log, node log, results JSONL, verdict JSON, artifact checksums) and `D:\SLMM-T6-EVIDENCE\launcher-20261021-090107-6e3008ba\` (stdout, stderr, exit code, timestamps, child pid, preflight/postrun state, process snapshot, launcher script). The results digest `5c77320964920c7a52ec75673256ecc115752f21d2a03057eb5c71e9cb94c200` matches the evidence copy byte-for-byte; the residue verdict is `{"synthetic_rows":0,"other_t6_backends":0,"t6_advisory_locks":0}`. Teardown proved ownership before stopping; post-run `port15432_listeners=0`, `t6lab_exists=False`; the port-5432 service was untouched (`Running`, 2 listeners, 10 `postgres.exe`). |
+
+**The C9 correction did change the failure mode.** The previous run's
+`force-terminated 2 surviving T6 backend(s)` is gone -- the A/B sessions are no
+longer misclassified as leaks. The new T6-L01 detail is:
+
+```
+commit release -> loser 0 rows, attempt=1 committed once; rollback release -> observed waiter won with attempt=1, both rolled back, row unchanged | obs session is not healthy (open transaction, state=active)
+```
+
+The first part is byte-for-byte the runner's own **success** string for T6-L01,
+so **every assertion inside the case passed**. **No product RPC failure has been
+demonstrated.**
+
+**The new defect: the audit observer classified itself.** `AUDIT_BACKENDS`
+selected every `slmm-t6-%` backend on the database **without excluding the
+observing connection's own pid**, unlike `OBS_T6_BACKENDS` and
+`OBS_T6_ADVISORY`, which both carry `pid <> pg_backend_pid()`. The audit query
+is executed *by* the observer, so while it runs the observer's own backend is
+necessarily `state=active` with an open transaction. The audit therefore judged
+its own observer as an expected-but-unhealthy session and failed the case.
+**This is a harness defect, not a concurrency finding.** The offline self-tests
+could not see it, because the C9 self-test modelled the observer as
+`state="idle"` with no open transaction -- never in the state it is actually in
+while running the audit.
+
+### Corrected Group-L runner (2026-10-21) - C10 observer self-exclusion - OFFLINE ONLY, NOT LIVE-TESTED
+
+| Item | Value |
+|---|---|
+| File | `test-harness/t6-checkpoint/t6-local-runner.mjs` (existing file, corrected again) |
+| **New SHA-256** | `9f06b1c396e3634fc86eeab4d73878ce7345d7e7e5bffb0d1fea458d7f76b008` |
+| **New bytes / lines** | **71700 bytes / 1350 lines** |
+| Previous revision SHA-256 | `0595bda3562d76056541106a33941638156340ce009a891c6746156922de8fc6` (62766 bytes / 1203 lines) -- the revision that was executed on 2026-10-21 |
+| Static validation | `node --check` **0 errors**; `node t6-local-runner.mjs --self-test` **35/35 PASS, exit 0** (the 30 checks of the previous revision plus 5 new C9 checks; the C9 block now holds 15 named checks) |
+| Mutation testing | **17/17 mutants killed** -- the 9 pre-existing C9 mutants plus 8 new ones covering the observer self-exclusion defect (SQL clause dropped; SQL clause replaced by a tautology; observer classified as an unexpected backend; observer misjudged as an unhealthy expected session; observer-identity fail-closed check removed; observer made a termination target; inspected-count constant broken; preflight allowance drifting from the audit expectation) |
+| Preserved | All 12 case bodies byte-identical, the case IDs, the synthetic identities, the digest reporting, the mandatory residue checks, the ownership limits, the bounded cleanup (`MAX_T6_CLEANUP = 8`) and the fail-closed behaviour of the ambiguous-identity, missing-session, unclosed-transaction, advisory-lock and cleanup-failure checks |
+| Status | **CORRECTED OFFLINE - NOT EXECUTION-APPROVED, NOT LIVE-TESTED** |
+
+| # | Correction | Effect |
+|---|---|---|
+| C10-1 | The inspection query excludes the observing connection: `AND s.pid <> pg_backend_pid()` | Exactly one backend is excluded -- the observer's. Every other T6-namespace backend, including a stale predecessor or an extra helper connection, is still inspected. This is the direct fix for the 2026-10-21 failure. |
+| C10-2 | The observing session is **distinguished from the inspected sessions** | `classifyT6Backends` and `decideSessionHealth` take an explicit `observerPid`. The observer is never judged, never reported and is NEVER a termination target. The **INSPECTED** set is now `{ setup, a, b }` -- the other three sessions the runner owns; the observer is the fourth. |
+| C10-3 | The observer's identity is **fail-closed** | If the observer's own pid cannot be established, the audit cannot exclude the observer, so the verdict fails closed (`the observing session's identity could not be established`) rather than risking the observer being classified as a leak. |
+| C10-4 | The preflight and the audit are **reconciled through one constant** | `MAX_T6_INSPECTED_BACKENDS = 3` is used by **both** the preflight's backend-count allowance and the audit's expected-session count, so the two checks can never drift apart. A source-level self-test asserts the preflight compares against that constant and never against a hard-coded number. |
+
+**This correction is NOT EXECUTION-APPROVED and has NOT been live-tested.** No
+run has been performed with it.
+
+**Repository follow-ups — COMPLETE and offline-verified (2026-10-21):**
+- `test-harness/t6-checkpoint/t6-checksums.txt` now pins `t6-local-runner.mjs`
+  to `9f06b1c396e3634fc86eeab4d73878ce7345d7e7e5bffb0d1fea458d7f76b008`. All
+  **15** manifest entries were re-verified against the repository artifacts
+  (15 OK, 0 mismatch, 0 missing); the other 14 entries and their order are
+  unchanged.
+- `TASK.md`'s `t6-local-runner.mjs` acceptance criterion now names the same
+  checksum, with the box still unticked and T6 still `BLOCKED`.
+
+**Follow-up that still needs SEPARATE approval (not performed here):**
+- The preparation copy at `%TEMP%\opencode\t6-prep\t6-local-runner.mjs` still
+  holds the `0595bda3...` revision and must be refreshed from the corrected file
   before any further run.
+- A **fresh, separate one-shot execution approval** is required before the C10
+  revision is run. The historical 2026-10-21 result remains **T6-L01 = FAIL,
+  the other eleven cases = NOT RUN, 0 PASS**; it was produced by the C9
+  revision, and the C10 revision is a different, not-yet-live-tested artifact.
 - The candidate wrapper `t6-runner-candidate-v3.ps1` hardcodes **no** artifact
   checksum; it hashes the prep artifacts at run time, so the wrapper itself
   needs no change.

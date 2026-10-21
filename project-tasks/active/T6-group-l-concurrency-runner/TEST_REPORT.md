@@ -1,9 +1,10 @@
 # TEST REPORT — T6
 
-- **Dates:** 2026-10-19 (offline prerequisites), 2026-10-20 (one-shot execution attempt, BLOCKED; candidate v1/v2/v3 offline validation)
-- **Environment:** offline prerequisites only, plus **one** local-lab execution attempt that
-  started a disposable PostgreSQL 18 cluster on `127.0.0.1:15432` and **BLOCKED before any
-  Group-L case ran**
+- **Dates:** 2026-10-19 (offline prerequisites), 2026-10-20 (one-shot execution attempts; candidate v1/v2/v3 offline validation), 2026-10-21 (one-shot execution of the corrected C9 runner, verdict FAIL; C10 observer self-exclusion correction, offline only)
+- **Environment:** offline prerequisites only, plus **two** local-lab execution attempts that
+  started a disposable PostgreSQL 18 cluster on `127.0.0.1:15432` and reached the Group-L
+  runner (**T6-L01 = FAIL; the other eleven cases = NOT RUN** in each). **No Group-L case has
+  ever reported PASS.** The 2026-10-21 C10 correction is **offline only and NOT live-tested.**
 - **Executed by:** SLMM local-lab session
 
 ## Commands executed (2026-10-19, offline prerequisites)
@@ -57,6 +58,9 @@ tool-call abort, the second ran to completion.
 | O | Candidate v3 one-shot execution attempt (2026-10-20 20:15 IST) | **BLOCKED (wrapper exit 2)** | The `-EvidenceRoot` parameter **worked**: the invocation bound and the candidate created its evidence directory under `D:\SLMM-T6-EVIDENCE\t6-run-20261020-201516-88ef8d45\`. The run then aborted at the **first** step with `FAILED: The variable '$script:ExitCodes' cannot be retrieved because it has not been set.` -- `$script:ExitCodes` was **never initialised**, and under `Set-StrictMode -Version Latest` that assignment is a terminating error. The run stopped **before `pg_ctl start`**: **no PostgreSQL cluster was ever started**, port 15432 was never bound, and **all 12 Group-L cases remained NOT RUN**. The candidate's ownership-verified teardown removed only its own disposable lab tree; the port-5432 service was untouched (PID 4828, 2 listeners, 10 postgres.exe, unchanged). Evidence preserved under `D:\SLMM-T6-EVIDENCE\launcher-20261020-201457-c2476264\` (`exitcode.txt` = `exitcode=2`, empty stderr, pre/post state, process snapshot) and `D:\SLMM-T6-EVIDENCE\t6-run-20261020-201516-88ef8d45\` |
 | P | Candidate v3 one-shot execution attempt (2026-10-20 22:28 IST) | **FAIL (wrapper exit 1)** | The **first** run that reached the Group-L runner. The whole main path executed in 42 s: `initdb`, `pg_ctl start`, `pg_isready`, the identity check, `CREATE DATABASE t6lab`, the bootstrap, the preflight, the Node step, the residue re-check, the evidence copy, the verdict and the teardown. **Every bootstrap and preflight step PASSED** (`initdb=0`, `pgctl_start=0`, `isready=0`, `identity=0`, `create_db=0`, `bootstrap=0`, `preflight=0`, `residue=0`); only `node` exited 1, and the verdict is **FAIL** -- the wrapper correctly refused to report PASS. **T6-L01 = FAIL; the other eleven cases = NOT RUN.** T6-L01 failed because of the runner's **per-case survivor logic**: its detail is byte-for-byte the runner's own success return string for that case plus only ` | force-terminated 2 surviving T6 backend(s)`, so every assertion inside the case passed and **no product RPC failure has been demonstrated**. The check counted the runner's own two long-lived, intentionally reused A/B sessions as leaks. **Evidence digests and residue verified**: the runner-reported digest `d9cdd1c82ec859ef7600306702d7b5604ce42ec9403bff9780d35602cd9058c8` equals the SHA-256 of the evidence copy in `D:\SLMM-T6-EVIDENCE\t6-run-20261020-222837-8ec45d7e\`, and the residue verdict is `{"synthetic_rows":0,"other_t6_backends":0,"t6_advisory_locks":0}`. Teardown proved ownership before stopping; post-run `port15432_listeners=0`, `t6lab_exists=False`, and the port-5432 service was untouched (`Running`, 2 listeners, 10 `postgres.exe`). Evidence preserved under `D:\SLMM-T6-EVIDENCE\launcher-20261020-222834-2248bb69\` and `D:\SLMM-T6-EVIDENCE\t6-run-20261020-222837-8ec45d7e\` |
 
+| Q | Candidate v3 one-shot execution of the **corrected C9 runner** (2026-10-21 09:01 IST) | **FAIL (wrapper exit 1)** | The **second** run to reach the Group-L runner, and the **first** run of the corrected C9 runner (`0595bda3...8fc6`). The whole main path executed in 20.7 s: `initdb`, `pg_ctl start`, `pg_isready`, the identity check, `CREATE DATABASE t6lab`, the bootstrap, the preflight, the Node step, the residue re-check, the evidence copy, the verdict and the teardown. **Every bootstrap and preflight step PASSED** (`initdb=0`, `pgctl_start=0`, `isready=0`, `identity=0`, `create_db=0`, `bootstrap=0`, `preflight=0`, `residue=0`); only `node` exited 1, and the verdict is **FAIL** -- the wrapper correctly refused to report PASS. **T6-L01 = FAIL; the other eleven cases = NOT RUN.** **The C9 correction did change the failure mode**: the previous run's ` | force-terminated 2 surviving T6 backend(s)` is gone -- the A/B sessions are no longer misclassified as leaks. The new detail is byte-for-byte the runner's own success return string for T6-L01 plus only ` | obs session is not healthy (open transaction, state=active)`, so every assertion inside the case passed and **no product RPC failure has been demonstrated**. **The new defect is in the audit itself**: `AUDIT_BACKENDS` selected every `slmm-t6-%` backend **without excluding the observing connection's own pid** (unlike `OBS_T6_BACKENDS` / `OBS_T6_ADVISORY`, which carry `pid <> pg_backend_pid()`), and because the audit query is executed *by* the observer, the observer was necessarily `active` inside an open transaction and was judged as an unhealthy expected session. This is a **harness defect, not a concurrency finding**; the offline self-tests could not see it because the C9 self-test modelled the observer as permanently idle. **Evidence digests and residue verified**: the runner-reported digest `5c77320964920c7a52ec75673256ecc115752f21d2a03057eb5c71e9cb94c200` equals the SHA-256 of the evidence copy in `D:\SLMM-T6-EVIDENCE\t6-run-20261021-090109-a3e53a67\`, and the residue verdict is `{"synthetic_rows":0,"other_t6_backends":0,"t6_advisory_locks":0}`. Teardown proved ownership before stopping; post-run `port15432_listeners=0`, `t6lab_exists=False`, and the port-5432 service was untouched (`Running`, 2 listeners, 10 `postgres.exe`). The run was launched through a **detached launcher with a waiting parent**, with the stdout/stderr capture ordering **corrected** so the child is started before the asynchronous stream reads begin. Evidence preserved under `D:\SLMM-T6-EVIDENCE\launcher-20261021-090107-6e3008ba\` and `D:\SLMM-T6-EVIDENCE\t6-run-20261021-090109-a3e53a67\` |
+| R | C10 observer self-exclusion correction (2026-10-21, OFFLINE) | **PASS (corrected, offline)** | `t6-local-runner.mjs` now carries `AND s.pid <> pg_backend_pid()` in `AUDIT_BACKENDS`, distinguishes the **observing** session from the **inspected** sessions (`{ setup, a, b }`), fails closed when the observer's identity cannot be established, and reconciles the preflight allowance with the audit expectation through the single constant `MAX_T6_INSPECTED_BACKENDS = 3`. **New SHA-256 `9f06b1c396e3634fc86eeab4d73878ce7345d7e7e5bffb0d1fea458d7f76b008` (71700 bytes / 1350 lines)**. Static validation: `node --check` 0 errors; `--self-test` **35/35 PASS, exit 0** (30 previous checks + 5 new C9 checks; the C9 block now holds 15 named checks); **17/17 mutants killed** (the 9 pre-existing C9 mutants plus 8 new ones covering the observer self-exclusion defect). All 12 case bodies, the case IDs, the synthetic identities, the digest reporting, the mandatory residue checks, the ownership limits and the bounded cleanup are **byte-identical**. **No execution occurred; no PostgreSQL was started; no database was contacted; the port-5432 service was untouched.** **This correction is NOT live-tested.** |
+
 ## Summary
 
 - 2026-10-19: PASS 3 (prereq 1a, 5, 6); FAIL 3 (prereq 1b, 3, 4); NOT RUN 12 Group-L cases.
@@ -82,7 +86,7 @@ tool-call abort, the second ran to completion.
   runner digest before PASS is possible). The earlier v3 revision
   (`5faae6ebc0a1e422b465b369ab37da8b3049f88190c81eb2f2a00794da21457a`) is superseded. It is **NOT EXECUTION-APPROVED** and has
   **not been executed**.
-- **No Group-L case has ever reported PASS.** Three one-shot execution attempts were made on 2026-10-20.
+- **No Group-L case has ever reported PASS.** Four one-shot execution attempts have now been made.
   The 19:16 IST attempt failed at **parameter binding**, before the candidate body ran (wrapper exit 1; no
   evidence directory created, no PostgreSQL started). The 20:15 IST attempt ran with the repaired
   `-EvidenceRoot` binding and created its evidence directory, but aborted at the first step because
@@ -93,26 +97,63 @@ tool-call abort, the second ran to completion.
   which counted the runner's own two intentionally reused A/B sessions as leaks; the case body's own
   assertions all passed, so **no product RPC failure has been demonstrated**. Nothing yet demonstrates
   concurrency correctness.
+- **2026-10-21 09:01 IST — a fourth one-shot execution attempt, this time with the corrected C9 runner**
+  (wrapper exit 1, verdict FAIL). Every bootstrap and preflight step passed; **T6-L01 = FAIL** and the other
+  **eleven cases = NOT RUN**; residue clean (`synthetic_rows=0`, `other_t6_backends=0`,
+  `t6_advisory_locks=0`); evidence digest `5c77320964920c7a52ec75673256ecc115752f21d2a03057eb5c71e9cb94c200`
+  matched byte-for-byte; the disposable laboratory was cleaned up with ownership proven first. The C9
+  correction **did** remove the previous A/B misclassification, but the audit then **classified its own
+  observer** as an unhealthy expected session, because `AUDIT_BACKENDS` did not exclude the observing
+  connection's own pid. The case body's own assertions all passed, so **no product RPC failure has been
+  demonstrated** and **nothing yet demonstrates concurrency correctness**.
 
-- **Correction applied offline (2026-10-20), NOT EXECUTION-APPROVED:** `t6-local-runner.mjs` SHA-256
-  `0595bda3562d76056541106a33941638156340ce009a891c6746156922de8fc6` (62766 bytes / 1203 lines) replaces the executed revision `e1719be2ac0d432c903035001fdb0774c93641c0fa308073eefcf55e699aa234` (46751 bytes / 875 lines). The per-case
+- **Correction applied offline (2026-10-20), EXECUTED ONCE on 2026-10-21:** `t6-local-runner.mjs` SHA-256
+  `0595bda3562d76056541106a33941638156340ce009a891c6746156922de8fc6` (62766 bytes / 1203 lines) replaced the executed revision `e1719be2ac0d432c903035001fdb0774c93641c0fa308073eefcf55e699aa234` (46751 bytes / 875 lines). The per-case
   survivor check is replaced by a pid-keyed session audit: healthy, idle, transaction-free A/B sessions are
   **expected and reusable**, while an unexpected T6 backend, a non-transaction-clean expected session, a
   missing or ambiguous session identity and a failed cleanup all still FAIL the case. Cleanup stays bounded
   and restricted to positively identified T6-owned backends; a foreign session is never terminated. Offline
   validation: `node --check` 0 errors, `--self-test` **30/30 PASS exit 0** (21 original + 10 new C9 checks),
   **9/9 C9 mutants killed**. All 12 case bodies, the case IDs, the synthetic identities, the digest reporting
-  and the mandatory residue checks are byte-identical.
+  and the mandatory residue checks are byte-identical. **This revision was executed once on 2026-10-21 and
+  produced the observer self-classification failure described above.**
+
+- **Correction applied offline (2026-10-21), NOT LIVE-TESTED:** `t6-local-runner.mjs` SHA-256
+  `9f06b1c396e3634fc86eeab4d73878ce7345d7e7e5bffb0d1fea458d7f76b008` (71700 bytes / 1350 lines) replaces the
+  `0595bda3...` revision. The **C10** correction excludes the observing connection's own backend from the
+  inspection query with `AND s.pid <> pg_backend_pid()`, **distinguishes the observing session from the
+  inspected sessions** (`{ setup, a, b }` are inspected; the observer is the fourth), **fails closed** when
+  the observer's identity cannot be established, and **reconciles** the preflight allowance with the audit
+  expectation through the single constant `MAX_T6_INSPECTED_BACKENDS = 3`. The detection of unexpected
+  T6-owned sessions, the missing-session, ambiguous-identity, unclosed-transaction, advisory-lock and
+  cleanup-failure checks, the rule that a foreign session is never terminated, the bounded cleanup, the case
+  bodies, the case IDs, the synthetic identities, the digest reporting and the mandatory residue checks are
+  all **preserved unchanged**. Offline validation: `node --check` 0 errors, `--self-test` **35/35 PASS exit 0**
+  (30 previous + 5 new C9 checks; the C9 block now holds 15 named checks), **17/17 mutants killed** (the 9
+  pre-existing C9 mutants plus 8 new ones covering the observer self-exclusion defect). **This revision has
+  NOT been executed**; the checksum manifest, `TASK.md` and the temporary preparation copy still pin the
+  previous revision and need separate approval.
 ## Evidence and limitations
 
 - The 2026-10-20 attempt's evidence is durable under `D:\SLMM-T6-EVIDENCE\`
   (`launcher-20261020-111559-41599433\`, `launcher-20261020-113741-b4d0aac5\`,
   `t6-run-20261020-111611-35af3ca5\`, `t6-run-20261020-115251-73f019ca\`).
+- The **2026-10-21** attempt's evidence is durable under `D:\SLMM-T6-EVIDENCE\`
+  (`launcher-20261021-090107-6e3008ba\`, `t6-run-20261021-090109-a3e53a67\`). The
+  launcher directory holds the stdout log, the stderr log (empty), the exit code,
+  the started/finished timestamps, the child pid, the preflight and postrun state
+  files, a process snapshot and the launcher script itself
+  (`launcher-t6_launch_c9.ps1.approved-run`); the run directory holds the run log,
+  the node log, the results JSONL, the verdict JSON and the artifact checksum
+  file. All four historical run directories and both historical launcher scripts
+  are **intact and unmodified**.
 - The PostgreSQL server log for the attempt is preserved as
   `lab-pg.log.PRE-INTERVENTION`; the wrapper's own log is preserved as
   `candidate-run-log.WEDGED.log`.
-- **Limitation:** the runner's Node stage was never reached, so there are **zero**
-  Group-L case results. Nothing in this report demonstrates concurrency correctness.
+- **Limitation:** the runner's Node stage was never reached in the 2026-10-20
+  attempts, so those produced **zero** Group-L case results. The 2026-10-20
+  22:28 attempt and the 2026-10-21 09:01 attempt each produced **one** case
+  record (T6-L01 = FAIL). Nothing in this report demonstrates concurrency correctness.
 - **Limitation (2026-10-20, candidate v3):** all v3 validation is **static and
   offline**. The 164 self-tests use harmless simulated processes (`cmd.exe`
   and `ping` only), simulated capture-result objects and disposable filesystem
@@ -122,6 +163,16 @@ tool-call abort, the second ran to completion.
   start time and listeners). The 45 new checks therefore prove the *wrapper's
   own* capture, timeout and ownership logic — they prove **nothing** about
   PostgreSQL or about concurrency behaviour.
+- **Limitation (2026-10-21, C10 correction):** the C10 correction is validated
+  **entirely offline**. Its 35 self-tests use simulated backend rows and
+  simulated capture-result objects only; the source-level assertions read the
+  runner's own file. **No PostgreSQL process was started, no database was
+  contacted, port 15432 was never bound, and the port-5432 service was never
+  contacted or stopped** (`Running`, 2 listeners, 10 `postgres.exe`, unchanged
+  across the whole session). The 5 new checks and the 8 new mutants prove the
+  *runner's own* classification and exclusion logic — they prove **nothing** about
+  PostgreSQL or about concurrency behaviour. **The corrected runner has NOT been
+  live-tested.**
 - **Limitation:** a local-lab pass, if one is ever obtained, still would not prove
   any Supabase TEST or production behaviour.
 
@@ -130,5 +181,13 @@ tool-call abort, the second ran to completion.
 - The disposable cluster was **started** on `127.0.0.1:15432` and **cleaned up** by
   the candidate's own teardown (`pg_ctl stop -m fast`, then the lab directory was
   removed). Post-run state: `port15432_listeners=0`, `t6lab_exists=False`.
+  This held for **both** the 2026-10-20 22:28 attempt and the 2026-10-21 09:01
+  attempt. In the 2026-10-21 attempt the teardown **proved ownership first**
+  (`marker valid, postmaster.pid in our data dir, port 15432, postgres.exe
+  naming our data dir`) and only then stopped the cluster and deleted the lab
+  tree; the port-5432 service was unchanged throughout (`Running`, 2 listeners,
+  10 `postgres.exe`).
+- The **2026-10-21** run's own residue verdict was clean:
+  `{"synthetic_rows":0,"other_t6_backends":0,"t6_advisory_locks":0}`.
 - No residue in the repository, in the prep directory, or in the port-5432 service,
   which was never contacted.
