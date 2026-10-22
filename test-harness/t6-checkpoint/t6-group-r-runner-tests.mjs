@@ -104,6 +104,9 @@ import {
   runGroupR,
   CONNECTION_FAILURE_KINDS,
   classifyConnectionFailure,
+  SCRIPT_FAILURE_KINDS,
+  classifyScriptFailure,
+  classifyProcessFailure,
   finalizePreflightOnlyResults,
 } from "./t6-group-r-runner.mjs";
 
@@ -552,8 +555,11 @@ test("F2: the verdict is derived from the ordered stdout stream only", () => {
         `the stderr field is used outside the capture and the bound: ${u}`,
       );
     }
-    // The one consumer of the captured stderr.
-    assert.match(runnerSrc, /classifyConnectionFailure\(pf\.stderr\)/);
+    // The one consumer of the captured stderr: a PURE classification. The
+    // child's exit code decides the category (2 = connection, 3 = script) and
+    // the classification never contributes to a verdict.
+    assert.match(runnerSrc, /classifyProcessFailure\(diag\.exitCode, pf\.stderr\)/);
+    assert.ok(!/classifyConnectionFailure\(pf\.stderr\)/.test(runnerSrc));
 });
 
 test("F2: a disconnected session cannot produce a PASS", () => {
@@ -1815,6 +1821,8 @@ function mockChild() {
   child.kill = (sig) => {
     child.killed.push(sig || "SIGTERM");
     child.emit("exit", null, sig || "SIGTERM");
+    // A real child emits 'close' after every stdio stream is closed.
+    child.emit("close", null, sig || "SIGTERM");
     return true;
   };
   return child;
@@ -2282,8 +2290,10 @@ function mockPreflightRunner({
   functionCount = T6_FINGERPRINT_FUNCTION_COUNT,
   onPreflightWire = null,
   // When set, the mocked child writes this text to stderr and exits with
-  // code 2 instead of answering: that is a connection failure.
+  // failWithExitCode instead of answering: that is a failed session. psql
+  // exits 2 for a connection failure and 3 for a script failure.
   failWithStderr = null,
+  failWithExitCode = 2,
 } = {}) {
   const spawned = [];
   const wires = [];
@@ -2311,10 +2321,12 @@ function mockPreflightRunner({
         const isPreflight = wire.includes("t6-group-r-preflight/v1");
         if (isPreflight && typeof onPreflightWire === "function") onPreflightWire(child, wire);
         if (isPreflight && typeof failWithStderr === "string") {
-          // A connection failure: the server message goes to stderr and the
-          // child exits without ever producing a probe row.
+          // A failed session: the server message goes to stderr and the child
+          // exits without ever producing a probe row.
           child.stderr.emit("data", failWithStderr);
-          child.emit("exit", 2, null);
+          child.emit("exit", failWithExitCode, null);
+          // A real child emits 'close' after every stdio stream is closed.
+          child.emit("close", failWithExitCode, null);
           return true;
         }
         const payload = isPreflight
@@ -2344,7 +2356,11 @@ function mockPreflightRunner({
       },
       end: () => {},
     };
-    child.kill = () => { child.emit("exit", null, "SIGTERM"); return true; };
+    child.kill = () => {
+      child.emit("exit", null, "SIGTERM");
+      child.emit("close", null, "SIGTERM");
+      return true;
+    };
     return child;
   };
   return { spawned, wires, spawnFn, argVectors };
@@ -2757,10 +2773,15 @@ test("CD: a successful preflight is unchanged and records no connection failure"
 test("CD: the source keeps the classification fail-closed and verdict-free", () => {
   // The classifier is pure: it takes the stderr and returns one word.
   assert.match(runnerSrc, /export function classifyConnectionFailure\(stderr\)/);
-  // The only consumer of the captured stderr.
-  assert.match(runnerSrc, /const connectionFailure = classifyConnectionFailure\(pf\.stderr\);/);
-  // The class is recorded in the manifest, never the raw text.
+  // The only consumer of the captured stderr. It is a PURE classification:
+  // the child's exit code decides the category (2 = connection, 3 = script).
+  assert.match(runnerSrc, /export function classifyConnectionFailure\(stderr\)/);
+  assert.match(runnerSrc, /export function classifyScriptFailure\(stderr\)/);
+  assert.match(runnerSrc, /export function classifyProcessFailure\(exitCode, stderr\)/);
+  assert.match(runnerSrc, /const classes = classifyProcessFailure\(diag\.exitCode, pf\.stderr\);/);
+  // The classes are recorded in the manifest, never the raw text.
   assert.match(runnerSrc, /connectionFailure: preflight\.connectionFailure \|\| null,/);
+  assert.match(runnerSrc, /scriptFailure: preflight\.scriptFailure \|\| null,/);
   // The stderr is bounded.
   assert.match(runnerSrc, /export const STDERR_LIMIT = 65536;/);
   assert.match(runnerSrc, /this\.stderr = this\.stderr\.slice\(-STDERR_LIMIT\);/);
@@ -2939,5 +2960,235 @@ test("CA: both the ordinary and the preflight-only mode use the corrected constr
   } finally {
     rmSync(psql2.dir, { recursive: true, force: true });
     rmSync(evidenceDir2, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// DX: the script-failure diagnostics
+// ---------------------------------------------------------------------------
+// A preflight that dies inside the script must be diagnosable WITHOUT the raw
+// stderr ever reaching the evidence. psql's own exit code decides the
+// CATEGORY - 2 is a connection failure, 3 is a script failure - and the
+// captured stderr is reduced to ONE fixed class word. The two categories can
+// therefore never describe each other's failure.
+
+const DX_SCRIPT_CASES = [
+  ["syntax_error", 'ERROR:  syntax error at or near "END"\nLINE 428: END IF;  END LOOP;\n'],
+  ["undefined_function_or_object", 'ERROR:  function pg_catalog.oidvectortypes(oidvector) does not exist\n'],
+  ["undefined_function_or_object", 'ERROR:  relation "public.documents" does not exist\n'],
+  ["permission_denied", 'ERROR:  permission denied for schema public\n'],
+  ["statement_timeout", 'ERROR:  canceling statement due to statement timeout\n'],
+  ["lock_timeout", 'ERROR:  canceling statement due to lock timeout\n'],
+  ["read_only_violation", 'ERROR:  cannot execute CREATE TABLE in a read-only transaction\n'],
+  ["preflight_refusal_tpf01", 'ERROR:  T6-R hosted-schema preflight failed: the fingerprint drifted\n'],
+  ["script_error_other", 'ERROR:  something entirely novel happened\n'],
+  ["no_diagnostics", ""],
+  ["no_diagnostics", "   \n"],
+];
+
+test("DX: the script-failure classifier returns only the predefined classes", () => {
+  assert.deepEqual([...SCRIPT_FAILURE_KINDS], [
+    "syntax_error",
+    "undefined_function_or_object",
+    "permission_denied",
+    "statement_timeout",
+    "lock_timeout",
+    "read_only_violation",
+    "preflight_refusal_tpf01",
+    "script_error_other",
+    "no_diagnostics",
+  ]);
+  for (const [expected, text] of DX_SCRIPT_CASES) {
+    assert.equal(classifyScriptFailure(text), expected, `the class of "${expected}" is wrong`);
+  }
+  // The classifier is pure: it never returns the raw text.
+  assert.ok(!classifyScriptFailure("ERROR:  password authentication failed").includes("password"));
+});
+
+test("DX: the exit code decides the category and the categories never overlap", () => {
+  const conn = classifyProcessFailure(2, 'FATAL:  password authentication failed for user "postgres"\n');
+  assert.equal(conn.connectionFailure, "authentication_failed");
+  assert.equal(conn.scriptFailure, null);
+  const script = classifyProcessFailure(3, 'ERROR:  syntax error at or near "END"\n');
+  assert.equal(script.connectionFailure, null);
+  assert.equal(script.scriptFailure, "syntax_error");
+  // An exit code that is neither 2 nor 3 is an infrastructure failure: it is
+  // carried by the abort taxonomy, and NEITHER class is claimed.
+  const other = classifyProcessFailure(1, "ERROR:  something else\n");
+  assert.equal(other.connectionFailure, null);
+  assert.equal(other.scriptFailure, null);
+});
+
+test("DX: an exit 3 preflight failure is classified as a SCRIPT failure", async () => {
+  for (const [expected, text] of DX_SCRIPT_CASES) {
+    const psql = dummyPsql();
+    const evidenceDir = mkdtempSync(path.join(tmpdir(), "t6r-dx-pf-"));
+    const mock = mockPreflightRunner({ preflightOk: true, failWithStderr: text, failWithExitCode: 3 });
+    try {
+      const out = await runPreflightOnly(mock, { evidenceDir, psqlPath: psql.file });
+      assert.equal(out.preflight.scriptFailure, expected, `the script class of "${expected}" is wrong`);
+      // A script failure is NEVER reported as a connection failure.
+      assert.equal(out.preflight.connectionFailure, null);
+      assert.equal(out.preflight.psqlExitCode, 3);
+      // The probe never arrived: the script died before it.
+      assert.equal(out.preflight.probeReceived, false);
+      // The preflight still fails closed.
+      assert.equal(out.preflight.ok, false);
+      assert.notEqual(out.verdict, "PASS");
+    } finally {
+      rmSync(psql.dir, { recursive: true, force: true });
+      rmSync(evidenceDir, { recursive: true, force: true });
+    }
+  }
+});
+
+test("DX: an exit 2 preflight failure is classified as a CONNECTION failure", async () => {
+  const psql = dummyPsql();
+  const evidenceDir = mkdtempSync(path.join(tmpdir(), "t6r-dx-conn-"));
+  const mock = mockPreflightRunner({
+    preflightOk: true,
+    failWithStderr: 'psql: error: connection to server at "h", port 5432 failed: FATAL:  password authentication failed for user "postgres"\n',
+    failWithExitCode: 2,
+  });
+  try {
+    const out = await runPreflightOnly(mock, { evidenceDir, psqlPath: psql.file });
+    assert.equal(out.preflight.connectionFailure, "authentication_failed");
+    assert.equal(out.preflight.scriptFailure, null);
+    assert.equal(out.preflight.psqlExitCode, 2);
+    assert.equal(out.preflight.probeReceived, false);
+    assert.notEqual(out.verdict, "PASS");
+  } finally {
+    rmSync(psql.dir, { recursive: true, force: true });
+    rmSync(evidenceDir, { recursive: true, force: true });
+  }
+});
+
+test("DX: the diagnostics are collected through the 'close' event, so the stderr is complete", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stdout.setEncoding = () => {};
+  child.stderr = new EventEmitter();
+  child.stderr.setEncoding = () => {};
+  child.stdin = { write: () => true, end: () => {} };
+  child.kill = () => {
+    child.emit("exit", null, "SIGTERM");
+    child.emit("close", null, "SIGTERM");
+    return true;
+  };
+  const session = mockSession({ endpoint: PF_ENDPOINT, spawnFn: () => child });
+  await session.start();
+  // The first stderr chunk arrives before the exit; the SECOND one arrives
+  // after it. Only the 'close' event means the stderr is complete.
+  child.stderr.emit("data", 'ERROR:  syntax error at or near "END"\n');
+  const pending = session.exec("SELECT 1;", { label: "x" });
+  setTimeout(() => { child.emit("exit", 3, null); }, 0);
+  setTimeout(() => {
+    child.stderr.emit("data", "SECOND CHUNK\n");
+    child.emit("close", 3, null);
+  }, 15);
+  await pending.catch(() => {});
+  const diag = await session.diagnostics();
+  assert.equal(diag.exitCode, 3);
+  assert.ok(session.stderr.includes("SECOND CHUNK"), "the diagnostics must wait for the 'close' event");
+  // The classification sees the COMPLETE stderr.
+  assert.equal(classifyProcessFailure(diag.exitCode, session.stderr).scriptFailure, "syntax_error");
+});
+
+test("DX: the diagnostics never hang when the child never closes", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stdout.setEncoding = () => {};
+  child.stderr = new EventEmitter();
+  child.stderr.setEncoding = () => {};
+  child.stdin = { write: () => true, end: () => {} };
+  child.kill = () => { child.emit("exit", null, "SIGTERM"); return true; };
+  const session = mockSession({ endpoint: PF_ENDPOINT, spawnFn: () => child });
+  await session.start();
+  const started = Date.now();
+  const diag = await session.diagnostics({ graceMs: 40 });
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 2000, "the bounded grace must end the wait");
+  assert.equal(diag.exitCode, null);
+});
+
+test("DX: a successful preflight records that the probe was received", async () => {
+  const psql = dummyPsql();
+  const evidenceDir = mkdtempSync(path.join(tmpdir(), "t6r-dx-ok-"));
+  const mock = mockPreflightRunner({ preflightOk: true });
+  try {
+    const out = await runPreflightOnly(mock, { evidenceDir, psqlPath: psql.file });
+    assert.equal(out.preflight.probeReceived, true);
+    assert.equal(out.preflight.connectionFailure, null);
+    assert.equal(out.preflight.scriptFailure, null);
+    assert.equal(out.preflight.psqlExitCode, null);
+    const manifest = JSON.parse(readFileSync(out.evidence.manifestPath, "utf8"));
+    assert.equal(manifest.preflight.probeReceived, true);
+    assert.equal(manifest.preflight.scriptFailure, null);
+    assert.equal(manifest.preflight.psqlExitCode, null);
+  } finally {
+    rmSync(psql.dir, { recursive: true, force: true });
+    rmSync(evidenceDir, { recursive: true, force: true });
+  }
+});
+
+test("DX: the manifest records the four diagnostic fields, and no sensitive data", async () => {
+  const psql = dummyPsql();
+  const evidenceDir = mkdtempSync(path.join(tmpdir(), "t6r-dx-leak-"));
+  const secret = "hunter2-not-a-real-password";
+  const mock = mockPreflightRunner({
+    preflightOk: true,
+    failWithStderr: 'psql: error: connection to server at "aws-0-ap-northeast-1.pooler.supabase.com" (10.0.0.1), port 5432 failed: FATAL:  password authentication failed for user "postgres.nqadtfqyurkpmxcodswc"\n',
+    failWithExitCode: 2,
+  });
+  try {
+    const out = await runPreflightOnly(mock, { evidenceDir, psqlPath: psql.file });
+    const manifest = JSON.parse(readFileSync(out.evidence.manifestPath, "utf8"));
+    for (const field of ["psqlExitCode", "scriptFailure", "connectionFailure", "probeReceived"]) {
+      assert.ok(field in manifest.preflight, `the manifest must record ${field}`);
+    }
+    assert.equal(manifest.preflight.psqlExitCode, 2);
+    assert.equal(manifest.preflight.connectionFailure, "authentication_failed");
+    assert.equal(manifest.preflight.scriptFailure, null);
+    assert.equal(manifest.preflight.probeReceived, false);
+    // NOTHING sensitive may enter the bundle: no raw stderr, no host, no
+    // user, no credential, no connection string.
+    const bundle = readFileSync(out.evidence.evidencePath, "utf8") + readFileSync(out.evidence.manifestPath, "utf8");
+    for (const forbidden of [
+      "password authentication failed",
+      "aws-0-ap-northeast-1.pooler.supabase.com",
+      "postgres.nqadtfqyurkpmxcodzwc".replace("postgres.nqadtfqyurkpmxcodzwc", "postgres.nqadtfqyurkpmxcodswc"),
+      "10.0.0.1",
+      secret,
+      "PGPASSWORD=",
+    ]) {
+      assert.ok(!bundle.includes(forbidden), `the bundle must not contain "${forbidden}"`);
+    }
+  } finally {
+    rmSync(psql.dir, { recursive: true, force: true });
+    rmSync(evidenceDir, { recursive: true, force: true });
+  }
+});
+
+test("DX: the diagnostics do not create a session, a fixture or a case", async () => {
+  const psql = dummyPsql();
+  const evidenceDir = mkdtempSync(path.join(tmpdir(), "t6r-dx-iso-"));
+  const mock = mockPreflightRunner({ preflightOk: true, failWithStderr: 'ERROR:  syntax error\n', failWithExitCode: 3 });
+  try {
+    const out = await runPreflightOnly(mock, { evidenceDir, psqlPath: psql.file });
+    // Exactly one session: the preflight. No observer, no acting session.
+    assert.deepEqual(mock.spawned, [PREFLIGHT_TAG]);
+    // No fixture statement and no case execution.
+    for (const w of mock.wires) {
+      assert.ok(!/INSERT INTO public\./.test(w));
+      assert.ok(!/request_storage_deletion\(|claim_storage_deletion_request\(|fence_storage_key_for_deletion\(/.test(w));
+    }
+    for (const r of out.results) {
+      assert.equal(r.assertion, "NOT RUN");
+      assert.equal(r.verdict, "BLOCKED");
+    }
+    assert.notEqual(out.verdict, "PASS");
+  } finally {
+    rmSync(psql.dir, { recursive: true, force: true });
+    rmSync(evidenceDir, { recursive: true, force: true });
   }
 });

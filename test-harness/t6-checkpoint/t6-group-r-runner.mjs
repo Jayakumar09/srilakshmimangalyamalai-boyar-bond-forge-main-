@@ -127,6 +127,11 @@ export const PREFLIGHT_TAG = "slmm-t6-pf";
 // able to grow the buffer without bound.
 export const STDERR_LIMIT = 65536;
 
+// How long the diagnostics wait for the child's 'close' event before they fall
+// back to whatever was already captured. The wait is BOUNDED, so a child that
+// never closes (a grandchild that inherited the pipe) can never hang a run.
+export const DIAGNOSTIC_GRACE_MS = 2000;
+
 // ---------------------------------------------------------------------------
 // The pinned T6 function-definition fingerprint
 // ---------------------------------------------------------------------------
@@ -1109,6 +1114,70 @@ export function classifyConnectionFailure(stderr) {
   return "unknown";
 }
 
+// --- the script-failure classification ----------------------------------------
+
+/**
+ * The ONLY values that may ever classify a SCRIPT failure. A class name is a
+ * fixed word: no host, no user, no database, no password, no SQL text and no
+ * raw server message can ever appear in it.
+ */
+export const SCRIPT_FAILURE_KINDS = Object.freeze([
+  "syntax_error",
+  "undefined_function_or_object",
+  "permission_denied",
+  "statement_timeout",
+  "lock_timeout",
+  "read_only_violation",
+  "preflight_refusal_tpf01",
+  "script_error_other",
+  "no_diagnostics",
+]);
+
+/**
+ * Classify a PostgreSQL SCRIPT failure from the child's stderr.
+ *
+ * The function is PURE and it returns ONE of the predefined class names only.
+ * The raw stderr is read here and never returned, never logged and never
+ * written to the evidence.
+ */
+export function classifyScriptFailure(stderr) {
+  const raw = stderr === null || stderr === undefined ? "" : String(stderr);
+  const text = raw.toLowerCase();
+  // No diagnostics at all: the child said nothing. It is never guessed.
+  if (!text.trim()) return "no_diagnostics";
+  // The designed preflight refusal is checked FIRST: it is the one EXPECTED
+  // script error and it must never be confused with a crash.
+  if (/tpf01|hosted-schema preflight failed/.test(text)) return "preflight_refusal_tpf01";
+  if (/syntax error/.test(text)) return "syntax_error";
+  if (/does not exist|undefined function|undefined object|undefined column|undefined table|undefined_parameter/.test(text)) {
+    return "undefined_function_or_object";
+  }
+  if (/permission denied|insufficient privilege|not authorized|access denied|must be owner|row-level security/.test(text)) {
+    return "permission_denied";
+  }
+  if (/statement timeout|statement_timeout/.test(text)) return "statement_timeout";
+  if (/lock timeout|lock_timeout/.test(text)) return "lock_timeout";
+  if (/read-only transaction|read only transaction/.test(text)) return "read_only_violation";
+  return "script_error_other";
+}
+
+/**
+ * Route a child's exit to the right failure category.
+ *
+ * psql's own exit codes decide the category, so the two categories can never
+ * overlap and neither can ever describe the other's failure:
+ *   exit 2 -> the connection to the server went bad (a connection failure);
+ *   exit 3 -> an error occurred in the script (a script failure);
+ *   any other code -> neither; the abort taxonomy carries it as an
+ *   infrastructure failure and the exit code is recorded as it is.
+ */
+export function classifyProcessFailure(exitCode, stderr) {
+  const code = Number.isInteger(exitCode) ? exitCode : null;
+  if (code === 2) return { connectionFailure: classifyConnectionFailure(stderr), scriptFailure: null };
+  if (code === 3) return { connectionFailure: null, scriptFailure: classifyScriptFailure(stderr) };
+  return { connectionFailure: null, scriptFailure: null };
+}
+
 // --- H6: the psql executable -------------------------------------------------
 
 /** The executable names the runner will ever run. */
@@ -1330,6 +1399,10 @@ export class PgSession {
     this.exitSignal = null;
     this.spawnError = null;
     this.terminated = false;
+    // The 'close' event fires after every stdio stream has been closed, so the
+    // captured stderr is COMPLETE at that point. The 'exit' event is not.
+    this.closeSeen = false;
+    this.diagPromise = null;
     // H6: only an ABSOLUTE, already validated executable may be run. The
     // resolution happens once, before any session exists.
     if (!psqlPath || !path.isAbsolute(String(psqlPath))) {
@@ -1410,6 +1483,16 @@ export class PgSession {
       }
       w.reject(markAbort(new Error(`${this.tag}: psql exited (${code}${signal ? `, ${signal}` : ""})`), "infrastructure"));
     });
+    // The 'close' event fires after every stdio stream has been closed, so the
+    // captured stderr is COMPLETE. It is NOT read on 'exit': the last stderr
+    // chunk may still be in flight at that moment, and a classification made
+    // from an incomplete stderr is a classification made from nothing.
+    this.child.on("close", (code, signal) => {
+      this.closeSeen = true;
+      this.closed = true;
+      if (code !== null && code !== undefined) this.exitCode = code;
+      if (signal) this.exitSignal = signal;
+    });
   }
 
   #onData(d) {
@@ -1466,6 +1549,37 @@ export class PgSession {
     if (this.child) { try { this.child.kill(signal); } catch { /* already gone */ } }
     const w = this.waiter; this.waiter = null;
     if (w) w.reject(markAbort(new Error(`${this.tag}: the session was terminated`), "signal"));
+  }
+
+  /**
+   * The child's diagnostics, collected through the 'close' event.
+   *
+   * The 'exit' event is NOT the collection point: at that moment the last
+   * stderr chunk may still be in flight, so a classification made there can be
+   * made from an incomplete (or empty) stderr. The wait is BOUNDED: if the
+   * child never emits 'close' - a grandchild that inherited the pipe - the
+   * grace timer ends it and the run continues.
+   *
+   * The cancellation path is never delayed: a terminated child rejects its
+   * statement on 'exit', and this method only ever collects diagnostics.
+   */
+  async diagnostics({ graceMs = DIAGNOSTIC_GRACE_MS } = {}) {
+    if (this.closeSeen) return { exitCode: this.exitCode, exitSignal: this.exitSignal };
+    if (this.diagPromise) return this.diagPromise;
+    this.diagPromise = new Promise((resolve) => {
+      let timer = null;
+      const done = () => resolve({ exitCode: this.exitCode, exitSignal: this.exitSignal });
+      const onClose = () => { if (timer) clearTimeout(timer); done(); };
+      // The timer is deliberately NOT unref'd: an unref'd timer lets the
+      // event loop resolve before it fires, and the promise would never
+      // settle. The wait stays bounded by the grace itself.
+      timer = setTimeout(() => {
+        try { this.child.removeListener("close", onClose); } catch { }
+        done();
+      }, graceMs);
+      this.child.once("close", onClose);
+    });
+    return this.diagPromise;
   }
   close() {
     if (this.child) {
@@ -2062,18 +2176,38 @@ export async function runGroupR({
       // published payload. The session is rolled back by the finally block
       // below.
       const r = await pf.exec(stripTrailingRollback(S("preflight.schema")), { label: "preflight.schema" });
-      return interpretPreflight(r);
+      const out = interpretPreflight(r);
+      // The completion probe arrived: the script ran to the end of the
+      // preflight and published its payload. No connection and no script
+      // failure occurred, so both failure classes stay null.
+      return {
+        ...out,
+        connectionFailure: null,
+        scriptFailure: null,
+        psqlExitCode: null,
+        probeReceived: !!(r && r.probe),
+      };
     } catch (e) {
-      // The child's stderr is classified into ONE fixed word. The raw text
-      // never leaves this function and never reaches the evidence.
-      const connectionFailure = classifyConnectionFailure(pf.stderr);
+      // The diagnostics are collected through the child's 'close' event, so
+      // the captured stderr is COMPLETE before it is classified. The exit code
+      // decides the CATEGORY: psql exits 2 for a connection failure and 3 for
+      // a script failure, so the two can never describe each other.
+      //
+      // The raw text never leaves this function and never reaches the
+      // evidence: only the fixed class words do.
+      const diag = await pf.diagnostics();
+      const classes = classifyProcessFailure(diag.exitCode, pf.stderr);
+      const classWord = classes.connectionFailure || classes.scriptFailure || "unclassified";
       return {
         ok: false,
-        reason: `the preflight session failed: ${e && e.message ? e.message : String(e)} (${connectionFailure})`,
+        reason: `the preflight session failed: ${e && e.message ? e.message : String(e)} (${classWord})`,
         failures: [],
         checks: 0,
         namespace: null,
-        connectionFailure,
+        connectionFailure: classes.connectionFailure,
+        scriptFailure: classes.scriptFailure,
+        psqlExitCode: diag.exitCode === null || diag.exitCode === undefined ? null : Number(diag.exitCode),
+        probeReceived: false,
       };
     } finally {
       try { await pf.rollback(); } catch { /* already gone */ }
@@ -2459,7 +2593,10 @@ export async function runGroupR({
     if (!preflight) {
       // The run aborted before the preflight finished. The manifest still
       // receives a complete, failed preflight result.
-      preflight = { ok: false, checks: 0, failures: [], reason: "the preflight did not run", fingerprint: null };
+      preflight = {
+        ok: false, checks: 0, failures: [], reason: "the preflight did not run", fingerprint: null,
+        connectionFailure: null, scriptFailure: null, psqlExitCode: null, probeReceived: false,
+      };
     }
   } finally {
     disposeSignals();
@@ -2509,6 +2646,13 @@ export async function runGroupR({
         reason: redactSensitive(preflight.reason || ""),
         // The connection-failure class: a fixed word, never a server message.
         connectionFailure: preflight.connectionFailure || null,
+        // The script-failure class: a fixed word, never a server message.
+        scriptFailure: preflight.scriptFailure || null,
+        // The child's exit code, when the session itself failed.
+        psqlExitCode: preflight.psqlExitCode === null || preflight.psqlExitCode === undefined
+          ? null : Number(preflight.psqlExitCode),
+        // Whether the preflight's completion probe was ever received.
+        probeReceived: preflight.probeReceived === true,
         fingerprint: {
           contract: T6_FINGERPRINT_CONTRACT,
           expected: T6_FINGERPRINT_EXPECTED,
@@ -2546,6 +2690,10 @@ export async function runGroupR({
       failures: (preflight.failures || []).map((f) => redactSensitive(f)),
       reason: redactSensitive(preflight.reason || ""),
       connectionFailure: preflight.connectionFailure || null,
+      scriptFailure: preflight.scriptFailure || null,
+      psqlExitCode: preflight.psqlExitCode === null || preflight.psqlExitCode === undefined
+        ? null : Number(preflight.psqlExitCode),
+      probeReceived: preflight.probeReceived === true,
       fingerprint: {
         contract: T6_FINGERPRINT_CONTRACT,
         expected: T6_FINGERPRINT_EXPECTED,
