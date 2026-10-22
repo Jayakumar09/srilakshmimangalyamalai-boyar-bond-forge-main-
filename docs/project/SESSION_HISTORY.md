@@ -328,3 +328,22 @@
     - **`PROJECT_STATUS.md` is still stale** (§2 `ff1abb1`, "8 behind", 72 untracked; §5 457/457 at 13 suites) and the T6 task records still omit the Group-R artifacts — both out of scope here and needing their own approval.
     - **The `169/169` figure cannot be recovered** without rerunning the suite, which is not authorized.
 17. **Next recommended step:** obtain separate approval to commit these four documentation files, then separate approval to push; afterwards scope the `PROJECT_STATUS.md` §14 reconciliation and the T6 task-record update; the Group-R preflight diagnosis stays blocked until a fresh one-shot TEST authorization is granted.
+
+---
+
+## 2026-10-22 (later still) — Correction: `live-guard.mjs` authorization vs Group-R port restrictions
+
+> **Appended correction.** Per this file's rule (never rewrite or remove a prior
+> entry; correct mistakes by appending a dated correction), the entry above is
+> **left exactly as written**. This entry corrects one sentence in it and
+> restates the current Group-R status.
+
+1. **Date/time:** 2026-10-22 (local, IST) — later the same day.
+2. **What was wrong:** the "Files:" paragraph of the 2026-10-22 entry (the continuation of its item 5) states that every run must pass `test-harness/live-guard.mjs` (`requireLiveAuthorization`, `assertNonProductionTarget`), **"which refuses ports `6543` and `15432`"**. That sentence merges two different modules. The **port** refusals are **not** implemented in `live-guard.mjs`.
+3. **Correct split — live authorization and target checks are in `test-harness/live-guard.mjs`** (144 lines). It exports `evaluateLiveAuthorization` / `requireLiveAuthorization` (default is **refuse**; requires `SLMM_LIVE_TESTS=true`, `SLMM_LIVE_TARGET=test` and a per-harness `SLMM_LIVE_ACK`, otherwise it exits **2**) and `projectRefOf` / `assertNonProductionTarget` (classifies the Supabase project ref, **unconditionally prohibits** the production project `sxpkutjkqfekqwpabgrk`, and refuses any target that is not the TEST project `nqadtfqyurkpmxcodswc`). It contains **no port logic at all** — `6543` and `15432` do not appear anywhere in the file.
+4. **Correct split — the port restrictions are in `test-harness/t6-checkpoint/t6-group-r-runner.mjs`.** The runner imports the gate at line 100, calls `requireLiveAuthorization` at line 2013 and `assertNonProductionTarget` at line 2228, and declares `REQUIRED_PORT = 5432` (line 107), `TRANSACTION_POOLER_PORT = 6543` (line 108, refused — no session semantics) and `LOCAL_LAB_PORT = 15432` (line 109, refused — the disposable local lab). `assertTestEndpointIdentity` (lines 294–321) enforces those port rules together with the production-ref, localhost and non-Supabase-host refusals.
+5. **No Group-R case has been executed.** `T6-R01`–`T6-R08` remain **NOT RUN**. The harness implementation, the hermetic unit tests and the three preflight-only rehearsals that were **BLOCKED** at the preflight are **not** evidence of any executed Group-R case.
+6. **Unchanged claims preserved.** `169/169` remains **UNVERIFIED** (no TAP output, log or artifact exists); `578/578` across **19** suites remains a **historical** 2026-10-17 result at `92804e0` (`TEST_EVIDENCE.md` E-008) and the registry's **21** suites have **no current total**; **T6 remains ACTIVE / INCOMPLETE**; hosted Supabase TEST and production behaviour remain **NOT VERIFIED**.
+7. **Same correction already published elsewhere:** `project-tasks/active/T6-group-l-concurrency-runner/ARTIFACT_MANIFEST.md` and `PROGRESS.md` carry the identical corrected split as of commit `83eed12`.
+8. **Verification level:** documentation correction plus a **read-only** review of the two modules (`test-harness/live-guard.mjs`, `test-harness/t6-checkpoint/t6-group-r-runner.mjs`). **No test, SQL, PostgreSQL, Supabase, R2, Cloudflare, build or deployment operation was performed**, and no `.env` or secret was read.
+9. **Files changed in this pass:** `docs/project/SESSION_HISTORY.md` only. **Nothing was staged, committed or pushed.**
