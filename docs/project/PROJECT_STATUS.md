@@ -5,7 +5,8 @@
 > written instruction. See "TEST / Production Isolation Policy" and
 > "Session Recovery Instructions" below.
 
-_Last updated: 2026-10-17 (local)_
+_Last updated: 2026-10-22 (local) — see **§14** for the current state; **§1–§13 are
+retained as dated history** and are not rewritten._
 
 ## 1. Project identity
 
@@ -110,7 +111,9 @@ Do not restart completed work. Do not assume a previously successful test still 
 
 ## 10. Last history entry date
 
-- **2026-10-17** (see `docs/project/SESSION_HISTORY.md`).
+- **2026-10-22** — latest entry is the appended T6 correction in
+  `docs/project/SESSION_HISTORY.md` (`2026-10-22 (later)`).
+- **2026-10-17** (previous; see `docs/project/SESSION_HISTORY.md`).
 
 ---
 
@@ -150,3 +153,61 @@ Do not restart completed work. Do not assume a previously successful test still 
 - **Offline regression (freshly observed 2026-10-17, on the current working tree):** `npm run test:offline` -> **exit 0**, `TOTAL tests=578 pass=578 fail=0 skip=0 suites=19 failing_suites=0`; `npx tsc --noEmit` -> **exit 0**. Evidence: `TEST_EVIDENCE.md` E-008. (The 19-suite count includes one uncommitted registry entry; pure HEAD would be 18 suites.)
 - **Working tree now:** **0 staged**, **44 modified tracked** (the 4 corrected docs + in-progress feature/security/test work), **71 untracked**, **0 deletions**. Preserve all of it; never reset/clean/force-push.
 - **Not run:** no live harness, no remote access, no build, no deploy; **no push**.
+
+---
+
+## 14. Update — 2026-10-22 — T6 reconciliation: Group-L PASS, Group-R delivered / not executed
+
+> **Append-only superseding note.** §2 (HEAD `ff1abb1`, "8 behind", 37 modified /
+> 72 untracked / 6 staged), §5 and §6 (457/457 across 13 suites) and §7 (the
+> 2026-10-15/17 task and next action) are **retained as their dated 2026-10-17
+> record** — they were correct when written and are not rewritten. The current
+> state follows.
+
+- **Git state:** HEAD `4cad12b16494e1a9ae2a50249eaefc64dd546b60`
+  (`docs(t6): reconcile Group-R preflight evidence and Group-L verification`) =
+  `origin/main`, **0 ahead / 0 behind** (GitHub `main` verified equal via
+  `git ls-remote`). Working tree: **37 modified tracked**, **65 untracked**,
+  **0 staged**, **0 deletions** — preserve all of it; never reset/clean/force-push.
+- **Offline regression:** **no new run in this pass.** The last measured result
+  remains **578/578 pass, 0 fail, 0 skip, 19 suites** (2026-10-17, HEAD
+  `92804e0`; `TEST_EVIDENCE.md` E-008) and is **historical**. The registry
+  `test-harness/harness-registry.mjs` now lists **21** `OFFLINE_SUITES`, so 19 is
+  no longer the suite count and **no current complete test total is claimed**.
+- **T6 program — ACTIVE / INCOMPLETE:**
+  - **Group-L: VERIFIED PASS 12/12** — a **local disposable PostgreSQL 18
+    laboratory only** (`127.0.0.1:15432`, database `t6lab`), executed once on
+    2026-10-21 at approximately 10:06 IST: wrapper exit 0, verdict PASS, all nine
+    native steps exit 0, zero residue, results digest
+    `3489610fbf2105868c8aa2ab6bd60681ac0788446a816980c5cbfd424b187b0c`.
+    Evidence: `TEST_EVIDENCE.md` E-010.
+  - **Group-R: harness implemented, committed and pushed — NOT EXECUTED.**
+    Eight commits `a11a118` → `1535f9a`, **4 files, +7,009/−0**:
+    `t6-checkpoint/t6-group-r-runner.mjs` (121,465 B / **2,772** lines /
+    `b4184ac78e32c19d5496f2afaa4625662b55c9c4d8a2ed167bb76755075665cd`),
+    `t6-checkpoint/t6-group-r-runner-tests.mjs` (157,505 B / **3,194** lines /
+    `df811af43924efb2d3facb9edba01a1fd6b0e7df00eaf543dcdc72e38fb23af8`),
+    `t6-checkpoint/t6-group-r-harness.sql` (51,860 B / **1,035** lines /
+    `6de5323d87b8c7a104365393bfc0fa5c9af98482a0701465a122ef704276507e`) and
+    `test-harness/harness-registry.mjs` (**+8 lines**: one `LIVE_HARNESSES`
+    entry and one `LIVE_SQL_HARNESSES` entry). **No npm script references
+    either artifact.** The eight `env: "R"` matrix rows predate this delivery
+    (matrix last changed at `ed5e212`, byte-identical at HEAD).
+  - **`T6-R01`–`T6-R08`: NOT RUN.** Three `mode: "preflight-only"` rehearsals
+    against Supabase **TEST** `nqadtfqyurkpmxcodswc` all aborted at the
+    preflight — psql exit **2**, **2**, **3** (the latter two classified
+    **`unknown`**; the first records no classifier) — each **8 BLOCKED / 0 cases
+    executed**, `residueGate: "NOT RUN"`, and the v2
+    fingerprint **never computed** (`expected a85fea6468487830a4ca9afc268d9aef`,
+    `computed: null`). Evidence: `TEST_EVIDENCE.md` E-009. **Not PASS, not FAIL.**
+  - **Reported `169/169` Group-R runner unit tests: UNVERIFIED** — 169 is a
+    static top-level `test()` count; **no execution artifact** (TAP, log or
+    report) exists in the repository or under `D:\SLMM-T6-EVIDENCE`.
+  - **Group-C** (`T6-C01`–`T6-C03`) and **R2 / object-storage and scheduler
+    integration**: separate pending gates, each needing its own approval and its
+    own target.
+- **Hosted Supabase TEST and production behaviour remain NOT VERIFIED.** A
+  local-lab PASS is not remote proof, and a preflight-only rehearsal is not a
+  test run.
+- **Not run in this pass:** no test, no SQL, no PostgreSQL, no Supabase, no R2,
+  no Cloudflare, no build, no deploy, no commit, no push.

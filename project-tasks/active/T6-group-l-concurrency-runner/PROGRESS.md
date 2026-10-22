@@ -6,6 +6,17 @@
 - **Current blocker:** none for Group-L. **Group-L local concurrency: VERIFIED PASS** (2026-10-21 10:06 IST, 12/12). The overall T6 program is **INCOMPLETE** — Group-R, Group-C, R2 and scheduler integration are separate pending gates, and Supabase TEST/production behaviour is **NOT VERIFIED**.
 - **Exact next action:** commit and push this documentation update, then decide the next gate (Group-R rollback-only TEST, or Group-C after operator approval) with a fresh, separate approval.
 
+> **Superseding status — 2026-10-22 (latest):** the lines above and the two
+> blocks below describe earlier states and are **retained as history**; they are
+> not rewritten. The **latest published checkpoint is
+> `4cad12b16494e1a9ae2a50249eaefc64dd546b60`** (`84d9e145…` remains the correct
+> GitHub baseline for the Group-L execution). The "exact next action" above
+> (commit and push the PASS documentation) is **DONE**. **T6 is ACTIVE /
+> INCOMPLETE, not BLOCKED**: Group-L is **VERIFIED PASS 12/12** (local lab
+> only); Group-R is **implemented but NOT EXECUTED** — three preflight-only
+> rehearsals were **BLOCKED**, and `T6-R01`–`T6-R08` remain **NOT RUN**. See the
+> appended 2026-10-22 section at the end of this file.
+
 > **Superseding status — 2026-10-21 (10:06 IST execution):** the two earlier
 > status blocks below describe the state as of 2026-10-19 and 2026-10-20 and
 > are **retained as history**. The current state is:
@@ -881,3 +892,104 @@ Notes for the reviewer:
   which ran the cluster healthily for 16 minutes including a completed
   checkpoint. It remains an environment-level risk to record in any future
   report, and it is the reason the first attempt must be run detached.
+
+---
+
+## 2026-10-22 — Correction: Group-R delivery record; stale BLOCKED / self-test claims corrected
+
+> **Append-only correction.** Per the rule at the top of this file, the earlier
+> text is **not edited**. This section corrects four statements that are now
+> wrong and adds the Group-R delivery record.
+
+### 1. Corrections to earlier lines
+
+1. **The §9 closing line "Until then T6 stays BLOCKED and the corrected C10
+   runner has not been live-tested" is superseded.** The C10 runner **was**
+   live-tested and **passed**: executed exactly once on 2026-10-21 at
+   approximately 10:06 IST with wrapper exit 0 / verdict PASS / **12/12**
+   Group-L cases (§8f above). **T6 is ACTIVE / INCOMPLETE, not BLOCKED.** That
+   line was correct before the run and is retained as history.
+2. **The reviewer note "107 self-tests" is superseded by the already-documented
+   196/196.** The final v3 wrapper's `-SelfTest` total is **196/196 PASS,
+   exit 0** (62 v2 checks + 68 C2c/C2d/C2e/C2f + 34 C2g + 32 C2h), as recorded
+   in §8 and §8a of this file and in `ARTIFACT_MANIFEST.md`. "107" was an
+   intermediate count. **This is not a new test execution** — it restates the
+   result already recorded.
+3. **The "Latest approved Git checkpoint `84d9e145…`" line is superseded.** The
+   published checkpoint is **`4cad12b16494e1a9ae2a50249eaefc64dd546b60`**
+   (`docs(t6): reconcile Group-R preflight evidence and Group-L verification`),
+   equal to `origin/main`, **0 ahead / 0 behind**. `84d9e145…` remains the
+   correct **GitHub baseline for the Group-L execution**.
+4. **The "Exact next action" line is DONE.** The PASS documentation was
+   committed and pushed (`61cc1a4`, then `7c1d525`, `029bf0f`, `4cad12b`).
+
+### 2. Group-R harness — delivered, committed, pushed; NOT EXECUTED
+
+- **Eight commits** `a11a118` → `1535f9a`; **4 files, +7,009/−0**:
+  - `test-harness/t6-checkpoint/t6-group-r-runner.mjs` — **121,465 B / 2,772
+    lines** — `b4184ac78e32c19d5496f2afaa4625662b55c9c4d8a2ed167bb76755075665cd`
+  - `test-harness/t6-checkpoint/t6-group-r-runner-tests.mjs` — **157,505 B /
+    3,194 lines** —
+    `df811af43924efb2d3facb9edba01a1fd6b0e7df00eaf543dcdc72e38fb23af8`
+  - `test-harness/t6-checkpoint/t6-group-r-harness.sql` — **51,860 B / 1,035
+    lines** — `6de5323d87b8c7a104365393bfc0fa5c9af98482a0701465a122ef704276507e`
+  - `test-harness/harness-registry.mjs` — **+8 lines** (one `LIVE_HARNESSES`
+    entry and one `LIVE_SQL_HARNESSES` entry) —
+    `c0fc498a586f03f21af138eee7efdd5695d3a61aa3964dfb83ed85d2b8c47c7a`
+- Line counts are **total** lines including blanks; they sum to 7,001, plus 8
+  registry lines = the 7,009 total.
+- **No npm script references either artifact.** A Node run first passes through
+  `test-harness/live-guard.mjs` (`requireLiveAuthorization`,
+  `assertNonProductionTarget`), which refuses an unauthorized run and any target
+  that is not the TEST project (production is always refused). The **port**
+  guards live in the runner: `TRANSACTION_POOLER_PORT = 6543` and
+  `LOCAL_LAB_PORT = 15432` are both refused.
+- The eight `env: "R"` matrix rows (`T6-R01`–`T6-R08`) **predate** this delivery
+  (matrix last changed at `ed5e212`, byte-identical at HEAD) and are **not**
+  part of the +7,009.
+- **`T6-R01`–`T6-R08` have never been executed. Status: NOT RUN.**
+
+### 3. Group-R preflight-only rehearsals — three attempts, all BLOCKED
+
+Each manifest's `evidenceSha256` was recomputed on 2026-10-22 and **matches**
+its `t6-group-r-results.jsonl`:
+
+| # | runId (UTC) | Bundle | psql exit | Evidence SHA-256 (verified) |
+|---|---|---|---|---|
+| 1 | `2026-10-21T17:12:52.849Z` | `t6-group-r-preflight-20261021-224201` | `2` | `160bce1ff6f76f89fc14f106175144a0e74b62a9ba395fdc917c7cb4a3348646` |
+| 2 | `2026-10-22T04:12:29.623Z` | `t6-group-r-preflight-20261022-094207` | `2` | `ba9115919e20e72ab18da22da028eff4372e09961ccb561270043049116bbe94` |
+| 3 | `2026-10-22T04:40:28.669Z` | `t6-group-r-preflight-20261022-101004` | `3` | `efe58ce2c6f0de1c7daee4a3b39a357b73830a05de9ac982e77920b206ceb24d` |
+
+- Each: **PASS 0 / FAIL 0 / BLOCKED 8 / NOT RUN 0**, `preflight.ok: false`,
+  `residueGate: "NOT RUN"`, `statementsIssued: 1`, `forbiddenStatements: 0`, and
+  the v2 fingerprint **never computed** (`expected a85fea64…9aef`,
+  `computed: null`).
+- Classification: attempts 2 and 3 record **`unknown`**; attempt 1 records no
+  classifier. The cause is **unresolved** in all three. The manifests
+  record **no runner commit/SHA**, so build attribution is **inferred from
+  timestamps only**.
+- Bundles live under `D:\SLMM-T6-EVIDENCE\`; the evidence files are retained and
+  were **not** modified.
+
+### 4. Runner unit tests: 169/169 reported — UNVERIFIED
+
+169 is a **static** top-level `test()` count in
+`t6-group-r-runner-tests.mjs` (0 `describe`, 0 skip/todo). **No execution
+artifact** (TAP, log or report) exists in the repository or under
+`D:\SLMM-T6-EVIDENCE`, so **no pass is claimed**.
+
+### 5. Evidence gaps recorded
+
+- `test-harness/t6-checkpoint/t6-checksums.txt` has **15** entries and **does
+  not pin** the three Group-R artifacts, `t6-runner-candidate-v3.ps1` (the
+  wrapper that produced the Group-L PASS) or `t6-runner-candidate-v2.ps1`.
+- `t6-deadlock-repro.ps1` and `t6-runner-candidate-v2.ps1` are documented in
+  `ARTIFACT_MANIFEST.md` but remain **untracked** in Git.
+- No offline regression has been run since 2026-10-17; **578/578 across 19
+  suites is historical**, and the registry's **21** suites have **no verified
+  complete total**.
+
+### 6. Not run in this pass
+
+No test, SQL, PostgreSQL, Supabase, R2, Cloudflare, build or deploy operation;
+no commit or push. Documentation correction only.

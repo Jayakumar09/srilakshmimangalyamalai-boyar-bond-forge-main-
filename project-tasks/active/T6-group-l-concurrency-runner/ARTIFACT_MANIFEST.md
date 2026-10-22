@@ -6,6 +6,15 @@
 
 ## 1. Current state (2026-10-21) § RECOVERED; FIVE EXECUTION ATTEMPTS; GROUP-L VERIFIED PASS (see §2)
 
+> **Correction (2026-10-22):** the heading above counted only the **five**
+> attempts known on 2026-10-20. Two more Group-L attempts followed — 2026-10-21
+> 09:01 IST (**FAIL**, exit 1) and 10:06 IST (**PASS**, exit 0) — and **three
+> Group-R preflight-only rehearsals** were later attempted (2026-10-21 22:42,
+> 2026-10-22 09:42 and 10:10 IST), all **BLOCKED**. The Group-L PASS record is
+> the "Execution record (2026-10-21 ~10:06 IST)" **in this section**, not §2;
+> §2 is "Related external state". The heading and the earlier sections are
+> retained unchanged as history.
+
 The original artifacts lived in the **external, ephemeral** directory
 `%TEMP%\opencode\t6-prep` and were **not tracked by Git**. On 2026-10-20 the
 host rebooted (07:24 IST) and TEMP cleanup destroyed that directory, together
@@ -225,6 +234,14 @@ initdb/pg_ctl defaults.
 | Static validation | PowerShell AST parse: **0 errors / 15442 tokens**; `-SelfTest`: **196/196 PASS, exit 0** (the 62 v2 checks preserved + 68 new C2c/C2d/C2e/C2f checks + 34 new C2g parameter-binding checks + 32 new C2h main-path-initialisation and parameter-binding checks) |
 | Mutation testing | 8/8 mutants **killed** (digest presence, digest validity, digest-vs-evidence, evidence byte-identity, capture-trust predicate, Node-step gate removal, Node-step gate always-throws, gate ordering), plus 4/4 C2h mutants **killed** (initialisation removed, initialisation moved after the main path, initialisation made conditional, initialisation given the wrong type) |
 | Status | **CANDIDATE v3 — awaiting review and a fresh checksum approval** |
+
+> **Correction (2026-10-22):** the `Status` row above was accurate when written.
+> Candidate v3 was subsequently **approved, committed and pushed at `84d9e145`**,
+> and the wrapper was executed **three** times: 2026-10-20 22:28 IST (**FAIL**,
+> exit 1; original runner `e1719be2…`), 2026-10-21 09:01 IST (**FAIL**, exit 1;
+> C9 runner `0595bda3…`) and 2026-10-21 10:06 IST (**PASS**, exit 0; C10 runner
+> `9f06b1c3…`). The subsection heading's "EXECUTED ONCE" was accurate on
+> 2026-10-20 only; the row is retained as history.
 
 **Three corrections.** The first two are the defects found by the final
 offline safety review of candidate v2; the third was found while validating
@@ -473,6 +490,12 @@ returning **wrapper exit 0 / verdict PASS** (see the execution record below).
 **Remaining gates (each needs its own approval and its own target):**
 - Group-R (`T6-R01`-`T6-R08`): TEST Supabase, two concurrent psql sessions,
   **ZERO-COMMIT rollback-only**. Not executed.
+- **Group-R update (2026-10-22):** the harness is **implemented, committed and
+  pushed** (`a11a118`→`1535f9a`; see the "Group-R harness (2026-10-21/22)"
+  subsection below) and remains **NOT EXECUTED**. Three preflight-only
+  rehearsals against TEST `nqadtfqyurkpmxcodswc` were **BLOCKED** (psql exit
+  2/2/3, classification `unknown`), each with 8 BLOCKED / 0 executed and the
+  fingerprint never computed. **Not PASS, not FAIL.**
 - Group-C (`T6-C01`-`T6-C03`): TEST Supabase, committed synthetic fixtures +
   explicit cleanup + residue proof -- still **BLOCKED** pending separate
   operator approval. Not executed.
@@ -509,6 +532,77 @@ behaviour, and the **overall T6 program remains INCOMPLETE** (the matrix
 defines 23 cases; 8 R-cases and 3 C-cases are unexecuted). The earlier **FAIL**
 outcomes recorded in the sections below are retained as history and are **not**
 relabelled.
+
+### Group-R harness (2026-10-21/22) — DELIVERED, COMMITTED, PUSHED; **NOT EXECUTED**
+
+Eight commits `a11a118` → `1535f9a` delivered the hosted Group-R harness.
+`git diff --shortstat a11a118^..1535f9a` = **4 files changed, 7,009
+insertions(+), 0 deletions**. Each hash below was recomputed from the working
+tree on 2026-10-22.
+
+| # | File | Bytes | **Total lines** | SHA-256 |
+|---|---|---|---|---|
+| 1 | `test-harness/t6-checkpoint/t6-group-r-runner.mjs` | 121,465 | **2,772** | `b4184ac78e32c19d5496f2afaa4625662b55c9c4d8a2ed167bb76755075665cd` |
+| 2 | `test-harness/t6-checkpoint/t6-group-r-runner-tests.mjs` | 157,505 | **3,194** | `df811af43924efb2d3facb9edba01a1fd6b0e7df00eaf543dcdc72e38fb23af8` |
+| 3 | `test-harness/t6-checkpoint/t6-group-r-harness.sql` | 51,860 | **1,035** | `6de5323d87b8c7a104365393bfc0fa5c9af98482a0701465a122ef704276507e` |
+| 4 | `test-harness/harness-registry.mjs` (modified, **+8 lines**) | 4,816 | 98 | `c0fc498a586f03f21af138eee7efdd5695d3a61aa3964dfb83ed85d2b8c47c7a` |
+
+- **Line counts are total** lines including blanks — they are **not** the
+  non-blank counts (2,591 / 2,971 / 963) quoted in some earlier summaries. They
+  sum to 7,001, and +8 registry lines gives the +7,009 total.
+- **Registry:** the runner is registered in `LIVE_HARNESSES` (`services:
+  ["supabase-test-postgres"]`) and the SQL in `LIVE_SQL_HARNESSES`. **Neither is
+  referenced by any npm script.** A Node run first passes through
+  `test-harness/live-guard.mjs` (`requireLiveAuthorization`,
+  `assertNonProductionTarget`), which refuses an unauthorized run and any target
+  that is not the TEST project (production is always refused). The **port**
+  guards live in the runner itself: `TRANSACTION_POOLER_PORT = 6543` (no session
+  semantics) and `LOCAL_LAB_PORT = 15432` (the disposable local lab) are both
+  refused, per `t6-group-r-runner.mjs` lines 108-109 and 314.
+- **Case matrix:** the eight `env: "R"` rows (`T6-R01`–`T6-R08`) in
+  `t6-case-matrix.json` **predate this delivery** — the matrix was last changed
+  at `ed5e212` and its blob is byte-identical at HEAD — so they define the
+  Group-R cases but are **not** part of the +7,009.
+- **Status: NOT EXECUTED.** `T6-R01`–`T6-R08` have **never run**.
+
+**Preflight-only rehearsals — three attempts, all BLOCKED (explicitly not
+PASS).** Each manifest's `evidenceSha256` was recomputed on 2026-10-22 and
+**matches** its `t6-group-r-results.jsonl`:
+
+| # | runId (UTC) | Bundle | psql exit | Evidence SHA-256 (verified) |
+|---|---|---|---|---|
+| 1 | `2026-10-21T17:12:52.849Z` | `D:\SLMM-T6-EVIDENCE\t6-group-r-preflight-20261021-224201\` | `2` | `160bce1ff6f76f89fc14f106175144a0e74b62a9ba395fdc917c7cb4a3348646` |
+| 2 | `2026-10-22T04:12:29.623Z` | `D:\SLMM-T6-EVIDENCE\t6-group-r-preflight-20261022-094207\` | `2` | `ba9115919e20e72ab18da22da028eff4372e09961ccb561270043049116bbe94` |
+| 3 | `2026-10-22T04:40:28.669Z` | `D:\SLMM-T6-EVIDENCE\t6-group-r-preflight-20261022-101004\` | `3` | `efe58ce2c6f0de1c7daee4a3b39a357b73830a05de9ac982e77920b206ceb24d` |
+
+- **Outcome, identical in all three:** `caseOutcomes` **PASS 0 / FAIL 0 /
+  BLOCKED 8 / NOT RUN 0** (all 8 records `verdict: "BLOCKED"` for
+  `T6-R01`–`T6-R08`); `preflight.ok: false`; `residueGate: "NOT RUN"`;
+  `statementsIssued: 1`; `forbiddenStatements: 0`.
+- **Reason:** `the preflight session failed: pf: psql exited (2)` (attempt 1, no
+  classifier); `pf: psql exited (2) (unknown)` (attempt 2);
+  `pf: psql exited (3) (unknown)` (attempt 3). Attempts 2 and 3 therefore
+  classify the failure as **`unknown`**; attempt 1 records no classifier, and the
+  cause is **unresolved** in all three.
+- **Fingerprint never validated:** contract `t6-group-r-fingerprint/v2`,
+  `expected a85fea6468487830a4ca9afc268d9aef`, `computed: null`,
+  `functionCount: null`, `serverVersion: null`, `baselineServerVersion: 17.11`.
+- **Credentials:** `credentialSource: "operator-variable"`,
+  `ambientPasswordIgnored: false`; no production target was contacted.
+- **Build attribution is inferred, not evidenced:** the manifests record the
+  harness path and `runId` but **no runner commit and no runner SHA-256**, so
+  attribution to `67109f4` / `18c2406` / `d2a34e3` rests on the timestamps alone.
+- **Runner unit tests: `169/169` reported — UNVERIFIED.** 169 is a static
+  top-level `test()` count in the runner-tests file (0 `describe`, 0 skip/todo).
+  **No execution artifact** (TAP, log or report) exists in the repository or
+  under `D:\SLMM-T6-EVIDENCE`, so no pass is claimed.
+
+**Evidence gaps recorded for these artifacts (not fixed here):**
+`test-harness/t6-checkpoint/t6-checksums.txt` still holds **15** entries and
+**does not pin** any of the three Group-R files, `t6-runner-candidate-v3.ps1`
+(the wrapper that produced the Group-L PASS) or `t6-runner-candidate-v2.ps1`;
+and `t6-deadlock-repro.ps1` and `t6-runner-candidate-v2.ps1` are documented but
+remain **untracked** in Git.
 
 ### Execution record (2026-10-20) - candidate v3 was executed once and returned FAIL
 
@@ -556,6 +650,16 @@ candidate evidence directories `t6-run-20261020-111611-35af3ca5` and
   them is **not** an approval to run them. T6 remains **BLOCKED** pending
   recovered-artifact safety verification and a fresh, separate execution
   approval.
+  - **Correction (2026-10-22):** the paragraph above was true on 2026-10-20 and
+    is **superseded**. Recovered-artifact safety verification was completed, and
+    approved candidates were subsequently executed: the C10 runner returned
+    **PASS 12/12** in a **local disposable PostgreSQL 18 lab** on 2026-10-21 at
+    approximately 10:06 IST (see the execution record in §1). **T6 is ACTIVE /
+    INCOMPLETE, not BLOCKED** — Group-L is **closed**; Group-R is **implemented
+    but NOT EXECUTED** (`T6-R01`–`T6-R08` NOT RUN; three preflight-only
+    rehearsals BLOCKED); Group-C, R2 and scheduler integration remain separate
+    pending gates. **Hosted Supabase TEST and production behaviour remain NOT
+    VERIFIED.**
 - These files are **not** run from `test-harness/t6-checkpoint/`. The
   orchestrator resolves its preparation directory as `<TEMP>\opencode\t6-prep`
   and its laboratory root as `<TEMP>\opencode\t6lab`; a future run would copy
