@@ -1,7 +1,7 @@
 # SHA-256 byte-identity pins only. Listing a file does NOT imply execution, approval, or PASS; T6-R01–T6-R08 remain NOT RUN.
 ccd2b2076bf21307c689aef72b3233123d04d849329ba89559217606ecf7e237  evidence/T6LAB_OWNER-transcript-2026-10-19.txt
 5f13f2870a675dae5d61453e0f0007a93f90f90e660c88e016621e9c8eea77b3  evidence/t6-lab-pg-log-transcript-2026-10-19.txt
-6257309c80caa8787d7fb407857f8314d311e1c8395cb672113b916d53d6e800  README.md
+714451175ea030945ad8f4ad1918882ec228cee90cf87c43c516c9471100b3b0  README.md
 66edf661e1d70a935eee793ed0d24e0b245d5af78dc8d36fb81200cf534cd92e  slmm-storage-deletion-t6-residue.sql
 057ea3fa8e73132061efacb90e2d7c6660d2a8326933d8a572eb5f757a5d7add  T6_LAB_DESIGN.md
 945ac2e88cd950ca35f8988440f4b879c0321b25aacd7e78bed8595173718ffe  T6_LAB_IMPLEMENTATION_PLAN.md

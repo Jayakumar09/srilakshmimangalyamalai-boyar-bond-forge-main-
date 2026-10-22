@@ -25,6 +25,25 @@ access. No production access. Not connected to Lovable.
 - Before any execution, the artifacts must be re-verified against
   `t6-checksums.txt` and re-approved in a separate, explicit approval step.
 
+> **Correction - 2026-10-22 (supersedes the "Status" bullets above; the original
+> text is retained as history):**
+>
+> - **Group-L local concurrency is VERIFIED PASS 12/12** (2026-10-21 10:06 IST,
+>   wrapper exit 0, `T6-L01`-`T6-L11` including `L08a`/`L08b`, zero residue;
+>   evidence `D:\SLMM-T6-EVIDENCE\t6-run-20261021-100645-9d2f02f9\`, recorded as
+>   `TEST_EVIDENCE.md` E-010). **Local lab only** - it does not verify any
+>   Supabase TEST or production behaviour.
+> - **T6 is ACTIVE / INCOMPLETE, not BLOCKED.** Group-R (`T6-R01`–`T6-R08`) is
+>   implemented, but all three preflight-only rehearsals were **BLOCKED** (never
+>   PASS, never FAIL). **`T6-R01`–`T6-R08` remain NOT RUN.** Group-C, R2 and
+>   scheduler gates remain separate pending gates.
+> - **`t6-checksums.txt` pins recovered *and* later verified artifacts** - the
+>   original recovered set plus the three Group-R files and
+>   `t6-runner-candidate-v3.ps1` (19 entries). **A checksum records byte identity
+>   only - never execution, approval or PASS.**
+> - This directory remains **not an execution record**, and nothing in it is
+>   approved to run.
+
 ## Files
 
 | File | Purpose | Status |

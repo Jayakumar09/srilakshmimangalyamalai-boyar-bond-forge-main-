@@ -993,3 +993,18 @@ artifact** (TAP, log or report) exists in the repository or under
 
 No test, SQL, PostgreSQL, Supabase, R2, Cloudflare, build or deploy operation;
 no commit or push. Documentation correction only.
+
+---
+
+> **Correction - 2026-10-22 (later): supersedes the first bullet of
+> "### 5. Evidence gaps recorded" above.** `t6-checksums.txt` now holds **19**
+> entries and pins four files added at commit `ee4ea19`: the three Group-R
+> artifacts (`t6-group-r-runner.mjs` `b4184ac7.65cd`,
+> `t6-group-r-runner-tests.mjs` `df811af4.3af8`, `t6-group-r-harness.sql`
+> `6de5323d.507e`) and `t6-runner-candidate-v3.ps1` (`30e31c1d.b97c`). Those
+> pins record **byte identity only** - they imply no execution, approval or
+> PASS. `t6-runner-candidate-v2.ps1` (`b5a90be2.5bce`) and
+> `t6-deadlock-repro.ps1` (`865f3abc.d88c`) remain **untracked and unpinned**;
+> the second bullet above therefore still stands. **Group-R `T6-R01`–`T6-R08`
+> remain NOT RUN**; the three preflight-only rehearsals were **BLOCKED**, never
+> PASS. This entry is appended; no historical line was rewritten.

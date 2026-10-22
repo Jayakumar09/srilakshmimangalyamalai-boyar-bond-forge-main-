@@ -604,6 +604,18 @@ PASS).** Each manifest's `evidenceSha256` was recomputed on 2026-10-22 and
 and `t6-deadlock-repro.ps1` and `t6-runner-candidate-v2.ps1` are documented but
 remain **untracked** in Git.
 
+> **Correction (2026-10-22, later):** the gap recorded above is **partly
+> closed**. `t6-checksums.txt` now holds **19** entries (not 15) and **does
+> pin** the three Group-R artifacts - `t6-group-r-runner.mjs`
+> (`b4184ac7.65cd`), `t6-group-r-runner-tests.mjs` (`df811af4.3af8`) and
+> `t6-group-r-harness.sql` (`6de5323d.507e`) - and `t6-runner-candidate-v3.ps1`
+> (`30e31c1d.b97c`), the wrapper that produced the Group-L PASS (commit
+> `ee4ea19`). These pins record **byte identity only** and do **not** imply
+> execution, approval or PASS. The two untracked scripts -
+> `t6-deadlock-repro.ps1` (`865f3abc.d88c`) and `t6-runner-candidate-v2.ps1`
+> (`b5a90be2.5bce`) - remain **untracked and deliberately unpinned**, so that
+> half of the gap stands. **Group-R `T6-R01`–`T6-R08` remain NOT RUN.**
+
 ### Execution record (2026-10-20) - candidate v3 was executed once and returned FAIL
 
 One launcher attempt occurred at 22:28:34 IST
