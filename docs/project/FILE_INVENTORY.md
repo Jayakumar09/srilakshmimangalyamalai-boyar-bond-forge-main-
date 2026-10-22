@@ -195,3 +195,48 @@ The snapshots and addenda above are retained as history. Dated changes since:
 - **Tracking gap (unchanged):** `scripts/check-build-target.mjs`, `test-harness/slmm-elite-code-tests.mjs`, and the two new suites remain untracked — a fresh clone would lack them.
 
 > **Read-only addendum. No file was deleted, moved, or archived.**
+
+---
+
+## Addendum — 2026-10-17 (checkpoint `9d810a9` tracked the flagged tooling; read-only)
+
+> **Supersedes the "untracked"/"staged" statements in the two addenda above** (which were written immediately before the checkpoint was created, so they describe the pre-commit state).
+
+- **Commit `9d810a9`** (`test(offline): add quota SQL-contract and upload-cap suites; track build-target gate`) **tracked** the files the addenda above flagged as untracked:
+  - `A` — `scripts/check-build-target.mjs`, `.config/nitro.config.mjs`, `test-harness/slmm-elite-code-tests.mjs`, `test-harness/slmm-quota-sql-contract-tests.mjs`, `test-harness/slmm-upload-cap-tests.mjs`, and the **six** `docs/project/*.md` (now **committed**, no longer merely staged).
+  - `M` — `test-harness/harness-registry.mjs` (offline suite count 13 → **15**).
+  - **Consequence:** the "Tracking gap" notes above are **RESOLVED** — a fresh clone now contains the offline-runner dependencies (`npm test` runs 15 suites; `npm run build:test` resolves its gate).
+- **Untracked count (2026-10-17, after `9d810a9`):** **69** (`git ls-files --others --exclude-standard`), down from 74. `git status` reports **0 deletions**; nothing was moved or archived.
+- **Still untracked (KEEP):** `src/assets/sri-lakshmi-logo.png`; five `supabase/migrations/*.sql` (the quota migration `20260926210000_document_upload_quota_reservation.sql` **is** tracked); six `test-harness/*-verification.sql`; the `.tmp-audit/` and `.tmp-d2-scratch/` evidence trees; the root `*.sql` files and `E2E_PRODUCTION_CONTROLLED_UPLOAD_REPORT.md`.
+- **REMOVE candidates (still unapproved):** `temp.txt`, `src/lib/storage.functions.ts.tmp`.
+
+> **Read-only addendum. No file was deleted, moved, or archived.**
+
+---
+
+## Addendum — 2026-10-17 (security commits; authority = `92804e0`; read-only)
+
+- **Three security commits** landed after the checkpoint addendum above — `0bb3836`, `4e9e1c0`, `92804e0` (HEAD). They **tracked** `src/lib/storage-key.ts`, `supabase/migrations/20261017120000_document_storage_reference_state.sql`, `supabase/migrations/20261017130000_storage_reference_state.sql`, and three offline suites (`slmm-storage-key-tests.mjs`, `slmm-document-reference-contract-tests.mjs`, `slmm-storage-reference-contract-tests.mjs`). None is in the untracked set.
+- **Untracked count (2026-10-17, HEAD `92804e0`):** **71** (`git ls-files --others --exclude-standard`). `git status` reports **0 deletions**; nothing was moved or archived.
+- **In-progress (preserved; NOT committed by this task):** `test-harness/harness-registry.mjs` is modified in the working tree and now references `test-harness/slmm-storage-deletion-sql-contract-tests.mjs`, which is **untracked** — a working-tree tracking gap for that one suite until it is committed.
+- **REMOVE candidates (still unapproved):** `temp.txt`, `src/lib/storage.functions.ts.tmp`.
+
+> **Read-only addendum. No file was deleted, moved, or archived.**
+
+---
+
+## Addendum — 2026-10-22 (reconciliation to HEAD `1535f9a`; read-only)
+
+> **Supersedes only the current-state wording of the 2026-10-17 addenda above.**
+> Their text is retained unchanged as history. No file was deleted, moved, or
+> archived.
+
+- **Git state:** HEAD and `origin/main` are **identical at `1535f9aa29c5231b5161df9535fbdf7d27c33cbf`** — **0 ahead / 0 behind**. The two 2026-10-17 addenda above are **historical snapshots** (pre-checkpoint, pre-push); their "69/71 untracked" and "0 staged / not pushed" framing is superseded.
+- **Tracking state — RESOLVED:** `test-harness/harness-registry.mjs` and `test-harness/slmm-storage-deletion-sql-contract-tests.mjs` are now **tracked and clean** (committed in the `11cbfdc9` lineage). The "in-progress / untracked" statement in the security addendum above is **superseded**.
+- **Recovered SQL harnesses now tracked:** the `test-harness/*verification*.sql` harnesses are **tracked** (recovered byte-exact in `11cbfdc9`) — **seven** such files exist and **zero** untracked `.sql` remain under `test-harness/`. The "six untracked `*-verification.sql`" statement above is **superseded**.
+- **Untracked count re-measured (2026-10-22, HEAD `1535f9a`): 65** — was 69 → 71 in the addenda above. Breakdown: `.tmp-audit/` 26; `.tmp-d2-scratch/` 10; `supabase/migrations/*.sql` 5; root `*.sql`/report files 20; `src/` 2; `test-harness/` 2. `git status` reports **0 deletions**.
+- **Offline suite count is 21** (`OFFLINE_SUITES` at HEAD), not the "15"/"19" figures above; **no fresh complete offline run** has been performed since 2026-10-17.
+- **Still untracked (KEEP, unchanged):** `src/assets/sri-lakshmi-logo.png`; the five `supabase/migrations/*.sql`; `.tmp-audit/`; `.tmp-d2-scratch/`; the root `*.sql` files and `E2E_PRODUCTION_CONTROLLED_UPLOAD_REPORT.md`; `test-harness/t6-checkpoint/t6-deadlock-repro.ps1` and `test-harness/t6-checkpoint/t6-runner-candidate-v2.ps1`.
+- **REMOVE candidates (still unapproved — NOT deleted):** `temp.txt`, `src/lib/storage.functions.ts.tmp`. Removal still requires explicit per-file user approval (compare the `.tmp` against `src/lib/storage.functions.ts` first).
+
+> **Read-only addendum. No file was deleted, moved, or archived.**

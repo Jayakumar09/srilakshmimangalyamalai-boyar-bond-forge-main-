@@ -173,3 +173,32 @@ The rows/notes above are retained as history. Superseding results for the curren
   - `wrangler.toml` -> unchanged (empty `git status --porcelain -- wrangler.toml`).
 - **Level:** local-only (offline). The checker performs read-only filesystem access; no remote calls.
 - **Result / interpretation:** The current `.output` is a **production** artifact and the gate correctly refuses it for `test`. **Do not deploy `.output` to TEST.** `supabase/config.toml` targets production, so any Supabase CLI command against this working tree would point at production until an isolated TEST config is decided. Both are flagged only; **nothing was changed**. Evidence: `PROJECT_STATUS.md` §11; `PENDING_WORK.md` #10.
+
+---
+
+## E-008 — Security hardening: storage-key + reference-integrity suites (run 2026-10-17, later still)
+
+> **Supersession note — 2026-10-22:** this entry is the **original 2026-10-17
+> record** made at checkpoint `92804e0`. The bullets below are retained
+> unchanged; only their *current-state* wording is superseded, by the dated note
+> at the end of this entry. **The measured result (578/578 across 19 suites)
+> stands as a historical 2026-10-17 result** — not as the current figure.
+
+- **Context:** three security commits landed after E-007 — `0bb3836` (reject noncanonical R2 storage keys), `4e9e1c0` (verify document references before R2 deletion), `92804e0` (protect non-document R2 references). HEAD is now `92804e0`; `origin/main` is **12 behind**. The regression below was observed on the **current working tree** (HEAD `92804e0` **plus** uncommitted in-progress changes described next).
+- **Uncommitted in-progress (NOT mine; preserved):** `test-harness/harness-registry.mjs` (modified) adds `test-harness/slmm-storage-deletion-sql-contract-tests.mjs`, which is **untracked**. So the working tree runs **19** suites, whereas pure HEAD (registry without that entry) would run **18**.
+- **Command / outcome:** `npm run test:offline` -> **exit 0**: `TOTAL tests=578 pass=578 fail=0 skip=0 suites=19 failing_suites=0`; `npx tsc --noEmit` -> **exit 0**.
+- **Per suite (working tree; all `fail=0 skip=0`):** image-opt 63; capture 7; delivery-mock 108; elite-code 44; safety 44; dashboard-upload 12; delete-upload 58; document-reference-contract 6; storage-reference-contract 10; storage-deletion-sql-contract 11; storage-key 5; orphan-cleanup 10; quota-release 15; screened-pair 13; upload-cap 12; sql-contract 69; quota-sql-contract 28; harness-safety 17; rest-baseline 46.
+- **Files added by the three commits (tracked):** `src/lib/storage-key.ts`; `supabase/migrations/20261017120000_document_storage_reference_state.sql`, `supabase/migrations/20261017130000_storage_reference_state.sql`; suites `slmm-storage-key-tests.mjs`, `slmm-document-reference-contract-tests.mjs`, `slmm-storage-reference-contract-tests.mjs`.
+- **Level:** local-only (offline). No network, database, credentials, or `.env` access.
+- **Result:** PASS. **Supersedes** E-006's 497/497 across 15 suites.
+- **Limit:** the reference-integrity suites are static/contract tests over source and migration text; runtime R2/DB behaviour remains UNVERIFIED without an authorized live run.
+
+> **Supersession note — 2026-10-22 (reconciliation to HEAD `1535f9a`).** The
+> bullets above are preserved as the original 2026-10-17 record. The following
+> supersede only their current-state statements.
+
+- **Git state (supersedes "HEAD is now `92804e0`; `origin/main` is 12 behind"):** `92804e0` is an **ancestor** of the current HEAD `1535f9aa29c5231b5161df9535fbdf7d27c33cbf`; `origin/main` is **identical to HEAD (0 ahead / 0 behind)** — everything through `1535f9a` is pushed. The "12 behind" figure is a historical 2026-10-17 count.
+- **578/578 across 19 suites is a HISTORICAL result:** measured **2026-10-17 at checkpoint `92804e0`**. It is retained as evidence of that run and must not be quoted as the current total.
+- **Tracking state (supersedes the "Uncommitted in-progress" bullet):** `test-harness/harness-registry.mjs` and `test-harness/slmm-storage-deletion-sql-contract-tests.mjs` are now **tracked and clean** (committed in the `11cbfdc9` lineage). The 19-vs-18-suite distinction described above no longer applies to HEAD.
+- **Current registry = 21 suites, but NOT freshly run:** `OFFLINE_SUITES` at HEAD `1535f9a` lists **21** suites. Two later suites are **not covered** by E-008 — `test-harness/slmm-storage-fence-sql-contract-tests.mjs` (added `1a39317`) and `test-harness/slmm-storage-scheduler-tests.mjs` (added `cdff940`). **No fresh complete `npm run test:offline` run has been performed since 2026-10-17**, so neither the current test total nor a current pass/fail verdict is established here.
+- **Level unchanged:** local-only (offline). No network, database, credentials, or `.env` access; runtime R2/DB behaviour remains UNVERIFIED.
