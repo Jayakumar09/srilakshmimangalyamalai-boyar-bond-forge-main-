@@ -9,7 +9,9 @@
 > production access/changes. Not connected to Lovable; do not reconnect it.
 >
 > _Last updated: 2026-10-22 (Group-R harness lineage + three failed preflight-only
-> rehearsals recorded; evidence reconciliation to HEAD `7c1d525`)._
+> rehearsals recorded; evidence reconciliation to HEAD `029bf0f`, plus the
+> Group-R line-count/matrix-provenance correction and `TEST_EVIDENCE.md`
+> entries E-009/E-010)._
 
 ## 1. Verified project state (measured this session)
 
@@ -17,8 +19,8 @@
 |---|---|
 | Repository | `D:\DevProjects\Working\srilakshmimangalyamalai(boyar-bond-forge-main)` |
 | Branch | `main` |
-| HEAD | `7c1d52537e0b66ee29feeebc53e63dbc2492ccae` — `docs: reconcile historical T6 security evidence to checkpoint 1535f9a` (parent `1535f9a`) |
-| `origin/main` | `7c1d52537e0b66ee29feeebc53e63dbc2492ccae` — **in sync (0 ahead / 0 behind)**; authoritative GitHub `main` verified equal via `git ls-remote` (2026-10-22) |
+| HEAD | `029bf0f967af9b67d2d6572fae31b35960043f47` — `docs(t6): reconcile Group-R harness history and current handover` (parent `7c1d525`) |
+| `origin/main` | `029bf0f967af9b67d2d6572fae31b35960043f47` — **in sync (0 ahead / 0 behind)**; authoritative GitHub `main` verified equal via `git ls-remote` (2026-10-22) |
 | Working tree | **37 modified tracked** · **65 untracked** · **0 staged** · **0 deletions** (measured 2026-10-22 — informational, not an immutable count) |
 | Preserve | The 37 modified + 65 untracked entries are in-progress work — **preserve; never reset/clean/force-push**. |
 
@@ -31,7 +33,10 @@
 > `SESSION_HISTORY.md`, was committed in that lineage. The 2026-10-22
 > snapshot is 37 modified / 65 untracked; commit `7c1d525` published three
 > documentation files only — `FILE_INVENTORY.md`, `PENDING_WORK.md`,
-> `TEST_EVIDENCE.md` — and touched no source, SQL, harness or config file.)
+> `TEST_EVIDENCE.md` — and touched no source, SQL, harness or config file. The
+> later commit `029bf0f` published the T6 documentation reconciliation
+> (`CURRENT_HANDOVER.md`, `SESSION_HISTORY.md`, `TASK_INDEX.md`), again
+> documentation only.)
 
 ## 2. Active task
 
@@ -98,10 +103,16 @@ files, **+7,009 / −0** net lines:
 | `d2a34e3` | `fix(t6): use documented PostgreSQL connection options in Group-R` |
 | `1535f9a` | `fix(t6): classify Group-R SQL script failures safely` |
 
-Files: `t6-checkpoint/t6-group-r-runner.mjs` (2,591 lines, fail-closed
-ZERO-COMMIT runner), `t6-checkpoint/t6-group-r-runner-tests.mjs` (2,971 lines,
-hermetic unit tests), `t6-checkpoint/t6-group-r-harness.sql` (963 lines), and
-the eight `env: "R"` rows in `t6-checkpoint/t6-case-matrix.json`. The runner is
+Files — **exactly four files changed** by these commits: `t6-checkpoint/t6-group-r-runner.mjs`
+(2,772 lines, fail-closed **ZERO-COMMIT** runner), `t6-checkpoint/t6-group-r-runner-tests.mjs`
+(3,194 lines, hermetic unit tests), `t6-checkpoint/t6-group-r-harness.sql` (1,035
+lines) and `test-harness/harness-registry.mjs` (**+8 lines**: one `LIVE_HARNESSES`
+entry and one `LIVE_SQL_HARNESSES` entry). Line counts are **total** lines
+(blank lines included); they sum to 7,001, and +8 registry lines gives the
++7,009 total. The eight `env: "R"` rows (`T6-R01`–`T6-R08`) in
+`t6-checkpoint/t6-case-matrix.json` **predate this delivery** — the matrix was
+last changed at `ed5e212` and is byte-identical at HEAD — so they define the
+Group-R cases but were **not** added by these commits. The runner is
 registered in `LIVE_HARNESSES` (`services: ["supabase-test-postgres"]`) and the
 SQL in `LIVE_SQL_HARNESSES`. **No npm script references either**, and every run
 passes through `live-guard.mjs` (`requireLiveAuthorization`,
@@ -151,10 +162,13 @@ before any rerun.
 
 - **T6 Group-R harness (committed; not executed):** eight commits `a11a118` →
   `1535f9a` delivered the fail-closed ZERO-COMMIT Group-R runner, its hermetic
-  unit tests, the Group-R SQL harness and eight `env: "R"` matrix rows
-  (+7,009/−0 across four files; details above). Three **preflight-only**
-  rehearsals followed, all stopping at preflight with 8 BLOCKED and zero cases
-  executed; `T6-R01`–`T6-R08` remain **NOT RUN**.
+  unit tests, the Group-R SQL harness and the two registry entries in
+  `test-harness/harness-registry.mjs` (+7,009/−0 across four files; details
+  above). The eight `env: "R"` matrix rows already existed in the recovered
+  matrix (`ed5e212`) and were **not** part of this delivery. Three
+  **preflight-only** rehearsals followed, all stopping at preflight with
+  8 BLOCKED and zero cases executed (`TEST_EVIDENCE.md` E-009);
+  `T6-R01`–`T6-R08` remain **NOT RUN**.
 - **T6 Group-L local concurrency (verified PASS):** documentation committed and
   pushed to GitHub as `61cc1a4efe420f432f229c427cab6966a451007f` —
   `docs(tasks): record T6 Group-L local concurrency PASS (2026-10-21)`
@@ -183,6 +197,8 @@ before any rerun.
   exit 0, verdict PASS, digest
   `3489610fbf2105868c8aa2ab6bd60681ac0788446a816980c5cbfd424b187b0c`, zero
   residue, ownership-safe cleanup. **Local disposable PostgreSQL 18 lab only.**
+  Catalogued as `TEST_EVIDENCE.md` E-010 (digest re-verified by recomputation
+  on 2026-10-22).
 - **SQL harness recovery (2026-10-21):** six original SQL verification
   harnesses recovered **byte-exact** (each SHA-256 matches the source archive
   `SLMM_ASTRA_AUDIT_20261021.zip`, SHA-256
@@ -204,7 +220,8 @@ before any rerun.
   Evidence bundles `D:\SLMM-T6-EVIDENCE\t6-group-r-preflight-20261021-224201\`,
   `…-20261022-094207\`, `…-20261022-101004\`; each manifest's `evidenceSha256`
   re-verified against its results file. **No case was executed and no
-  concurrency behaviour is evidenced.** The reported `169/169` offline runner
+  concurrency behaviour is evidenced.** Catalogued as `TEST_EVIDENCE.md` E-009
+  (**BLOCKED — not PASS, not FAIL**). The reported `169/169` offline runner
   unit-test pass has **no artifact and remains UNVERIFIED**.
 - **Live TEST results (committed, authoritative detail in `TEST_VERIFICATION_LEDGER.md`):**
   - **T3** — storage-deletion claim RPC: PASS (2026-10-18).
@@ -262,7 +279,7 @@ is still open.
 | `docs/project/TASK_INDEX.md` | Authoritative task list + statuses. |
 | `docs/project/PROJECT_STATUS.md` | Identity, git state, TEST/prod identifiers, binding isolation policy, recovery steps. |
 | `docs/project/SESSION_HISTORY.md` | Append-only chronological session log. |
-| `docs/project/TEST_EVIDENCE.md` | Evidence catalogue (E-001 … E-008 …). |
+| `docs/project/TEST_EVIDENCE.md` | Evidence catalogue (E-001 … E-010). |
 | `docs/project/TEST_VERIFICATION_LEDGER.md` | Test verification ledger (PASS/FAIL/BLOCKED/UNVERIFIED) + live TEST addenda. |
 | `docs/project/PENDING_WORK.md` | Pending/blocked + done-historical items. |
 | `docs/project/FILE_INVENTORY.md` | Untracked/removable file classification. |
@@ -278,3 +295,4 @@ is still open.
 - **2026-10-19** — INFRA-001 reconciled after commit `806d983` was pushed to GitHub: HEAD/`origin/main` and working-tree counts refreshed (41 modified / 69 untracked); INFRA-001 recorded COMPLETED. T6 BLOCKED state and incident details unchanged.
 - **2026-10-21** — reconciled to the published checkpoint `11cbfdc9`: HEAD/`origin/main`/GitHub `main` refreshed; working-tree counts re-measured (40 modified / 65 untracked). T6 changed from **BLOCKED** to **ACTIVE — Group-L VERIFIED PASS (12/12)** with the 2026-10-21 10:06 IST local-lab execution, digest, zero residue and ownership-safe cleanup recorded; the wider T6 program (Group-R, Group-C, R2, scheduler) is recorded as **still pending**, and hosted Supabase TEST/production behaviour is recorded as **NOT VERIFIED**. The SQL harness recovery (`11cbfdc9`, six byte-exact originals + five T3/T4 registry classifications) and the 17/17 offline harness-safety result are recorded, explicitly noting the recovered SQL **has not been executed**. The Aadhaar/Passport requirement conflict is recorded as **OPEN / DEFERRED** with no approved implementation change. No prior entry was removed.
 - **2026-10-22** — reconciled to the published checkpoint `7c1d525`: HEAD/`origin/main` refreshed to `7c1d52537e0b66ee29feeebc53e63dbc2492ccae` (0 ahead / 0 behind), working-tree counts re-measured (37 modified / 65 untracked, 0 staged, 0 deletions), and it is noted that `7c1d525` published documentation only (`FILE_INVENTORY.md`, `PENDING_WORK.md`, `TEST_EVIDENCE.md`). T6 now records the **Group-R harness delivery lineage** (`a11a118` → `1535f9a`, eight commits, four files, +7,009/−0) separately from **execution**, plus **three preflight-only rehearsals** against Supabase TEST `nqadtfqyurkpmxcodswc`, each of which failed **at preflight** (`psql exited (2)`, `(2) (unknown)`, `(3) (unknown)`), recorded **8 BLOCKED / 0 cases executed**, `statementsIssued: 1`, `forbiddenStatements: 0`, and an **unvalidated** v2 fingerprint. `T6-R01`–`T6-R08` are explicitly **NOT RUN** and the preflight blocker is logged as an open risk. The offline `578/578` across **19** suites figure is re-framed as **historical (2026-10-17, `92804e0`)** because the registry now lists **21** suites, with **no current total claimed**. A previously reported **`169/169`** Group-R offline unit-test pass is recorded as **UNVERIFIED** (no log or artifact exists; 169 matches the static top-level `test()` count, which does not evidence a run). Two out-of-scope drifts are logged as risks: `PROJECT_STATUS.md` §2 staleness and missing Group-R records in the T6 task folder. No prior entry was removed or rewritten.
+- **2026-10-22 (later)** — **correction + reconciliation to the published checkpoint `029bf0f`.** HEAD/`origin/main` refreshed to `029bf0f967af9b67d2d6572fae31b35960043f47` (0 ahead / 0 behind); the working-tree counts remain 37 modified / 65 untracked / 0 staged / 0 deletions. Three corrections to the entry above are **recorded here rather than rewriting it**: (1) the Group-R artifact line counts quoted above were **non-blank** line counts mislabelled as total lines — the correct totals are **2,772** (`t6-group-r-runner.mjs`), **3,194** (`t6-group-r-runner-tests.mjs`) and **1,035** (`t6-group-r-harness.sql`), which reconciles with the +7,009 total (7,001 + 8 registry lines); (2) the **fourth changed file** is `test-harness/harness-registry.mjs` (**+8 lines**, one `LIVE_HARNESSES` entry and one `LIVE_SQL_HARNESSES` entry), not the case matrix; (3) the eight `env: "R"` rows (`T6-R01`–`T6-R08`) in `t6-case-matrix.json` **predate** the Group-R commits (matrix last changed at `ed5e212`, byte-identical at HEAD) and are **not** part of that delivery. `TEST_EVIDENCE.md` gains **E-009** (three failed preflight-only rehearsals — **BLOCKED**, explicitly not PASS) and **E-010** (Group-L 12/12 PASS, local lab, digest re-verified). T6 remains **ACTIVE / INCOMPLETE**, `T6-R01`–`T6-R08` remain **NOT RUN**, the `169/169` unit-test claim remains **UNVERIFIED**, `578/578` across 19 suites remains **historical**, and hosted Supabase TEST/production behaviour remains **NOT VERIFIED**. No prior entry was removed or rewritten.

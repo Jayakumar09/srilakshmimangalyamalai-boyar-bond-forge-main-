@@ -202,3 +202,82 @@ The rows/notes above are retained as history. Superseding results for the curren
 - **Tracking state (supersedes the "Uncommitted in-progress" bullet):** `test-harness/harness-registry.mjs` and `test-harness/slmm-storage-deletion-sql-contract-tests.mjs` are now **tracked and clean** (committed in the `11cbfdc9` lineage). The 19-vs-18-suite distinction described above no longer applies to HEAD.
 - **Current registry = 21 suites, but NOT freshly run:** `OFFLINE_SUITES` at HEAD `1535f9a` lists **21** suites. Two later suites are **not covered** by E-008 — `test-harness/slmm-storage-fence-sql-contract-tests.mjs` (added `1a39317`) and `test-harness/slmm-storage-scheduler-tests.mjs` (added `cdff940`). **No fresh complete `npm run test:offline` run has been performed since 2026-10-17**, so neither the current test total nor a current pass/fail verdict is established here.
 - **Level unchanged:** local-only (offline). No network, database, credentials, or `.env` access; runtime R2/DB behaviour remains UNVERIFIED.
+
+## E-009 — T6 Group-R preflight-only rehearsals: three attempts, all BLOCKED (2026-10-21/22)
+
+> **Not a PASS entry.** No Group-R case (`T6-R01`–`T6-R08`) executed in any of
+> these attempts. Nothing here is evidence about hosted concurrency behaviour.
+
+- **Context:** the Group-R harness (`a11a118` → `1535f9a`) was committed and
+  pushed; `T6-R01`–`T6-R08` remain unexecuted. Three `mode: "preflight-only"`
+  rehearsals were then attempted against the Supabase **TEST** project
+  `nqadtfqyurkpmxcodswc`. Each ran only a preflight probe and aborted.
+- **Verification level:** hosted **TEST** preflight probe only — not a test run.
+  `credentialSource: "operator-variable"`, `ambientPasswordIgnored: false`, no
+  production target contacted.
+- **Attempts** (manifest schema `t6-group-r-manifest/v1`; every `evidenceSha256`
+  was recomputed on 2026-10-22 and **matches** its `t6-group-r-results.jsonl`):
+
+| # | runId (UTC) | Bundle | psql exit | Evidence SHA-256 (verified) |
+|---|---|---|---|---|
+| 1 | `2026-10-21T17:12:52.849Z` | `D:\SLMM-T6-EVIDENCE\t6-group-r-preflight-20261021-224201\` | `2` | `160bce1ff6f76f89fc14f106175144a0e74b62a9ba395fdc917c7cb4a3348646` |
+| 2 | `2026-10-22T04:12:29.623Z` | `D:\SLMM-T6-EVIDENCE\t6-group-r-preflight-20261022-094207\` | `2` | `ba9115919e20e72ab18da22da028eff4372e09961ccb561270043049116bbe94` |
+| 3 | `2026-10-22T04:40:28.669Z` | `D:\SLMM-T6-EVIDENCE\t6-group-r-preflight-20261022-101004\` | `3` | `efe58ce2c6f0de1c7daee4a3b39a357b73830a05de9ac982e77920b206ceb24d` |
+
+- **Outcome — identical in all three:** `caseOutcomes` **PASS 0 / FAIL 0 /
+  BLOCKED 8 / NOT RUN 0** (`recordCount: 8`); `preflight.ok: false`;
+  `residueGate: "NOT RUN"`; `statementsIssued: 1`; `forbiddenStatements: 0`.
+- **Failure classification:** attempt 1 —
+  `the preflight session failed: pf: psql exited (2)` (no classifier present);
+  attempt 2 — `pf: psql exited (2) (unknown)` with `connectionFailure:
+  "unknown"`; attempt 3 — `pf: psql exited (3) (unknown)` with
+  `connectionFailure: "unknown"`. The classification is **`unknown`**; the
+  cause is **unresolved**.
+- **Fingerprint NOT validated:** v2 contract, `expected:
+  a85fea6468487830a4ca9afc268d9aef`, `computed: null`, `functionCount: null`,
+  `serverVersion: null`, `baselineServerVersion: 17.11` — in all three.
+- **Build attribution is inferred, not evidenced:** the manifests record the
+  harness path and `runId` but **no runner commit and no runner SHA-256**, so
+  attribution to `67109f4` / `18c2406` / `d2a34e3` rests on timestamps only.
+- **Related offline claim (separate scope):** the runner's hermetic unit suite
+  (`t6-group-r-runner-tests.mjs`, 169 top-level `test()`s) has **no retained
+  execution artifact**; the reported `169/169` pass remains **UNVERIFIED**.
+- **Result:** **BLOCKED — not PASS, not FAIL.** A rerun requires fresh approval
+  **and** fresh authorization.
+- **Level:** hosted TEST preflight only. No case executed; no residue gate; no
+  concurrency behaviour evidenced.
+
+## E-010 — T6 Group-L local-lab concurrency execution: 12/12 PASS (2026-10-21 10:06 IST)
+
+- **Context:** the corrected **C10** runner (`84d9e145`) was executed **exactly
+  once** against a disposable **local** PostgreSQL 18 laboratory
+  (`127.0.0.1:15432`, database `t6lab`).
+- **Verification level:** **local lab only.** That run involved no Supabase
+  TEST database, no production database, and no R2/Cloudflare operation.
+- **Command / outcome:** detached launcher `launcher-20261021-100642-9c43b8d4`
+  — `exitcode=0`, `verdict: PASS`, **zero** failure reasons, all nine native
+  steps exit `0` (`initdb`, `pgctl_start`, `isready`, `identity`, `create_db`,
+  `bootstrap`, `preflight`, `node`, `residue`); elapsed 23.5 s, child pid
+  10228, empty `stderr.log`.
+- **Result:** **12 PASS / 0 FAIL / 0 BLOCKED / 0 NOT RUN** across `T6-L01` …
+  `T6-L11`, including both `T6-L08a` and `T6-L08b`, each present once.
+- **Evidence files verified on 2026-10-22:**
+  `D:\SLMM-T6-EVIDENCE\t6-run-20261021-100645-9d2f02f9\` —
+  `verdict.20261021-100645-9d2f02f9.json` (verdict `PASS`, `reasons: []`),
+  `t6-lab-results.20261021-100645-9d2f02f9.jsonl` (1,583 bytes; 12 records, all
+  `status: "PASS"`), `artifact-sha256.20261021-100645-9d2f02f9.txt`,
+  `t6-lab-run.…log`, `t6-lab-node.…log`; plus the launcher trace
+  `D:\SLMM-T6-EVIDENCE\launcher-20261021-100642-9c43b8d4\` (`stdout.log`,
+  `exitcode.txt`, `finished.txt`, `started.txt`, `postrun-state.txt`).
+- **Digest (independently recomputed):**
+  `3489610fbf2105868c8aa2ab6bd60681ac0788446a816980c5cbfd424b187b0c`, equal to
+  the value in `stdout.log` (`results_sha256`) and in the run's
+  `artifact-sha256` manifest. In `verdict.json` the same digest appears under
+  the field name `runner_sha256` — that field holds the **results** digest, not
+  the runner's own SHA-256 (the runner is `9f06b1c3…` per the artifact
+  manifest).
+- **Residue:** `{"synthetic_rows":0,"other_t6_backends":0,"t6_advisory_locks":0}`
+  — clean. Teardown proved ownership before stopping, then removed the lab.
+- **Limit:** a **local-lab PASS is not proof** of hosted Supabase TEST or
+  production behaviour, nor of Group-R. `T6-R01`–`T6-R08` remain **NOT RUN**.
+- **Level:** local disposable PostgreSQL only.

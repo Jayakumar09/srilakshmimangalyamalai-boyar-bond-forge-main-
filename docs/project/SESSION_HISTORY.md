@@ -289,3 +289,42 @@
    - **`PROJECT_STATUS.md` remains stale** (§2 shows `ff1abb1`, "origin/main 8 behind", 72 untracked, and §5 cites 457/457 at 13 suites). It is **outside this pass** and needs its own scoped approval.
    - **T6 task records remain incomplete:** `project-tasks/active/T6-group-l-concurrency-runner/ARTIFACT_MANIFEST.md` omits the three Group-R artifacts and `PROGRESS.md:7` names a next action already completed at `fc1c3a0`. Out of scope here.
 15. **Next recommended step:** obtain separate approval to commit these three documentation files, then separate approval to push. Afterwards, scope the `PROJECT_STATUS.md` reconciliation and the T6 task-record update; the Group-R preflight diagnosis stays blocked until a fresh one-shot TEST authorization is granted.
+
+---
+
+## 2026-10-22 (later) — Correction entry: Group-R artifact line counts, matrix provenance, checkpoint `029bf0f`; `TEST_EVIDENCE.md` E-009/E-010 added
+
+> **Appended correction.** Per this file's rule (never rewrite or remove a prior
+> entry; correct mistakes by appending a dated correction), the entry above
+> (`## 2026-10-22 — …`) is **left exactly as written**, including the figures
+> corrected below. This entry supersedes only those specific figures and
+> statements.
+
+1. **Date/time:** 2026-10-22 (local, IST) — later the same day.
+2. **Task titles/objectives:** (a) correct stale current-state references to checkpoint `7c1d525`, replacing them with the published checkpoint `029bf0f`; (b) correct three factual errors in the preceding entry (Group-R line counts, the identity of the fourth changed file, and case-matrix provenance); (c) add `TEST_EVIDENCE.md` entries **E-009** (three failed Group-R preflight-only rehearsals) and **E-010** (Group-L 12/12 PASS).
+3. **Environment:** **TEST-only.** This was a **documentation-only** pass: **no test, no SQL, no PostgreSQL, no Supabase, no R2, no Cloudflare and no deployment operation** was performed. No secret or `.env` file was read. The only external reads were the local evidence files under `D:\SLMM-T6-EVIDENCE\` required to verify recorded hashes and outcomes.
+4. **Verification level:** documentation + evidence **re-verification from retained files**. Nothing in this entry is a new test result.
+5. **Correction 1 — Group-R artifact line counts.** The preceding entry quoted `2,591` / `2,971` / `963` lines. Those are **non-blank** line counts mislabelled as total lines. The correct **total** line counts (blank lines included, matching `git diff --numstat` for `a11a118^..1535f9a`) are:
+
+   | File | Total lines | (non-blank, the earlier figure) |
+   |---|---|---|
+   | `t6-group-r-runner.mjs` | **2,772** | 2,591 |
+   | `t6-group-r-runner-tests.mjs` | **3,194** | 2,971 |
+   | `t6-group-r-harness.sql` | **1,035** | 963 |
+
+   Cross-check: 2,772 + 3,194 + 1,035 = **7,001**, plus the **8** registry lines = **7,009**, which is the total recorded by `git diff --shortstat a11a118^..1535f9a` (`4 files changed, 7009 insertions(+)`). The earlier figures summed to 6,525 and could not produce 7,009 — the inconsistency was internal and is now resolved.
+6. **Correction 2 — the fourth changed file.** The preceding entry listed the runner, the runner tests, the SQL harness "and the eight `env: "R"` rows in `…/t6-case-matrix.json`". The **fourth file actually changed** by the Group-R commits is **`test-harness/harness-registry.mjs` (+8 lines)** — one `LIVE_HARNESSES` entry for `t6-checkpoint/t6-group-r-runner.mjs` (`services: ["supabase-test-postgres"]`) and one `LIVE_SQL_HARNESSES` entry for `t6-checkpoint/t6-group-r-harness.sql`. The case matrix was **not** touched by any of the eight commits.
+7. **Correction 3 — case-matrix provenance.** The eight `env: "R"` rows (`T6-R01`–`T6-R08`) in `test-harness/t6-checkpoint/t6-case-matrix.json` **predate the Group-R harness commits**. The matrix was last changed at `ed5e212` (`test(storage): preserve recovered T6 concurrency harness and candidate`) and its blob is **identical** at `ed5e212` and at HEAD (`d50d41eb89d27b2812c60d42a533b85d3e1360b0`), still containing 23 cases (12 `L`, 8 `R`, 3 `C`). The rows therefore **document** the Group-R cases; they were **not** part of the delivery and must not be attributed to it.
+8. **Why the errors occurred:** the earlier figures were measured with a line-counting method that excludes blank lines, and the case-matrix rows were inferred from the matrix contents rather than from the commit diffs. Corrected figures were re-derived from `git diff --numstat`/`--shortstat` over the commit range and from `git rev-parse <commit>:<path>` blob comparison. Recorded so a future reader does not repeat the same inference.
+9. **`TEST_EVIDENCE.md` — E-009 added (not a PASS entry).** The three Group-R preflight-only rehearsals are now catalogued: runIds `2026-10-21T17:12:52.849Z`, `2026-10-22T04:12:29.623Z`, `2026-10-22T04:40:28.669Z`; bundles `t6-group-r-preflight-20261021-224201`, `…-20261022-094207`, `…-20261022-101004`; exit codes **2, 2, 3**; each **8 BLOCKED / 0 cases**; `preflight.ok: false`; `residueGate: "NOT RUN"`; `statementsIssued: 1`; `forbiddenStatements: 0`; v2 fingerprint **never validated** (`computed: null`). Evidence SHA-256s were **recomputed** during this pass and all three match their manifests: `160bce1f…c7cb4a3348646`, `ba911591…043049116bbe94`, `efe58ce2…e77920b206ceb24d`. The entry is explicitly **BLOCKED — not PASS, not FAIL**.
+10. **`TEST_EVIDENCE.md` — E-010 added, on verified evidence only.** Group-L 12/12 PASS was added **because** original supporting execution evidence was verified from retained files: `D:\SLMM-T6-EVIDENCE\t6-run-20261021-100645-9d2f02f9\` (verdict `PASS`, zero reasons, 12 records all `PASS`, all nine native steps exit 0) plus the launcher trace `…\launcher-20261021-100642-9c43b8d4\` (`exitcode=0`, elapsed 23.5 s, child pid 10228, empty `stderr.log`). The results digest was **independently recomputed** from `t6-lab-results.20261021-100645-9d2f02f9.jsonl` (1,583 bytes) and equals `3489610fbf2105868c8aa2ab6bd60681ac0788446a816980c5cbfd424b187b0c`. Note: the field named `runner_sha256` in `verdict.json` holds that **results digest**, not the runner's own SHA-256 (the runner is `9f06b1c3…` per the run's `artifact-sha256` manifest and `stdout.log`) — recorded here so the mislabelled field is not misread later. E-010 states **local-lab only**.
+11. **Unchanged claims preserved.** `169/169` Group-R runner unit-test pass remains **UNVERIFIED** (no TAP/log/artifact exists). `578/578` across **19** suites remains a **historical** 2026-10-17 result at `92804e0` (`TEST_EVIDENCE.md` E-008); the registry lists **21** suites and **no current total is claimed**. **T6 remains ACTIVE / INCOMPLETE**, `T6-R01`–`T6-R08` remain **NOT RUN**, and hosted Supabase TEST/production behaviour remains **NOT VERIFIED**.
+12. **Files changed in this pass:** documentation only — `docs/project/CURRENT_HANDOVER.md`, `docs/project/SESSION_HISTORY.md`, `docs/project/TASK_INDEX.md`, `docs/project/TEST_EVIDENCE.md`. **No source, harness, test, migration or configuration file was changed; nothing was staged, committed or pushed.**
+13. **Remote TEST resources modified:** none.
+14. **Deployment occurred:** no.
+15. **Git state:** HEAD `029bf0f967af9b67d2d6572fae31b35960043f47` = `origin/main`, **0 ahead / 0 behind**. Before this pass the tree held **37 modified tracked + 65 untracked + 0 staged + 0 deletions**; those are **preserved unchanged**, and the four authorized documents are edited (working tree therefore shows **41 modified**). `git diff --check` result is reported with this pass.
+16. **Risks/limitations:**
+    - **The Group-R preflight blocker remains unresolved** (exit `2`, `2`, `3`, classified `unknown`); the v2 fingerprint has never been validated; a rerun needs **fresh approval and fresh authorization**.
+    - **`PROJECT_STATUS.md` is still stale** (§2 `ff1abb1`, "8 behind", 72 untracked; §5 457/457 at 13 suites) and the T6 task records still omit the Group-R artifacts — both out of scope here and needing their own approval.
+    - **The `169/169` figure cannot be recovered** without rerunning the suite, which is not authorized.
+17. **Next recommended step:** obtain separate approval to commit these four documentation files, then separate approval to push; afterwards scope the `PROJECT_STATUS.md` §14 reconciliation and the T6 task-record update; the Group-R preflight diagnosis stays blocked until a fresh one-shot TEST authorization is granted.

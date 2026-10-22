@@ -8,7 +8,8 @@
 > task folder under `project-tasks/`.
 >
 > _Last updated: 2026-10-22 (Group-R harness lineage + three failed preflight-only
-> rehearsals recorded; T6 row reconciled to `7c1d525`)._
+> rehearsals recorded; T6 row reconciled to `029bf0f`; Group-R line counts and
+> matrix provenance corrected, `TEST_EVIDENCE.md` E-009/E-010 added)._
 
 ## Status legend
 
@@ -34,7 +35,7 @@
 | ID | Title | Status | Folder | Latest evidence | Git checkpoint | Next action |
 |---|---|---|---|---|---|---|
 | INFRA-001 | Project-wide task management & handover system | COMPLETED | `docs/project/` + `project-tasks/` | this document | `806d983` (pushed, GitHub-verified 2026-10-19) | archived |
-| T6 | Concurrency program — Group-L local lab (closed) + Group-R hosted harness (not executed) | ACTIVE | `project-tasks/active/T6-group-l-concurrency-runner/` | **Group-L local concurrency VERIFIED PASS 12/12** (2026-10-21 10:06 IST, local lab only); **Group-R harness delivered** `a11a118`→`1535f9a`, 3 preflight-only rehearsals **8 BLOCKED / 0 cases**, `T6-R01`–`R08` **NOT RUN**; reported `169/169` unit run **UNVERIFIED** | `61cc1a4` (PASS docs, pushed); runner/checksums `84d9e145`; group-R harness `1535f9a`; docs `7c1d525` (pushed) | Diagnose the unresolved Group-R preflight failure (psql exit 2/3) under fresh approval + authorization; Group-C / R2 / scheduler remain separate pending gates; hosted Supabase TEST & production **NOT VERIFIED** |
+| T6 | Concurrency program — Group-L local lab (closed) + Group-R hosted harness (not executed) | ACTIVE | `project-tasks/active/T6-group-l-concurrency-runner/` | **Group-L local concurrency VERIFIED PASS 12/12** (2026-10-21 10:06 IST, local lab only; `TEST_EVIDENCE.md` E-010); **Group-R harness delivered** `a11a118`→`1535f9a`, 3 preflight-only rehearsals **8 BLOCKED / 0 cases** (`TEST_EVIDENCE.md` E-009), `T6-R01`–`R08` **NOT RUN**; reported `169/169` unit run **UNVERIFIED** | `61cc1a4` (PASS docs, pushed); runner/checksums `84d9e145`; group-R harness `1535f9a`; docs `029bf0f` (pushed) | Diagnose the unresolved Group-R preflight failure (psql exit 2/3) under fresh approval + authorization; Group-C / R2 / scheduler remain separate pending gates; hosted Supabase TEST & production **NOT VERIFIED** |
 | T5 | Storage-deletion lifecycle + fence — live TEST verification | COMPLETED | `project-tasks/completed/T5-storage-deletion-lifecycle-and-fence/` | `TEST_VERIFICATION_LEDGER.md` addendum 2026-10-19 | `b25555e`, `eef9b2e` (pushed) | archived |
 | T4 | Storage-deletion state-transition — live TEST verification | COMPLETED | `project-tasks/completed/T4-storage-deletion-state-transitions/` | `TEST_VERIFICATION_LEDGER.md` addendum 2026-10-18 | `e54756b`, `1ba4351` (pushed) | archived |
 | T3 | Storage-deletion claim RPC — live TEST verification | COMPLETED | `project-tasks/completed/T3-storage-deletion-claim-rpc/` | `TEST_VERIFICATION_LEDGER.md` addendum 2026-10-18 | `4f1be4f`, `ba239e5` (pushed) | archived |
@@ -57,15 +58,19 @@
   production database**.
 - **Group-R harness — delivered `a11a118`→`1535f9a`; three rehearsals, zero
   cases.** Eight commits (+7,009/−0 across four files) added the fail-closed
-  ZERO-COMMIT runner, hermetic unit tests (169 top-level `test()`s, mocked
-  `spawnFn`), the Group-R SQL harness and eight `env: "R"` matrix rows. The
-  runner is in `LIVE_HARNESSES`, the SQL in `LIVE_SQL_HARNESSES`, and neither is
-  wired to npm; `live-guard.mjs` refuses ports `6543`/`15432`. Three
+  ZERO-COMMIT runner (2,772 lines), hermetic unit tests (3,194 lines, 169
+  top-level `test()`s, mocked `spawnFn`), the Group-R SQL harness (1,035 lines)
+  and two registry entries in `test-harness/harness-registry.mjs` (+8 lines).
+  The eight `env: "R"` matrix rows (`T6-R01`–`T6-R08`) **predate** the delivery
+  (matrix last changed at `ed5e212`, byte-identical at HEAD) and are not part
+  of it. The runner is in `LIVE_HARNESSES`, the SQL in `LIVE_SQL_HARNESSES`, and
+  neither is wired to npm; `live-guard.mjs` refuses ports `6543`/`15432`. Three
   `mode: "preflight-only"` rehearsals targeted Supabase **TEST**
   `nqadtfqyurkpmxcodswc` and **all failed at preflight** (`psql exited (2)`,
   `(2) (unknown)`, `(3) (unknown)`): PASS 0 / FAIL 0 / **BLOCKED 8** / NOT RUN 0,
   `statementsIssued: 1`, `forbiddenStatements: 0`, v2 fingerprint never
-  validated (`computed: null`), `residueGate: "NOT RUN"`. `T6-R01`–`T6-R08`
+  validated (`computed: null`), `residueGate: "NOT RUN"` — catalogued as
+  `TEST_EVIDENCE.md` **E-009** (BLOCKED, not PASS). `T6-R01`–`T6-R08`
   remain **NOT RUN**. A `169/169` unit-test pass was reported but has **no
   artifact and is UNVERIFIED**. The remaining gates are **separate pending**
   and each needs its own approval and target: **Group-R** (`T6-R01`–`T6-R08`,
