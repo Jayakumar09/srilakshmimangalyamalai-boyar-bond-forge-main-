@@ -2287,9 +2287,12 @@ function mockPreflightRunner({
 } = {}) {
   const spawned = [];
   const wires = [];
+  // Every argument vector the runner hands to child_process.spawn.
+  const argVectors = [];
   const spawnFn = (bin, args, opts) => {
     const appname = opts.env.PGAPPNAME;
     spawned.push(appname);
+    argVectors.push({ appname, args: args.slice(), bin });
     const child = new EventEmitter();
     child.stdout = new EventEmitter();
     child.stdout.setEncoding = () => {};
@@ -2344,7 +2347,7 @@ function mockPreflightRunner({
     child.kill = () => { child.emit("exit", null, "SIGTERM"); return true; };
     return child;
   };
-  return { spawned, wires, spawnFn };
+  return { spawned, wires, spawnFn, argVectors };
 }
 
 /** Run the body with the live authorization in place, then restore it. */
@@ -2761,4 +2764,180 @@ test("CD: the source keeps the classification fail-closed and verdict-free", () 
   // The stderr is bounded.
   assert.match(runnerSrc, /export const STDERR_LIMIT = 65536;/);
   assert.match(runnerSrc, /this\.stderr = this\.stderr\.slice\(-STDERR_LIMIT\);/);
+});
+
+// ---------------------------------------------------------------------------
+// CA: the psql connection-argument construction
+// ---------------------------------------------------------------------------
+// The connection parameters must reach psql as its DOCUMENTED options
+// (-h / -p / -U / -d). A conninfo keyword/value pair is only valid as ONE
+// argument: psql's own grammar is "[DBNAME [USERNAME]]", so four separate
+// positional "host=/port=/user=/dbname=" arguments are NOT equivalent to the
+// flags and are not read as four connection parameters. This is the same
+// construction as the verified read-only hosted capture of 2026-10-21.
+
+/** The connection settings the verified read-only capture used. */
+const CAPTURE_SETTINGS = Object.freeze({
+  host: "aws-0-ap-northeast-1.pooler.supabase.com",
+  port: 5432,
+  user: "postgres.nqadtfqyurkpmxcodswc",
+  database: "postgres",
+});
+
+/** The exact argument vector the runner must hand to child_process.spawn. */
+const expectedArgs = (endpoint, onErrorStop) => [
+  "-X", "-q", "-A", "-t", "-P", "pager=off",
+  "-v", `ON_ERROR_STOP=${onErrorStop}`,
+  "-v", "VERBOSITY=verbose",
+  "-h", String(endpoint.host),
+  "-p", String(endpoint.port),
+  "-U", String(endpoint.user),
+  "-d", String(endpoint.database),
+  "-f", "-",
+];
+
+/**
+ * Assert one spawned argument vector: the documented connection options come
+ * first and exactly, then only the session variables may follow, and a
+ * conninfo positional argument may never appear.
+ */
+const assertConnectionVector = (args, endpoint, onErrorStop, label) => {
+  const prefix = expectedArgs(endpoint, onErrorStop);
+  assert.deepEqual(args.slice(0, prefix.length), prefix, `${label}: the connection options are wrong`);
+  const rest = args.slice(prefix.length);
+  for (let i = 0; i < rest.length; i += 2) {
+    assert.equal(rest[i], "-v", `${label}: only -v session variables may follow: ${rest[i]}`);
+    assert.match(rest[i + 1], /^[a-z_]+=/, `${label}: only -v session variables may follow: ${rest[i + 1]}`);
+  }
+  for (const a of args) {
+    assert.ok(!/^(host|port|user|dbname)=/.test(a), `${label}: no conninfo positional argument may be passed: ${a}`);
+  }
+};
+
+test("CA: the connection parameters are passed as psql's documented options", async () => {
+  const calls = [];
+  const child = mockChild();
+  const session = mockSession({
+    endpoint: PF_ENDPOINT,
+    spawnFn: (bin, args, opts) => { calls.push({ bin, args, opts }); return child; },
+  });
+  await session.start();
+  assert.equal(calls.length, 1);
+  // The COMPLETE argument vector, exactly.
+  assert.deepEqual(calls[0].args, expectedArgs(PF_ENDPOINT, "on"));
+  // No conninfo positional argument may survive: psql would read such an
+  // argument as a database name or a user name, not as a connection
+  // parameter.
+  for (const a of calls[0].args) {
+    assert.ok(!/^(host|port|user|dbname)=/.test(a), `no conninfo positional argument may be passed: ${a}`);
+  }
+  // The documented options are present, in the documented form.
+  assert.equal(calls[0].args[calls[0].args.indexOf("-h") + 1], PF_ENDPOINT.host);
+  assert.equal(calls[0].args[calls[0].args.indexOf("-p") + 1], String(PF_ENDPOINT.port));
+  assert.equal(calls[0].args[calls[0].args.indexOf("-U") + 1], PF_ENDPOINT.user);
+  assert.equal(calls[0].args[calls[0].args.indexOf("-d") + 1], PF_ENDPOINT.database);
+  // Every other option is preserved, and the SQL still arrives on stdin.
+  assert.ok(calls[0].args.includes("-X"));
+  assert.ok(calls[0].args.includes("-q"));
+  assert.ok(calls[0].args.includes("-A"));
+  assert.ok(calls[0].args.includes("-t"));
+  assert.ok(calls[0].args.includes("pager=off"));
+  assert.ok(calls[0].args.includes("VERBOSITY=verbose"));
+  assert.equal(calls[0].args[calls[0].args.indexOf("-f") + 1], "-");
+  // The absolute, validated executable is the one that is run.
+  assert.equal(calls[0].bin, PSQL_ABS);
+});
+
+test("CA: the connection vector carries the verified capture's settings", async () => {
+  const calls = [];
+  const child = mockChild();
+  const session = mockSession({
+    endpoint: {
+      host: CAPTURE_SETTINGS.host,
+      port: CAPTURE_SETTINGS.port,
+      user: CAPTURE_SETTINGS.user,
+      database: CAPTURE_SETTINGS.database,
+    },
+    spawnFn: (bin, args, opts) => { calls.push({ bin, args, opts }); return child; },
+  });
+  await session.start();
+  const args = calls[0].args;
+  // The SAME endpoint the read-only capture used, passed the SAME way.
+  assert.equal(args[args.indexOf("-h") + 1], CAPTURE_SETTINGS.host);
+  assert.equal(args[args.indexOf("-p") + 1], String(CAPTURE_SETTINGS.port));
+  assert.equal(args[args.indexOf("-U") + 1], CAPTURE_SETTINGS.user);
+  assert.equal(args[args.indexOf("-d") + 1], CAPTURE_SETTINGS.database);
+  // The SSL requirement and the credential isolation are unchanged.
+  assert.equal(calls[0].opts.env.PGSSLMODE, "require");
+  assert.equal(calls[0].opts.env.PGCONNECT_TIMEOUT, "20");
+  assert.equal(calls[0].opts.env.PGPASSWORD, "dummy-credential");
+  for (const k of Object.keys(calls[0].opts.env)) {
+    if (/^(PG|POSTGRES)/i.test(k)) {
+      assert.ok(["PGPASSWORD", "PGAPPNAME", "PGCONNECT_TIMEOUT", "PGSSLMODE"].includes(k), `unexpected libpq variable ${k}`);
+    }
+  }
+  // The credential never travels on the command line.
+  for (const a of args) assert.ok(!a.includes("dummy-credential"));
+});
+
+test("CA: the source never builds a conninfo positional argument", () => {
+  assert.ok(!/args\.push\(\s*"host="/.test(runnerSrc), "the runner must not push a conninfo positional argument");
+  assert.ok(!/"dbname="\s*\+/.test(runnerSrc), "the runner must not push a conninfo positional argument");
+  assert.match(runnerSrc, /"-h", String\(this\.endpoint\.host\)/);
+  assert.match(runnerSrc, /"-p", String\(this\.endpoint\.port\)/);
+  assert.match(runnerSrc, /"-U", String\(this\.endpoint\.user\)/);
+  assert.match(runnerSrc, /"-d", String\(this\.endpoint\.database\)/);
+  // The SQL still arrives on stdin and the session-variable loop is preserved.
+  assert.match(runnerSrc, /"-f", "-"\];/);
+  assert.match(runnerSrc, /args\.push\("-v", `\$\{k\}=\$\{v\}`\);/);
+});
+
+test("CA: both the ordinary and the preflight-only mode use the corrected construction", async () => {
+  // --- the preflight-only mode ---
+  const psql = dummyPsql();
+  const evidenceDir = mkdtempSync(path.join(tmpdir(), "t6r-ca-pf-"));
+  const mock = mockPreflightRunner({ preflightOk: true });
+  try {
+    const out = await runPreflightOnly(mock, { evidenceDir, psqlPath: psql.file });
+    // Exactly one session: the preflight. No observer, no acting session, no
+    // fixture and no case.
+    assert.deepEqual(mock.spawned, [PREFLIGHT_TAG]);
+    assert.equal(mock.wires.length, 2);
+    for (const w of mock.wires) assert.ok(!/INSERT INTO public\./.test(w));
+    for (const r of out.results) {
+      assert.equal(r.assertion, "NOT RUN");
+      assert.equal(r.verdict, "BLOCKED");
+    }
+    assert.equal(out.mode, "preflight-only");
+    // Its argument vector is the corrected one.
+    assert.equal(mock.argVectors.length, 1);
+    assertConnectionVector(mock.argVectors[0].args, PF_ENDPOINT, "on", "the preflight session");
+  } finally {
+    rmSync(psql.dir, { recursive: true, force: true });
+    rmSync(evidenceDir, { recursive: true, force: true });
+  }
+
+  // --- the ordinary mode ---
+  const psql2 = dummyPsql();
+  const evidenceDir2 = mkdtempSync(path.join(tmpdir(), "t6r-ca-gr-"));
+  const mock2 = mockPreflightRunner({ preflightOk: true });
+  try {
+    const out2 = await withLiveAuthorization(() => runGroupR({
+      endpoint: PF_ENDPOINT,
+      password: "dummy-credential",
+      psqlPath: psql2.file,
+      evidenceDir: evidenceDir2,
+      spawnFn: mock2.spawnFn,
+    }));
+    assert.equal(out2.mode, "group-r");
+    // Every session of the ordinary path uses the same corrected construction.
+    assert.ok(mock2.argVectors.length >= 4, "the ordinary path spawns the preflight, the observer and the two acting sessions");
+    for (const v of mock2.argVectors) {
+      const onErrorStop = v.appname === OBSERVER_TAG ? "off" : "on";
+      assertConnectionVector(v.args, PF_ENDPOINT, onErrorStop, `the ${v.appname} session`);
+    }
+  } finally {
+    rmSync(psql2.dir, { recursive: true, force: true });
+    rmSync(evidenceDir2, { recursive: true, force: true });
+  }
 });

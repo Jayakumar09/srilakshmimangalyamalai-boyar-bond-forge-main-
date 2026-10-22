@@ -1345,12 +1345,21 @@ export class PgSession {
     // the matrix's rule requires ("ON_ERROR_STOP=1 in both sessions"). The
     // observer must survive every acting session so that the residue check
     // can still run, so it does not stop on error.
+    // The connection parameters are passed as psql's DOCUMENTED options
+    // (-h / -p / -U / -d). A conninfo keyword/value pair is only valid as ONE
+    // argument: psql's own grammar is "[DBNAME [USERNAME]]", so four separate
+    // positional "host=/port=/user=/dbname=" arguments are NOT equivalent to
+    // the flags and are not read as four connection parameters. This is the
+    // same construction as the verified read-only hosted capture.
     const args = ["-X", "-q", "-A", "-t", "-P", "pager=off",
       "-v", `ON_ERROR_STOP=${this.stopOnError ? "on" : "off"}`,
-      "-v", "VERBOSITY=verbose", "-f", "-"];
+      "-v", "VERBOSITY=verbose",
+      "-h", String(this.endpoint.host),
+      "-p", String(this.endpoint.port),
+      "-U", String(this.endpoint.user),
+      "-d", String(this.endpoint.database),
+      "-f", "-"];
     for (const [k, v] of Object.entries(this.variables)) args.push("-v", `${k}=${v}`);
-    args.push("host=" + this.endpoint.host, "port=" + String(this.endpoint.port),
-      "user=" + this.endpoint.user, "dbname=" + this.endpoint.database);
     const env = { ...process.env };
     // H7: the credential reaches THIS child only, and it is never inherited.
     // It is always set (even when empty), so libpq can never fall back to an
