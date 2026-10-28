@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "scope": "S14 synthetic production-function identity safety only; full capture integration NOT COVERED",
+  "baselineBranch": "checkpoint/t6-offline-evidence",
+  "baselineCommit": "1f7e5d1db982e21e8ed262953eb1d72ff4c57faf",
+  "companion": {
+    "checkpointPath": "Run-S14IdentitySafetyTests.ps1",
+    "originalPath": "D:\\SLMM-T6-TOOLS\\S14-HARNESS-CANDIDATES\\Run-S14IdentitySafetyTests.ps1",
+    "originalSha256": "202D50A03DD6B796F14367FD6B233591948878466D13C1A0DFC002C4CD461170",
+    "checkpointSha256": "202D50A03DD6B796F14367FD6B233591948878466D13C1A0DFC002C4CD461170",
+    "preservedWithoutLogicOrLineEndingChanges": true
+  },
+  "sourceDependency": {
+    "repositoryPath": "test-harness/t6-checkpoint/offline-evidence-capture.ps1",
+    "requiredAbsolutePath": "D:\\DevProjects\\Working\\srilakshmimangalyamalai(boyar-bond-forge-main)\\test-harness\\t6-checkpoint\\offline-evidence-capture.ps1",
+    "sha256": "9E780D5ED85DB30B2C7DFC0DDF23B7F6BCD60E7B3F40A1664C3B9F98962DF0D9",
+    "baselineRawGitBlobSha256": "9E780D5ED85DB30B2C7DFC0DDF23B7F6BCD60E7B3F40A1664C3B9F98962DF0D9",
+    "alreadyTrackedAtBaseline": true,
+    "loading": "Read bytes, verify full hash, parse AST, import only approved function-definition extents; never execute capture entry point",
+    "extraDependencyCopiesRequired": false
+  },
+  "productionFunctionIntegrity": [
+    { "name": "Get-ProcessGenerationKey", "startLine": 425, "endLine": 431, "sha256": "BBC3AF5F7C5EE1A308C108BCE05E660E9A6258612EB09C511E104F81BA7E0EB6" },
+    { "name": "New-ProcessGenerationRecord", "startLine": 447, "endLine": 471, "sha256": "7A99AB98DC2B97A73C5C022ED5919CFDCF4335DB71563E3BA51A061360339E81" },
+    { "name": "Resolve-ProcessGeneration", "startLine": 491, "endLine": 572, "sha256": "F55EA8A86DC3E138F67CADB07CBEDF60CED3F7C8B30D49F767C44FEBA8E05E29" },
+    { "name": "Get-PidIdentityState", "startLine": 739, "endLine": 757, "sha256": "C6D5D614B4E5FA1A623CBED113DEE62A98DCABE5C0488A8C6C6D3B6BCD7F9293" },
+    { "name": "Test-PidIdentityAlive", "startLine": 761, "endLine": 773, "sha256": "37F31B1FFC4E0D921E861C3E89717705A41FD6876B8412D9D502DE3B776E64B8" },
+    { "name": "Test-GenerationAlive", "startLine": 820, "endLine": 840, "sha256": "0B9CA8EBC3ADDF0B3E055D1B0E8B675134345648C5C7CC06A7872239DD51025D" },
+    { "name": "Get-ProcessCreationUtc", "startLine": 338, "endLine": 346, "sha256": "6FAF2A4C6B84F11C020F4A89BCED9B685AE594DA1BA3E9CB1AD658AF03175CF9" },
+    { "name": "Get-SurvivingGenerations", "startLine": 873, "endLine": 881, "sha256": "4F330EBEB9CCEB11AE5207CF42652267349C5341F1F28D18E392A616B1A51EFC" }
+  ],
+  "functionHashEncoding": "Exact source AST extent text encoded as UTF-8 without BOM",
+  "runtime": {
+    "date": "2026-10-28",
+    "powerShellVersion": "5.1.22000.2538",
+    "evidenceDirectory": "D:\\SLMM-T6-EVIDENCE\\s14-identity-safety-runtime-20261028-201524-d5579ec7",
+    "evidenceChecksumManifest": "SHA256.json",
+    "invocationCountOfThisHash": 1,
+    "exitCode": 0,
+    "assertionsPassed": 166,
+    "assertionsFailed": 0,
+    "fixturesPassed": 4,
+    "fixtureFaults": 0,
+    "unintendedReuseSinkEvents": 0,
+    "initialAndFinalBindingAssertionsPassed": 80,
+    "stderrBytes": 0,
+    "snapshotBookkeeping": "Both typed PID-key snapshots and unchanged-map comparison PASS",
+    "fixtures": [
+      { "id": 1, "scope": "Alive and no false reuse", "outcome": "PASS", "assertionsPassed": 41, "pidMockCalls": 4, "cimSubstituteCalls": 4 },
+      { "id": 2, "scope": "Gone", "outcome": "PASS", "assertionsPassed": 42, "pidMockCalls": 5, "cimSubstituteCalls": 0 },
+      { "id": 3, "scope": "Unknown, conservative retention and both missing-creation fallbacks", "outcome": "PASS", "assertionsPassed": 45, "pidMockCalls": 7, "cimSubstituteCalls": 5 },
+      { "id": 4, "scope": "Generation-specific survivor selection", "outcome": "PASS", "assertionsPassed": 38, "pidMockCalls": 7, "cimSubstituteCalls": 4 }
+    ]
+  },
+  "isolation": {
+    "environmentalLeafMocksOnly": ["Get-PidState", "Get-CimInstance"],
+    "productionIdentityAndResolverAndPredicatesAndSelectorUnchanged": true,
+    "expectedCallCountsMatched": true,
+    "independentFixtureFaultChecksCompleted": true,
+    "realCimQueries": 0,
+    "nativeProcessLookups": 0,
+    "fullCaptureEntryPointInvoked": false
+  },
+  "notCovered": [
+    "Real Windows process survival and PID reuse",
+    "Real CIM behavior",
+    "Descendant discovery",
+    "Grace-period timing",
+    "Full capture/A4 integration",
+    "Deliberately corrupted snapshot-map rejection paths"
+  ],
+  "checkpointValidation": "Static only; no runtime test repeated; separate approval required for future execution",
+  "existingResolverRegressionUnchangedSha256": "D058E747160FF8178F42CD64F424C486BEEB0CBA03D3C2597D83FECD81DA99FD"
+}

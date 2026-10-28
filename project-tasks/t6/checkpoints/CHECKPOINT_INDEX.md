@@ -43,3 +43,26 @@ Remote: https://github.com/Jayakumar09/srilakshmimangalyamalai-boyar-bond-forge-
   integration. This does **not** validate the original lost S14 self-test above.
 - Checkpoint source baseline: `736e5e893a02f4f5008bf9dbc269b10f4bc84c30`.
   Protected capture script unchanged. No runtime rerun for checkpoint creation.
+
+## 2026-10-28: synthetic S14 identity-safety companion checkpoint
+
+- Directory: `test-harness/t6-checkpoint/s14-identity-safety/`.
+- Exact tested companion SHA-256:
+  `202D50A03DD6B796F14367FD6B233591948878466D13C1A0DFC002C4CD461170`.
+- One invocation of this corrected hash: exit 0, **166/166 assertions PASS**,
+  four fixtures PASS, zero fixture faults and unintended ReuseSink events.
+- Evidence: `D:\SLMM-T6-EVIDENCE\s14-identity-safety-runtime-20261028-201524-d5579ec7`.
+- Eight unchanged production function definitions are imported selectively from
+  the already tracked, hash-pinned capture source; no full entry point runs.
+  Exact call counts and 80 initial/final binding checks passed. Typed snapshot
+  bookkeeping completed successfully. No runtime repeated for checkpointing.
+- **PASS at synthetic function level:** alive/no false reuse, gone, unknown and
+  conservative retention, both missing-creation fallbacks, exact-generation
+  survivor selection. Earlier NOT COVERED entries describe the earlier harness's
+  scope and remain historical; this result does not prove real OS survival.
+- **NOT COVERED:** real Windows process survival/PID reuse, real CIM, descendant
+  discovery, grace timing, full capture/A4 integration, corrupted snapshot-map
+  rejection paths. Original lost S14 recovery remains separate.
+- Source baseline: `1f7e5d1db982e21e8ed262953eb1d72ff4c57faf`. Protected source and
+  successful resolver-regression checkpoint unchanged. See companion README and
+  checkpoint-manifest.json for reproducibility, dependency and integrity details.

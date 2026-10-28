@@ -1,0 +1,2 @@
+# Preserve the exact tested companion bytes, including on Windows checkout.
+Run-S14IdentitySafetyTests.ps1 -text

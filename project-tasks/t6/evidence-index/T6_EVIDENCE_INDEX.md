@@ -26,3 +26,20 @@ Hashes recorded in CHECKPOINT_INDEX.md
   and full capture integration. The original S14 row above remains NOT VALIDATED.
 - No runtime repeated for this checkpoint. Dependency hashes and seven-extract
   source integrity are recorded in the checkpoint's `checkpoint-manifest.json`.
+
+## 2026-10-28 addition: S14 synthetic identity-safety companion
+
+- **PASS (synthetic function scope)**: one invocation of the corrected companion,
+  exit 0; 166 PASS / 0 FAIL, four fixtures PASS, zero fixture faults, empty stderr.
+- Evidence: `D:\SLMM-T6-EVIDENCE\s14-identity-safety-runtime-20261028-201524-d5579ec7`.
+- Checkpoint: `test-harness/t6-checkpoint/s14-identity-safety/`.
+- Original/checkpoint companion SHA-256:
+  `202D50A03DD6B796F14367FD6B233591948878466D13C1A0DFC002C4CD461170`.
+- Verified: eight unchanged production definitions, exact synthetic call counts,
+  80 initial/final binding assertions, empty ReuseSinks and snapshot bookkeeping.
+- Alive/no false reuse, gone, unknown/conservative retention, both creation-time
+  fallbacks and exact-generation survivor selection now have synthetic runtime
+  evidence. Earlier entries retain their original, narrower verification scope.
+- **NOT COVERED:** real Windows survival/PID reuse, real CIM, descendant discovery,
+  grace timing, full capture/A4 integration, corrupted snapshot-map rejection.
+  No runtime repeated to create this checkpoint; no full S14 integration claim.
