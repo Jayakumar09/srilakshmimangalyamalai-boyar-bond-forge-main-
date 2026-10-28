@@ -1,0 +1,156 @@
+{
+    "schemaVersion":  1,
+    "scope":  "Isolated deterministic PID-reuse resolver regression only; not full S14 validation",
+    "sourceBranch":  "checkpoint/t6-offline-evidence",
+    "sourceCommit":  "736e5e893a02f4f5008bf9dbc269b10f4bc84c30",
+    "sourcePath":  "test-harness/t6-checkpoint/offline-evidence-capture.ps1",
+    "sourceSha256":  "9E780D5ED85DB30B2C7DFC0DDF23B7F6BCD60E7B3F40A1664C3B9F98962DF0D9",
+    "hashEncoding":  "Raw file SHA-256; source AST extents encoded as UTF-8 without BOM",
+    "artifacts":  [
+                      {
+                          "role":  "harness",
+                          "fileName":  "Run-S14ResolverTest.ps1",
+                          "checkpointPath":  "Run-S14ResolverTest.ps1",
+                          "originalPath":  "D:\\SLMM-T6-TOOLS\\S14-HARNESS-CANDIDATES\\Run-S14ResolverTest.ps1",
+                          "originalSha256":  "D058E747160FF8178F42CD64F424C486BEEB0CBA03D3C2597D83FECD81DA99FD",
+                          "checkpointSha256":  "D058E747160FF8178F42CD64F424C486BEEB0CBA03D3C2597D83FECD81DA99FD"
+                      },
+                      {
+                          "role":  "dependency",
+                          "fileName":  "Resolve-ProcessGeneration.ps1",
+                          "checkpointPath":  "functions/Resolve-ProcessGeneration.ps1",
+                          "originalPath":  "D:\\SLMM-T6-TOOLS\\S14-HARNESS\\Resolve-ProcessGeneration.ps1",
+                          "originalSha256":  "F55EA8A86DC3E138F67CADB07CBEDF60CED3F7C8B30D49F767C44FEBA8E05E29",
+                          "checkpointSha256":  "F55EA8A86DC3E138F67CADB07CBEDF60CED3F7C8B30D49F767C44FEBA8E05E29"
+                      },
+                      {
+                          "role":  "dependency",
+                          "fileName":  "Get-ProcessGenerationKey.ps1",
+                          "checkpointPath":  "functions/Get-ProcessGenerationKey.ps1",
+                          "originalPath":  "D:\\SLMM-T6-TOOLS\\S14-HARNESS\\Get-ProcessGenerationKey.ps1",
+                          "originalSha256":  "BBC3AF5F7C5EE1A308C108BCE05E660E9A6258612EB09C511E104F81BA7E0EB6",
+                          "checkpointSha256":  "BBC3AF5F7C5EE1A308C108BCE05E660E9A6258612EB09C511E104F81BA7E0EB6"
+                      },
+                      {
+                          "role":  "dependency",
+                          "fileName":  "New-ProcessGenerationRecord.ps1",
+                          "checkpointPath":  "functions/New-ProcessGenerationRecord.ps1",
+                          "originalPath":  "D:\\SLMM-T6-TOOLS\\S14-HARNESS\\New-ProcessGenerationRecord.ps1",
+                          "originalSha256":  "7A99AB98DC2B97A73C5C022ED5919CFDCF4335DB71563E3BA51A061360339E81",
+                          "checkpointSha256":  "7A99AB98DC2B97A73C5C022ED5919CFDCF4335DB71563E3BA51A061360339E81"
+                      }
+                  ],
+    "sevenFunctionIntegrity":  [
+                                                 {
+                                                     "name":  "Resolve-ProcessGeneration",
+                                                     "sourceStartLine":  491,
+                                                     "sourceEndLine":  572,
+                                                     "sha256":  "F55EA8A86DC3E138F67CADB07CBEDF60CED3F7C8B30D49F767C44FEBA8E05E29",
+                                                     "requiredAtRuntime":  true
+                                                 },
+                                                 {
+                                                     "name":  "Get-ProcessGenerationKey",
+                                                     "sourceStartLine":  425,
+                                                     "sourceEndLine":  431,
+                                                     "sha256":  "BBC3AF5F7C5EE1A308C108BCE05E660E9A6258612EB09C511E104F81BA7E0EB6",
+                                                     "requiredAtRuntime":  true
+                                                 },
+                                                 {
+                                                     "name":  "New-ProcessGenerationRecord",
+                                                     "sourceStartLine":  447,
+                                                     "sourceEndLine":  471,
+                                                     "sha256":  "7A99AB98DC2B97A73C5C022ED5919CFDCF4335DB71563E3BA51A061360339E81",
+                                                     "requiredAtRuntime":  true
+                                                 },
+                                                 {
+                                                     "name":  "Get-PidIdentityState",
+                                                     "sourceStartLine":  739,
+                                                     "sourceEndLine":  757,
+                                                     "sha256":  "C6D5D614B4E5FA1A623CBED113DEE62A98DCABE5C0488A8C6C6D3B6BCD7F9293",
+                                                     "requiredAtRuntime":  false
+                                                 },
+                                                 {
+                                                     "name":  "Get-DescendantGenerations",
+                                                     "sourceStartLine":  574,
+                                                     "sourceEndLine":  702,
+                                                     "sha256":  "BDE7658228C29EA61B516A242840715E37EABD34D5BA9BFF3E33A80169C184D4",
+                                                     "requiredAtRuntime":  false
+                                                 },
+                                                 {
+                                                     "name":  "Test-GenerationAlive",
+                                                     "sourceStartLine":  820,
+                                                     "sourceEndLine":  840,
+                                                     "sha256":  "0B9CA8EBC3ADDF0B3E055D1B0E8B675134345648C5C7CC06A7872239DD51025D",
+                                                     "requiredAtRuntime":  false
+                                                 },
+                                                 {
+                                                     "name":  "Test-PidIdentityAlive",
+                                                     "sourceStartLine":  761,
+                                                     "sourceEndLine":  773,
+                                                     "sha256":  "37F31B1FFC4E0D921E861C3E89717705A41FD6876B8412D9D502DE3B776E64B8",
+                                                     "requiredAtRuntime":  false
+                                                 }
+                              ],
+    "staleManifestNote":  "Older external extraction-manifest hashes are stale. Direct source-AST byte hashes above were verified against the runtime integrity records and current files. No source functions changed.",
+    "runtime":  {
+                    "date":  "2026-10-28",
+                    "powerShellVersion":  "5.1.22000.2538",
+                    "launches":  1,
+                    "exitCode":  0,
+                    "stdout":  "PASS",
+                    "stderr":  "",
+                    "result":  "PASS - implemented deterministic resolver guards only",
+                    "evidenceDirectory":  "D:\\SLMM-T6-EVIDENCE\\s14-resolver-runtime-20261028-181225-cdb82edd",
+                    "evidenceHashes":  [
+                                           {
+                                               "file":  "execution-result.json",
+                                               "sha256":  "8370669A9296FD5D5C564F2D093FEBB6DACBBD6CBB7A31525DC2489D24B55B26"
+                                           },
+                                           {
+                                               "file":  "assertion-results.json",
+                                               "sha256":  "881B6BB88320685F89C7A40D1B243CE6958DC7C4C98037CD76603B38B51719F7"
+                                           },
+                                           {
+                                               "file":  "negative-coverage.json",
+                                               "sha256":  "83A1A22CF14C56960C0B1C896DF21C69A336D7D8DA4CB5B0BC6ADE535BC80A50"
+                                           },
+                                           {
+                                               "file":  "seven-function-integrity-before.json",
+                                               "sha256":  "21E597B4166C1BCE34112CBD863A571AB96FC6873FE1874FD0D1588722E88C62"
+                                           },
+                                           {
+                                               "file":  "seven-function-integrity-after.json",
+                                               "sha256":  "791917D325473ADC725BA3E9FD7D46F44B77A0EBF2DE2D8E9AC324CE2F55E76F"
+                                           },
+                                           {
+                                               "file":  "stdout.txt",
+                                               "sha256":  "C26DE83ABDC9496CD1301470918EC39ECCA1CF389EF0AE1C6504DA1800D1C431"
+                                           },
+                                           {
+                                               "file":  "stderr.txt",
+                                               "sha256":  "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+                                           }
+                                       ],
+                    "objectsDumped":  false
+                },
+    "notCovered":  [
+                       "Existing live generation not incorrectly reused",
+                       "Alive identity scenario",
+                       "Gone identity scenario",
+                       "Unknown identity scenario",
+                       "Genuine survivor detection",
+                       "Unknown identity not treated as confirmed absence",
+                       "Wrong-timestamp and invalid-state negative scenarios",
+                       "Real process/CIM behavior",
+                       "Full capture integration",
+                       "Original lost S14 self-test"
+                   ],
+    "checkpointValidation":  "Static parser/hash/dependency review only; no runtime repeated",
+    "machineSpecificAssumptions":  [
+                                       "Windows PowerShell 5.1",
+                                       "Local D: drive",
+                                       "Three dependency files at D:\\SLMM-T6-TOOLS\\S14-HARNESS; restore from bundled functions as documented"
+                                   ],
+    "classificationNotManuallyAssigned":  true,
+    "resolverNotMocked":  true
+}

@@ -13,3 +13,16 @@ Base: c4d16eeff9f807a44290e2ee127971dfa6a76fe4
 | Group-R R01–R08 | NOT RUN | - | - | hosted |
 
 Hashes recorded in CHECKPOINT_INDEX.md
+
+## 2026-10-28 addition: external S14 resolver regression
+
+- **PASS (limited resolver scope)**, one isolated PowerShell 5.1 process, exit 0.
+- Evidence: `D:\SLMM-T6-EVIDENCE\s14-resolver-runtime-20261028-181225-cdb82edd`.
+- Checkpoint: `test-harness/t6-checkpoint/s14-resolver-regression/`; original and
+  copied harness SHA-256:
+  `D058E747160FF8178F42CD64F424C486BEEB0CBA03D3C2597D83FECD81DA99FD`.
+- **NOT COVERED:** existing-live-generation protection, alive/gone/unknown
+  identity scenarios, genuine survivor detection, unknown-not-confirmed-absence,
+  and full capture integration. The original S14 row above remains NOT VALIDATED.
+- No runtime repeated for this checkpoint. Dependency hashes and seven-extract
+  source integrity are recorded in the checkpoint's `checkpoint-manifest.json`.

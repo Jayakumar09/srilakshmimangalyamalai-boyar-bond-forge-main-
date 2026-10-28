@@ -1,0 +1,3 @@
+# Preserve the exact tested script and AST-extract bytes in Git and on checkout.
+*.ps1 -text
+Run-S14ResolverTest.ps1 whitespace=cr-at-eol

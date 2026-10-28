@@ -26,3 +26,20 @@ Remote: https://github.com/Jayakumar09/srilakshmimangalyamalai-boyar-bond-forge-
 ## Notes
 - No files staged/committed in this operation. Working tree preserved.
 - Evidence directories not copied blindly; indexed by reference.
+
+## 2026-10-28: isolated S14 resolver regression checkpoint
+
+- Directory: `test-harness/t6-checkpoint/s14-resolver-regression/`.
+- Exact tested harness SHA-256:
+  `D058E747160FF8178F42CD64F424C486BEEB0CBA03D3C2597D83FECD81DA99FD`.
+- Runtime: one isolated PowerShell 5.1 process, exit **0**, limited resolver
+  regression **PASS**. Evidence:
+  `D:\SLMM-T6-EVIDENCE\s14-resolver-runtime-20261028-181225-cdb82edd`.
+- Three exact required function extracts and a hash/provenance manifest accompany
+  the unchanged harness. All seven original extracts match validated source AST
+  bytes. The README documents the required external `D:` dependency layout.
+- **NOT COVERED:** live-generation protection; alive/gone/unknown identity
+  scenarios; genuine survivors; unknown-not-confirmed-absence; full capture
+  integration. This does **not** validate the original lost S14 self-test above.
+- Checkpoint source baseline: `736e5e893a02f4f5008bf9dbc269b10f4bc84c30`.
+  Protected capture script unchanged. No runtime rerun for checkpoint creation.
